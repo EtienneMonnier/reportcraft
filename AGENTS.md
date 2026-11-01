@@ -7,7 +7,8 @@ It follows the conventions of the ArtCraft Crafting Apps (`storytold/gridcraft`,
 command model, CLI and MCP server. Display name **ReportCraft**; machine names `reportcraft-*`.
 
 ## Start every session here
-1. Read `docs/STATUS.md` (what works today) and pick work from `docs/ROADMAP.md`.
+1. Read `docs/STATUS.md` (what works today) and pick work from `docs/ROADMAP.md`. What the
+   product must do is in `docs/specification.md` (functional requirements); how it is built is here.
 2. Read `docs/pitfalls.md` before your first change. `plan/` is gitignored (local only): it holds
    clean-room observations (`plan/observed/`) and working notes.
 
