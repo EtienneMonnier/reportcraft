@@ -51,6 +51,27 @@ static COMMANDS: &[CommandSpec] = &[
         run: data_preview_sqlite,
     },
     CommandSpec {
+        id: "data.loadPostgres",
+        label: "Load PostgreSQL data",
+        menu: "Data",
+        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT), "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
+        run: data_load_postgres,
+    },
+    CommandSpec {
+        id: "data.describePostgres",
+        label: "Describe PostgreSQL database",
+        menu: "Data",
+        params: r#"{"connection": string, "table"?: string (only this table or view; `schema.table` outside public)}"#,
+        run: data_describe_postgres,
+    },
+    CommandSpec {
+        id: "data.previewPostgres",
+        label: "Preview PostgreSQL table",
+        menu: "Data",
+        params: r#"{"connection": string, "table": string, "limit"?: integer (default 20, at most 1000)}"#,
+        run: data_preview_postgres,
+    },
+    CommandSpec {
         id: "data.preview",
         label: "Preview data",
         menu: "Data",
@@ -124,18 +145,29 @@ fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.loadSqlite";
     let path = str_param(CMD, params, "path")?;
     let query = str_param(CMD, params, "query")?;
-    let limit = params.get("limit").and_then(Json::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
-    let timeout = params.get("timeoutSeconds").and_then(Json::as_u64).unwrap_or(30).clamp(1, 3_600);
-    let source = reportcraft_sqlite::SqliteSource::new(path, query).with_timeout(std::time::Duration::from_secs(timeout));
+    let (limit, timeout) = limits_of(params);
+    let source = reportcraft_sqlite::SqliteSource::new(path, query).with_timeout(timeout);
     s.rows = source.read(limit)?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn data_describe_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
-    use reportcraft_data::SchemaSource;
     let path = str_param("data.describeSqlite", params, "path")?;
-    let schema = reportcraft_sqlite::SqliteSource::database(path).schema()?;
+    describe(&reportcraft_sqlite::SqliteSource::database(path), params)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_preview_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.previewSqlite";
+    let path = str_param(CMD, params, "path")?;
+    preview(&reportcraft_sqlite::SqliteSource::database(path), CMD, params)
+}
+
+/// The schema, or one table of it, as JSON.
+#[cfg(not(target_arch = "wasm32"))]
+fn describe(source: &dyn reportcraft_data::SchemaSource, params: &Json) -> EngineResult<Json> {
+    let schema = source.schema()?;
     let value = match params.get("table").and_then(Json::as_str) {
         Some(name) => {
             let table = schema.table(name).ok_or_else(|| reportcraft_core::Error::NotFound(format!("table or view `{name}`")))?;
@@ -146,15 +178,59 @@ fn data_describe_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
     value.map_err(|e| EngineError::Internal(e.to_string()))
 }
 
+/// The first rows of one table as JSON.
 #[cfg(not(target_arch = "wasm32"))]
-fn data_preview_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
-    use reportcraft_data::SchemaSource;
-    const CMD: &str = "data.previewSqlite";
-    let path = str_param(CMD, params, "path")?;
-    let table = str_param(CMD, params, "table")?;
+fn preview(source: &dyn reportcraft_data::SchemaSource, command: &str, params: &Json) -> EngineResult<Json> {
+    let table = str_param(command, params, "table")?;
     let limit = params.get("limit").and_then(Json::as_u64).unwrap_or(20).min(1_000);
-    let rows = reportcraft_sqlite::SqliteSource::database(path).preview(table, usize::try_from(limit).unwrap_or(1_000))?;
+    let rows = source.preview(table, usize::try_from(limit).unwrap_or(1_000))?;
     Ok(json!({"columns": rows.columns, "rows": rows.rows}))
+}
+
+/// Optional row limit and time limit shared by the database loaders.
+#[cfg(not(target_arch = "wasm32"))]
+fn limits_of(params: &Json) -> (Option<usize>, std::time::Duration) {
+    let limit = params.get("limit").and_then(Json::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    let timeout = params.get("timeoutSeconds").and_then(Json::as_u64).unwrap_or(30).clamp(1, 3_600);
+    (limit, std::time::Duration::from_secs(timeout))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.loadPostgres";
+    let connection = str_param(CMD, params, "connection")?;
+    let query = str_param(CMD, params, "query")?;
+    let (limit, timeout) = limits_of(params);
+    s.rows = reportcraft_postgres::PostgresSource::new(connection, query).with_timeout(timeout).read(limit)?;
+    Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_describe_postgres(_: &mut Session, params: &Json) -> EngineResult<Json> {
+    let connection = str_param("data.describePostgres", params, "connection")?;
+    describe(&reportcraft_postgres::PostgresSource::database(connection), params)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_preview_postgres(_: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.previewPostgres";
+    let connection = str_param(CMD, params, "connection")?;
+    preview(&reportcraft_postgres::PostgresSource::database(connection), CMD, params)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_load_postgres(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("PostgreSQL is not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_describe_postgres(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("PostgreSQL is not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_preview_postgres(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("PostgreSQL is not available in the web build".into()).into())
 }
 
 #[cfg(target_arch = "wasm32")]

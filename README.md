@@ -4,8 +4,8 @@
 in the spirit of Crystal Reports and Power BI.** Built to sit beside the ArtCraft Crafting Apps
 (GridCraft, DeckCraft, WordCraft…), with the same conventions, a CLI and an MCP server.
 
-> Status: **pre-alpha**. Paginated reports from CSV or SQLite data to HTML work today; PostgreSQL,
-> PDF and the designer are on the [roadmap](docs/ROADMAP.md).
+> Status: **pre-alpha**. Paginated reports from CSV, SQLite or PostgreSQL data to HTML work today;
+> number formats, PDF and the designer are on the [roadmap](docs/ROADMAP.md).
 
 ## Try it
 
@@ -14,6 +14,9 @@ cargo run -p reportcraft-cli -- render --sample rentals --param period="October 
 cargo run -p reportcraft-cli -- sample rentals > rentals.rcr.json      # the report definition
 cargo run -p reportcraft-cli -- render rentals.rcr.json --data mydata.csv --out out.html
 cargo run -p reportcraft-cli -- render rentals.rcr.json --sqlite shop.db --query "SELECT * FROM rental" --out out.html
+PGPASSWORD=… cargo run -p reportcraft-cli -- render rentals.rcr.json --postgres "host=db user=report dbname=erp" --query "SELECT …"
+cargo run -p reportcraft-cli -- schema --postgres "host=db user=report dbname=erp"  # tables, columns, keys
+cargo run -p reportcraft-cli -- validate rentals.rcr.json --data mydata.csv          # errors and warnings
 cargo run -p reportcraft-cli -- commands                               # every command
 cargo run -p reportcraft-cli -- mcp                                    # MCP server on stdio
 ```

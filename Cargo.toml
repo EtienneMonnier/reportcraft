@@ -15,6 +15,7 @@ reportcraft-core = { path = "crates/core" }
 reportcraft-model = { path = "crates/model" }
 reportcraft-data = { path = "crates/data" }
 reportcraft-sqlite = { path = "crates/sqlite" }
+reportcraft-postgres = { path = "crates/postgres" }
 reportcraft-layout = { path = "crates/layout" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
@@ -28,6 +29,8 @@ log = "0.4"
 # ATTACH, `hooks` gives the progress handler that enforces the time limit, `column_decltype` the
 # declared column types.
 rusqlite = { version = "0.41", features = ["bundled", "limits", "hooks", "column_decltype"] }
+# PostgreSQL source (native only): the pure-Rust synchronous client.
+postgres = "0.19"
 # All date/time conversion goes through chrono (AGENTS.md).
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 

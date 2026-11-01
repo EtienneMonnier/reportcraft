@@ -7,6 +7,10 @@
 - CSV data (quoted fields, separator detection, type inference).
 - SQLite data (native builds): one read-only query per report, typed columns, row cap, 30 s time limit
   (`data.loadSqlite`, `reportcraft-cli render … --sqlite FILE --query SQL`).
+- PostgreSQL data (native builds): one query in a read-only transaction, read through a cursor in
+  batches, statement timeout, row cap; schema discovery across schemas (only what the user may
+  read) and previews (`data.loadPostgres`, `data.describePostgres`, `data.previewPostgres`,
+  `--postgres CONN` in `render`, `validate` and `schema`). Plain connections only (no TLS yet).
 - SQLite schema discovery: tables, views, columns (declared and ReportCraft types, nullability,
   primary keys) and foreign keys, plus table previews (`data.describeSqlite`, `data.previewSqlite`,
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
@@ -15,8 +19,8 @@
 - `report.validate` / `reportcraft-cli validate`: every error and warning with its location (unknown
   fields, text totals, undeclared parameters, elements past the margin or their band, fields in page
   headers/footers), checked against the loaded data's columns.
-- CLI and MCP server reaching every command. 31 tests, including 5 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 41 tests (plus 7 live PostgreSQL tests run on demand), including 5 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No PostgreSQL or ODBC source yet, no number formats, no PDF, no designer UI (see `ROADMAP.md`).
+- No ODBC source yet, no number formats, no PDF, no designer UI (see `ROADMAP.md`).
 - Not yet built or tested on Windows, macOS, BSD or wasm.

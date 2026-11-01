@@ -58,3 +58,28 @@ problem. `Report::check` collects every finding as a `Diagnostic` (severity, loc
 columns are known, unknown fields and totals over text. `report.validate` returns them with
 counts and whether the data was checked, so an agent can fix a definition before rendering it.
 A definition that does not parse is a diagnostic at location `file`, not a command error.
+
+## PostgreSQL: read-only transaction, cursor, text values (R1.2)
+
+The `postgres` crate (pure Rust, synchronous) keeps our crates free of `unsafe` and of a system
+libpq. Every query runs in a `READ ONLY` transaction that is rolled back, with `statement_timeout`
+and `lock_timeout` set locally. The query must prepare as a single statement (the extended
+protocol refuses several), which also gives the column types; it is then read through
+`DECLARE … NO SCROLL CURSOR`, which accepts only `SELECT`/`VALUES`, fetched 1,000 rows at a time
+up to the row cap, so a large result is never loaded whole. Rows come back in PostgreSQL's text
+format and are converted by column type, which covers `numeric` without a decimal dependency;
+values that don't fit (`NaN`, `Infinity`) stay text. Dates stay text until R2.1 formats them.
+
+Schema discovery reads `pg_class`, `pg_attribute` and `pg_constraint` and lists only relations
+the user may `SELECT` (`has_table_privilege`). Names in `public` are bare, others are
+`schema.table`. A foreign key to a table the user cannot read is kept, its target shown only by
+number. Previews accept only a listed name, quoted.
+
+The connection string is never written to errors, logs or `Debug` output; a password left out of
+it is read from `PGPASSWORD`, as libpq does. Only plain connections are supported for now (no
+TLS); that, `.pgpass`, and named connections (R1.3) are follow-ups. The live tests run against a
+scratch database named by `REPORTCRAFT_TEST_POSTGRES` and are skipped without it.
+
+The engine has one set of commands per database kind (`data.loadSqlite`, `data.loadPostgres`…)
+sharing the describe/preview/limit helpers. When named connections land (R1.3), they should
+collapse into kind-independent commands taking a connection name.
