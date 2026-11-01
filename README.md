@@ -27,6 +27,14 @@ cargo run -p reportcraft-cli -- mcp                                    # MCP ser
 [Specification](docs/specification.md) · [Architecture](docs/architecture.md) · [Status](docs/STATUS.md) · [Roadmap](docs/ROADMAP.md) ·
 [Decisions](docs/decisions.md) · [Contributing](CONTRIBUTING.md) · [Rules for agents](AGENTS.md)
 
+## Project status and maintenance
+
+ReportCraft is a personal, non-commercial project, offered to the community as a reporting tool in
+the continuity of the ArtCraft suite. Its author may not maintain it for years: contributions,
+forks and new maintainers are welcome, and the docs ([AGENTS.md](AGENTS.md),
+[decisions](docs/decisions.md), [roadmap](docs/ROADMAP.md)) are written so someone else can take it
+over.
+
 ## Licence
 
 MIT or Apache-2.0, at your option. Crystal Reports, SSRS and Power BI are trademarks of their
