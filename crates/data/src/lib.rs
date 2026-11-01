@@ -4,6 +4,10 @@
 //! else matches on source kinds. Sources are read-only: ReportCraft never writes to them.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod schema;
+
+pub use schema::{ColumnInfo, ForeignKey, Schema, SchemaSource, Table, TableKind};
+
 use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value, limits};
 
 /// Something that hands rows to a report.

@@ -37,6 +37,20 @@ static COMMANDS: &[CommandSpec] = &[
         run: data_load_sqlite,
     },
     CommandSpec {
+        id: "data.describeSqlite",
+        label: "Describe SQLite database",
+        menu: "Data",
+        params: r#"{"path": string (database file, opened read-only), "table"?: string (only this table or view)}"#,
+        run: data_describe_sqlite,
+    },
+    CommandSpec {
+        id: "data.previewSqlite",
+        label: "Preview SQLite table",
+        menu: "Data",
+        params: r#"{"path": string, "table": string (table or view), "limit"?: integer (default 20, at most 1000)}"#,
+        run: data_preview_sqlite,
+    },
+    CommandSpec {
         id: "data.preview",
         label: "Preview data",
         menu: "Data",
@@ -108,6 +122,42 @@ fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let source = reportcraft_sqlite::SqliteSource::new(path, query).with_timeout(std::time::Duration::from_secs(timeout));
     s.rows = source.read(limit)?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_describe_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
+    use reportcraft_data::SchemaSource;
+    let path = str_param("data.describeSqlite", params, "path")?;
+    let schema = reportcraft_sqlite::SqliteSource::database(path).schema()?;
+    let value = match params.get("table").and_then(Json::as_str) {
+        Some(name) => {
+            let table = schema.table(name).ok_or_else(|| reportcraft_core::Error::NotFound(format!("table or view `{name}`")))?;
+            serde_json::to_value(table)
+        }
+        None => serde_json::to_value(&schema),
+    };
+    value.map_err(|e| EngineError::Internal(e.to_string()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_preview_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
+    use reportcraft_data::SchemaSource;
+    const CMD: &str = "data.previewSqlite";
+    let path = str_param(CMD, params, "path")?;
+    let table = str_param(CMD, params, "table")?;
+    let limit = params.get("limit").and_then(Json::as_u64).unwrap_or(20).min(1_000);
+    let rows = reportcraft_sqlite::SqliteSource::database(path).preview(table, usize::try_from(limit).unwrap_or(1_000))?;
+    Ok(json!({"columns": rows.columns, "rows": rows.rows}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_describe_sqlite(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("SQLite is not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_preview_sqlite(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("SQLite is not available in the web build".into()).into())
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -12,6 +12,7 @@ reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
   render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL] [--format html|json] [--param NAME=VALUE]... [--out FILE]
+  schema --sqlite FILE [--table NAME] [--preview N] [--json]   tables, columns and keys; rows with --preview
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
   mcp                                       MCP server on stdio
@@ -35,6 +36,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "commands" => list_commands(rest.iter().any(|a| a == "--json")),
         "render" => render(rest),
         "run" => run_commands(rest),
+        "schema" => schema(rest),
         "sample" => print_sample(rest.first().map(String::as_str).unwrap_or("rentals")),
         "mcp" => {
             let mut s = Session::default();
@@ -146,4 +148,71 @@ fn print_sample(name: &str) -> Result<(), String> {
     let (report, _) = sample::by_name(name).ok_or_else(|| format!("no sample `{name}` (samples: {})", sample::NAMES.join(", ")))?;
     println!("{}", report.to_json().map_err(|e| e.to_string())?);
     Ok(())
+}
+
+fn schema(args: &[String]) -> Result<(), String> {
+    let (mut path, mut table, mut preview, mut as_json) = (None, None, None, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--sqlite" => path = Some(flag_value(&mut it, a)?.to_owned()),
+            "--table" => table = Some(flag_value(&mut it, a)?.to_owned()),
+            "--preview" => preview = Some(flag_value(&mut it, a)?.parse::<u64>().map_err(|_| "`--preview` expects a number of rows")?),
+            "--json" => as_json = true,
+            other => return Err(format!("unknown option `{other}`")),
+        }
+    }
+    let path = path.ok_or("`schema` needs `--sqlite FILE`")?;
+    let mut s = Session::default();
+    if let (Some(n), Some(t)) = (preview, table.as_deref()) {
+        let rows = exec(&mut s, "data.previewSqlite", json!({"path": path, "table": t, "limit": n}))?;
+        println!("{}", if as_json { rows.to_string() } else { preview_text(&rows) });
+        return Ok(());
+    }
+    if preview.is_some() {
+        return Err("`--preview` needs `--table NAME`".to_owned());
+    }
+    let described = exec(&mut s, "data.describeSqlite", json!({"path": path, "table": table}))?;
+    if as_json {
+        println!("{described}");
+        return Ok(());
+    }
+    let tables = match described.get("tables").and_then(Json::as_array) {
+        Some(list) => list.clone(),
+        None => vec![described],
+    };
+    for t in &tables {
+        println!("{} ({})", t["name"].as_str().unwrap_or(""), t["kind"].as_str().unwrap_or(""));
+        for c in t["columns"].as_array().into_iter().flatten() {
+            let pk = c["primary_key"].as_u64().map_or(String::new(), |p| format!(" PK{p}"));
+            let null = if c["nullable"].as_bool().unwrap_or(true) { "" } else { " NOT NULL" };
+            println!(
+                "  {:<24} {:<16} {}{pk}{null}",
+                c["name"].as_str().unwrap_or(""),
+                c["declared_type"].as_str().unwrap_or(""),
+                c["field_type"].as_str().unwrap_or("")
+            );
+        }
+        for fk in t["foreign_keys"].as_array().into_iter().flatten() {
+            let cols = |v: &Json| v.as_array().into_iter().flatten().filter_map(Json::as_str).collect::<Vec<_>>().join(", ");
+            println!("  ({}) -> {}({})", cols(&fk["columns"]), fk["references_table"].as_str().unwrap_or(""), cols(&fk["references_columns"]));
+        }
+    }
+    Ok(())
+}
+
+fn preview_text(rows: &Json) -> String {
+    let header: Vec<&str> = rows["columns"].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str()).collect();
+    let mut out = header.join("\t");
+    for r in rows["rows"].as_array().into_iter().flatten() {
+        let cells: Vec<String> = r
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|v| v.as_str().map_or_else(|| if v.is_null() { String::new() } else { v.to_string() }, str::to_owned))
+            .collect();
+        out.push('\n');
+        out.push_str(&cells.join("\t"));
+    }
+    out
 }
