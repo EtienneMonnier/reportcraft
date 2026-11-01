@@ -12,6 +12,8 @@ reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
   render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL] [--format html|json] [--param NAME=VALUE]... [--out FILE]
+  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL] [--json]
+                                            errors and warnings, checked against the data when given
   schema --sqlite FILE [--table NAME] [--preview N] [--json]   tables, columns and keys; rows with --preview
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
@@ -37,6 +39,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "render" => render(rest),
         "run" => run_commands(rest),
         "schema" => schema(rest),
+        "validate" => validate(rest),
         "sample" => print_sample(rest.first().map(String::as_str).unwrap_or("rentals")),
         "mcp" => {
             let mut s = Session::default();
@@ -79,9 +82,13 @@ fn read(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))
 }
 
-fn render(args: &[String]) -> Result<(), String> {
+/// Loads the report and data named by the shared options (`REPORT.json`, `--sample`, `--data`,
+/// `--sqlite` with `--query`) and hands every other option to `other`.
+fn load_inputs<'a>(
+    args: &'a [String],
+    mut other: impl FnMut(&'a str, &mut std::slice::Iter<'a, String>) -> Result<(), String>,
+) -> Result<Session, String> {
     let mut s = Session::default();
-    let (mut format, mut out, mut params) = ("html".to_owned(), None, serde_json::Map::new());
     let (mut sqlite, mut query) = (None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -94,16 +101,10 @@ fn render(args: &[String]) -> Result<(), String> {
             }
             "--sqlite" => sqlite = Some(flag_value(&mut it, a)?.to_owned()),
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
-            "--format" => format = flag_value(&mut it, a)?.to_owned(),
-            "--out" => out = Some(flag_value(&mut it, a)?.to_owned()),
-            "--param" => {
-                let (k, v) = flag_value(&mut it, a)?.split_once('=').ok_or("`--param` expects NAME=VALUE")?;
-                params.insert(k.to_owned(), Json::String(v.to_owned()));
-            }
             path if !path.starts_with("--") => {
                 exec(&mut s, "report.load", json!({"json": read(path)?}))?;
             }
-            other => return Err(format!("unknown option `{other}`")),
+            flag => other(flag, &mut it)?,
         }
     }
     match (sqlite, query) {
@@ -113,6 +114,23 @@ fn render(args: &[String]) -> Result<(), String> {
         (None, None) => {}
         _ => return Err("`--sqlite` and `--query` go together".to_owned()),
     }
+    Ok(s)
+}
+
+fn render(args: &[String]) -> Result<(), String> {
+    let (mut format, mut out, mut params) = ("html".to_owned(), None, serde_json::Map::new());
+    let mut s = load_inputs(args, |a, it| {
+        match a {
+            "--format" => format = flag_value(it, a)?.to_owned(),
+            "--out" => out = Some(flag_value(it, a)?.to_owned()),
+            "--param" => {
+                let (k, v) = flag_value(it, a)?.split_once('=').ok_or("`--param` expects NAME=VALUE")?;
+                params.insert(k.to_owned(), Json::String(v.to_owned()));
+            }
+            other => return Err(format!("unknown option `{other}`")),
+        }
+        Ok(())
+    })?;
     let result = exec(&mut s, "report.render", json!({"format": format, "params": params}))?;
     let body = match result.get("html").and_then(Json::as_str) {
         Some(html) => html.to_owned(),
@@ -215,4 +233,32 @@ fn preview_text(rows: &Json) -> String {
         out.push_str(&cells.join("\t"));
     }
     out
+}
+
+fn validate(args: &[String]) -> Result<(), String> {
+    let mut as_json = false;
+    let mut s = load_inputs(args, |a, _| {
+        if a == "--json" {
+            as_json = true;
+            Ok(())
+        } else {
+            Err(format!("unknown option `{a}`"))
+        }
+    })?;
+    let result = exec(&mut s, "report.validate", json!({}))?;
+    if as_json {
+        println!("{result}");
+    } else {
+        for d in result["diagnostics"].as_array().into_iter().flatten() {
+            println!(
+                "{:<7} {:<28} {}",
+                d["severity"].as_str().unwrap_or(""),
+                d["location"].as_str().unwrap_or(""),
+                d["message"].as_str().unwrap_or("")
+            );
+        }
+        let data = if result["dataChecked"] == json!(true) { "checked against the data" } else { "no data loaded: fields not checked" };
+        println!("{} error(s), {} warning(s); {data}", result["errors"], result["warnings"]);
+    }
+    if result["valid"] == json!(true) { Ok(()) } else { Err("the report has errors".to_owned()) }
 }

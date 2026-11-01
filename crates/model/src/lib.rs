@@ -5,7 +5,7 @@
 //! from the band's top-left corner.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use reportcraft_core::{Error, Result, limits};
+use reportcraft_core::{Column, Error, FieldType, Result, limits};
 use serde::{Deserialize, Serialize};
 
 /// The report file format version this build writes. Every persisted file carries one.
@@ -193,11 +193,11 @@ impl Report {
     pub fn bands(&self) -> Vec<(String, &Band)> {
         let mut out = vec![("report_header".to_owned(), &self.report_header), ("page_header".to_owned(), &self.page_header)];
         for (i, g) in self.groups.iter().enumerate() {
-            out.push((format!("group[{i}].header"), &g.header));
+            out.push((format!("groups[{i}].header"), &g.header));
         }
         out.push(("detail".to_owned(), &self.detail));
         for (i, g) in self.groups.iter().enumerate().rev() {
-            out.push((format!("group[{i}].footer"), &g.footer));
+            out.push((format!("groups[{i}].footer"), &g.footer));
         }
         out.push(("page_footer".to_owned(), &self.page_footer));
         out.push(("report_footer".to_owned(), &self.report_footer));
@@ -245,6 +245,106 @@ impl Report {
     }
 }
 
+/// How serious a diagnostic is: an error stops rendering or gives a wrong result, a warning
+/// shows something the author probably didn't intend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// One finding of `Report::check`, with where it is (`detail.elements[2]`, `groups[0]`…).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub location: String,
+    pub message: String,
+}
+
+impl Diagnostic {
+    fn error(location: impl Into<String>, message: impl Into<String>) -> Self {
+        Self { severity: Severity::Error, location: location.into(), message: message.into() }
+    }
+
+    fn warning(location: impl Into<String>, message: impl Into<String>) -> Self {
+        Self { severity: Severity::Warning, location: location.into(), message: message.into() }
+    }
+}
+
+impl Report {
+    /// Every problem found in the definition, and against the data's columns when given.
+    /// Unlike `validate`, it doesn't stop at the first problem and also reports warnings.
+    pub fn check(&self, columns: Option<&[Column]>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        if let Err(e) = self.validate() {
+            out.push(Diagnostic::error("report", e.to_string()));
+        }
+        let column = |name: &str| columns.map(|cols| cols.iter().find(|c| c.name.eq_ignore_ascii_case(name)));
+        let unknown = |name: &str| {
+            let names: Vec<&str> = columns.unwrap_or_default().iter().map(|c| c.name.as_str()).collect();
+            format!("unknown field `{name}` (the data has: {})", names.join(", "))
+        };
+        for (i, g) in self.groups.iter().enumerate() {
+            if column(&g.field) == Some(None) {
+                out.push(Diagnostic::error(format!("groups[{i}]"), unknown(&g.field)));
+            }
+        }
+        for (i, s) in self.sort.iter().enumerate() {
+            if column(&s.field) == Some(None) {
+                out.push(Diagnostic::error(format!("sort[{i}]"), unknown(&s.field)));
+            }
+        }
+        for (i, p) in self.parameters.iter().enumerate() {
+            if self.parameters.iter().take(i).any(|q| q.name == p.name) {
+                out.push(Diagnostic::warning(format!("parameters[{i}]"), format!("parameter `{}` is declared twice", p.name)));
+            }
+        }
+        let body_width = self.page.width_mm - 2.0 * self.page.margin_mm;
+        let mut elements = 0usize;
+        for (band_name, band) in self.bands() {
+            let repeating = band_name == "page_header" || band_name == "page_footer";
+            for (i, el) in band.elements.iter().enumerate() {
+                elements += 1;
+                let at = format!("{band_name}.elements[{i}]");
+                let right = el.x_mm + el.width_mm;
+                if right > body_width + 1e-9 {
+                    out.push(Diagnostic::warning(&at, format!("extends {:.1} mm past the right margin", right - body_width)));
+                }
+                if el.y_mm + el.height_mm > band.height_mm + 1e-9 {
+                    out.push(Diagnostic::warning(&at, "extends below its band and may overlap the next one"));
+                }
+                match &el.content {
+                    Content::Field { field } | Content::Aggregate { field, .. } if column(field) == Some(None) => {
+                        out.push(Diagnostic::error(&at, unknown(field)));
+                    }
+                    Content::Field { .. } | Content::Aggregate { .. } if repeating => {
+                        out.push(Diagnostic::warning(&at, "page headers and footers have no current row: this shows nothing"));
+                    }
+                    Content::Aggregate { function: AggregateFn::Sum | AggregateFn::Avg | AggregateFn::Min | AggregateFn::Max, field } => {
+                        if let Some(Some(c)) = column(field)
+                            && matches!(c.field_type, FieldType::Text | FieldType::Bool)
+                        {
+                            out.push(Diagnostic::warning(&at, format!("`{field}` is not numeric: this total shows nothing")));
+                        }
+                    }
+                    Content::Parameter { name } if !self.parameters.iter().any(|p| &p.name == name) => {
+                        out.push(Diagnostic::warning(
+                            &at,
+                            format!("parameter `{name}` is not declared: it shows only a value passed when rendering"),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if elements == 0 {
+            out.push(Diagnostic::warning("report", "the report has no elements: every page is blank"));
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +365,37 @@ mod tests {
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn check_reports_every_problem_with_its_location() {
+        let col = |n: &str, t| Column { name: n.into(), field_type: t };
+        let columns = [col("branch", FieldType::Text), col("amount", FieldType::Number)];
+        let el = |x: f64, w: f64, content: Content| Element { x_mm: x, y_mm: 0.0, width_mm: w, height_mm: 5.0, style: TextStyle::default(), content };
+        let mut r = Report::new("t");
+        r.groups.push(Group { field: "region".into(), header: Band::default(), footer: Band::default() });
+        r.sort.push(SortKey { field: "amount".into(), descending: false });
+        r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 20.0, Content::Field { field: "branch".into() })] };
+        r.detail = Band {
+            height_mm: 4.0,
+            elements: vec![
+                el(0.0, 30.0, Content::Field { field: "nope".into() }),
+                el(170.0, 20.0, Content::Aggregate { function: AggregateFn::Sum, field: "branch".into() }),
+                el(0.0, 10.0, Content::Parameter { name: "period".into() }),
+            ],
+        };
+        let found = r.check(Some(&columns));
+        let at = |loc: &str, sev| found.iter().any(|d| d.location == loc && d.severity == sev);
+        assert!(at("groups[0]", Severity::Error));
+        assert!(!found.iter().any(|d| d.location == "sort[0]"), "a known sort field is fine");
+        assert!(at("page_header.elements[0]", Severity::Warning));
+        assert!(at("detail.elements[0]", Severity::Error));
+        assert_eq!(found.iter().filter(|d| d.location == "detail.elements[1]").count(), 3, "past the margin, below its band, a text total");
+        assert!(at("detail.elements[2]", Severity::Warning));
+        assert_eq!(found.iter().filter(|d| d.message.contains("below its band")).count(), 3);
+        // Without data, only the definition itself is checked.
+        assert!(!r.check(None).iter().any(|d| d.message.contains("unknown field")));
+        assert!(Report::new("blank").check(None).iter().any(|d| d.message.contains("blank")));
     }
 
     #[test]

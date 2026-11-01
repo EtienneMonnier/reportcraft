@@ -113,6 +113,20 @@ mod tests {
     }
 
     #[test]
+    fn validate_checks_the_open_report_against_its_data() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let ok = s.execute("report.validate", &json!({})).unwrap();
+        assert_eq!((ok["valid"].clone(), ok["errors"].clone(), ok["dataChecked"].clone()), (json!(true), json!(0), json!(true)));
+        s.execute("data.loadCsv", &json!({"csv": "region,total\nNorth,3\n"})).unwrap();
+        let bad = s.execute("report.validate", &json!({})).unwrap();
+        assert_eq!(bad["valid"], json!(false));
+        assert!(bad["diagnostics"].as_array().unwrap().iter().any(|d| d["location"] == json!("groups[0]")));
+        let broken = s.execute("report.validate", &json!({"json": "{not json"})).unwrap();
+        assert_eq!(broken["diagnostics"][0]["location"], json!("file"));
+    }
+
+    #[test]
     fn sample_renders_to_html() {
         let mut s = Session::default();
         s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
