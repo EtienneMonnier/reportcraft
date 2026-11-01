@@ -39,7 +39,7 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
   - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
 - [ ] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — **decision**: syntax
-- [ ] R2.3 Keep-together, repeat group header on new page, page break before group
+- [ ] R2.3 Keep-together, repeat group header on new page, page break before group — claimed: Claude (for EtienneMonnier), branch feature/r2.3-group-pagination
 - [ ] R2.4 Lines, boxes and images in bands
 - [ ] R2.5 Sub-reports
 - [ ] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts
