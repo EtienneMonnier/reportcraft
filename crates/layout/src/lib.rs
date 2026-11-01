@@ -105,7 +105,7 @@ pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Documen
                 w.band_in(&group.header, Scope { rows: scope, current: Some(row) }, &order)?;
             }
         }
-        w.band_in(&report.detail, Scope { rows: std::slice::from_ref(&row), current: Some(row) }, &order)?;
+        w.detail(&report.detail, Scope { rows: std::slice::from_ref(&row), current: Some(row) }, &order)?;
     }
     if !order.is_empty() {
         w.close_groups(&order, order.len(), 0)?;
@@ -196,6 +196,8 @@ struct Writer<'a> {
     column: usize,
     column_top: f64,
     column_bottom: f64,
+    /// Height of the row of labels being filled (across order).
+    row_height: f64,
     /// Items that show the page number, by page.
     page_number_items: Vec<(usize, usize)>,
 }
@@ -216,6 +218,7 @@ impl<'a> Writer<'a> {
             column: 0,
             column_top: 0.0,
             column_bottom: 0.0,
+            row_height: 0.0,
             page_number_items: Vec::new(),
         }
     }
@@ -231,6 +234,7 @@ impl<'a> Writer<'a> {
         self.page = Page::default();
         self.y = self.report.page.margin_mm;
         self.column = 0;
+        self.row_height = 0.0;
         self.column_top = self.y;
         self.column_bottom = self.y;
         if with_header {
@@ -287,6 +291,18 @@ impl<'a> Writer<'a> {
         if band.is_empty() {
             return Ok(());
         }
+        if self.across() {
+            // A group band starts a new row of labels and spans the first column.
+            self.close_row();
+            if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+                self.new_page(order)?;
+            }
+            self.draw(band, scope, true);
+            self.y += band.height_mm;
+            self.column_bottom = self.column_bottom.max(self.y);
+            self.fresh = false;
+            return Ok(());
+        }
         if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
             if self.column + 1 < usize::from(self.report.page.columns) {
                 // Next column on the same page.
@@ -305,11 +321,47 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
+    fn across(&self) -> bool {
+        self.report.page.columns > 1 && self.report.page.column_order == reportcraft_model::ColumnOrder::Across
+    }
+
+    /// Moves below a partly filled row of labels.
+    fn close_row(&mut self) {
+        if self.column > 0 {
+            self.y += self.row_height;
+            self.column = 0;
+        }
+        self.row_height = 0.0;
+    }
+
+    /// Places a detail band: down a column, or in the next cell of a row of labels.
+    fn detail(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
+        if !self.across() {
+            return self.band_in(band, scope, order);
+        }
+        if band.is_empty() {
+            return Ok(());
+        }
+        if self.column == 0 && !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+            self.new_page(order)?;
+        }
+        self.draw(band, scope, true);
+        self.row_height = self.row_height.max(band.height_mm);
+        self.column_bottom = self.column_bottom.max(self.y + self.row_height);
+        self.fresh = false;
+        self.column += 1;
+        if self.column >= usize::from(self.report.page.columns) {
+            self.close_row();
+        }
+        Ok(())
+    }
+
     /// Places a band that spans the page (report header or footer) below every column.
     fn full_band(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
         if band.is_empty() {
             return Ok(());
         }
+        self.close_row();
         self.y = self.y.max(self.column_bottom);
         self.column = 0;
         if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {

@@ -166,3 +166,11 @@ optional `shape` instead of text; the HTML writer draws a page's shapes as one S
 the text. Colours are accepted only as `#rgb` or `#rrggbb`, checked when the report is validated
 and again by the writer, which draws nothing for anything else: a colour string can never carry
 markup or CSS into an output. Images are a follow-up (source, size limits, attribution).
+
+## Labels are columns filled across (R2.12)
+
+Labels reuse the columns of R2.9 with `column_order: across`: detail bands fill a row of
+columns left to right, the row's height is its tallest label, then the next row starts; a row
+that doesn't fit starts a new page. Group headers and footers close a partly filled row and sit
+in the first column, so labels of different groups never share a row. Report headers and
+footers still span the page. With `down` (the default) or one column, nothing changes.

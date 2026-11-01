@@ -354,3 +354,40 @@ fn lines_and_boxes() {
     };
     check("lines_and_boxes", &r, &rentals(6), &Params::new());
 }
+
+/// Labels: three across on A4, 38 mm high, filled left to right then row by row; a region header
+/// closes a partly filled row and spans the first column.
+#[test]
+fn labels_across() {
+    use reportcraft_model::{ColumnOrder, PageSetup, Paper};
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let mut r = Report::new("Labels");
+    r.page = PageSetup {
+        margin_mm: 10.0,
+        columns: 3,
+        column_gap_mm: 2.5,
+        column_order: ColumnOrder::Across,
+        ..PageSetup::paper(Paper::A4, reportcraft_model::Orientation::Portrait)
+    };
+    r.groups = vec![Group {
+        field: "region".into(),
+        keep_together: false,
+        repeat_header: false,
+        page_break_before: false,
+        header: Band { height_mm: 8.0, elements: vec![el(0.0, 60.0, field("region"), bold)] },
+        footer: Band::default(),
+    }];
+    r.detail = Band {
+        height_mm: 38.0,
+        elements: vec![
+            el(3.0, 55.0, field("item"), bold),
+            Element { y_mm: 8.0, ..el(3.0, 55.0, field("branch"), plain) },
+            Element { y_mm: 15.0, ..el(3.0, 55.0, field("days"), plain) },
+        ],
+    };
+    // 13 North (4 full rows and 1 label) and 12 South labels.
+    let mut rows = rentals(25);
+    rows.rows.sort_by(|a, b| a[0].sort_cmp(&b[0]));
+    check("labels_across", &r, &rows, &Params::new());
+}
