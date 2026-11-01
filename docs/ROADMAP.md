@@ -18,7 +18,7 @@ Anything marked **decision** waits for a maintainer.
 ## R1 — Data connections (owner: open)
 - [x] R1.1 SQLite source (read-only), with a query and typed columns (#1)
   - [ ] Pick the database file through a named connection once R1.3 lands, so an MCP agent can only open files the user chose (specification §11)
-- [ ] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases
+- [ ] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases — claimed: Claude (for EtienneMonnier), branch feature/r1.2-postgres-source
 - [ ] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
 - [ ] R1.5 Report parameters passed to queries as bound parameters (never string-spliced)
