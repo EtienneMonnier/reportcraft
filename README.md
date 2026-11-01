@@ -19,7 +19,7 @@ cargo run -p reportcraft-cli -- mcp                                    # MCP ser
 
 ## Docs
 
-[Architecture](docs/architecture.md) · [Status](docs/STATUS.md) · [Roadmap](docs/ROADMAP.md) ·
+[Specification](docs/specification.md) · [Architecture](docs/architecture.md) · [Status](docs/STATUS.md) · [Roadmap](docs/ROADMAP.md) ·
 [Decisions](docs/decisions.md) · [Contributing](CONTRIBUTING.md) · [Rules for agents](AGENTS.md)
 
 ## Licence
