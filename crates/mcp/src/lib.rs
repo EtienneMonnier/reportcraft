@@ -1,8 +1,14 @@
 //! ReportCraft MCP server (L6): JSON-RPC 2.0 over stdio, one line per message. Every engine
 //! command is an MCP tool; its name is the command id with `.` replaced by `_`.
+//!
+//! Requests run one at a time. A reader thread keeps reading while one runs, so a
+//! `notifications/cancelled` for it stops it (the reply is then an error); one for a request not
+//! yet started means that request is skipped without a reply.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::collections::VecDeque;
 use std::io::{BufRead, Write};
+use std::sync::{Arc, Mutex, mpsc};
 
 use reportcraft_engine::{Session, commands};
 use serde_json::{Value as Json, json};
@@ -11,14 +17,76 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Longest request line accepted (16 MiB).
 const MAX_LINE: usize = 16 * 1024 * 1024;
 
+/// Requests cancelled before they started, remembered at most.
+const MAX_CANCELLED: usize = 1_000;
+
+/// What the reader thread shares with the request loop.
+#[derive(Default)]
+struct InFlight {
+    /// The id of the request running now.
+    current: Option<Json>,
+    /// Ids cancelled before they started.
+    cancelled: VecDeque<Json>,
+}
+
 /// Serves requests from `input` until it closes.
-pub fn serve(input: impl BufRead, mut output: impl Write, session: &mut Session) -> std::io::Result<()> {
-    for line in input.lines() {
+pub fn serve(input: impl BufRead + Send + 'static, mut output: impl Write, session: &mut Session) -> std::io::Result<()> {
+    let state = Arc::new(Mutex::new(InFlight::default()));
+    let (lines, incoming) = mpsc::sync_channel::<std::io::Result<String>>(64);
+    let reader_state = Arc::clone(&state);
+    let handle = session.cancel_handle();
+    std::thread::spawn(move || {
+        for line in input.lines() {
+            if let Ok(text) = &line
+                && let Some(request_id) = cancelled_request(text)
+            {
+                if let Ok(mut st) = reader_state.lock() {
+                    if st.current.as_ref() == Some(&request_id) {
+                        handle.cancel();
+                    } else {
+                        if st.cancelled.len() == MAX_CANCELLED {
+                            st.cancelled.pop_front();
+                        }
+                        st.cancelled.push_back(request_id);
+                    }
+                }
+                continue;
+            }
+            let failed = line.is_err();
+            if lines.send(line).is_err() || failed {
+                break;
+            }
+        }
+    });
+    for line in incoming {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(reply) = handle_line(&line, session) {
+        let req = match parse(&line) {
+            Ok(req) => req,
+            Err(reply) => {
+                writeln!(output, "{reply}")?;
+                output.flush()?;
+                continue;
+            }
+        };
+        if let Some(id) = req.get("id")
+            && let Ok(mut st) = state.lock()
+        {
+            if let Some(i) = st.cancelled.iter().position(|c| c == id) {
+                st.cancelled.remove(i);
+                continue;
+            }
+            st.current = Some(id.clone());
+        }
+        let reply = handle_request(&req, session);
+        if let Ok(mut st) = state.lock() {
+            // Under the lock, so a late cancel can't reach the next request.
+            st.current = None;
+            session.cancel_handle().reset();
+        }
+        if let Some(reply) = reply {
             writeln!(output, "{reply}")?;
             output.flush()?;
         }
@@ -26,15 +94,34 @@ pub fn serve(input: impl BufRead, mut output: impl Write, session: &mut Session)
     Ok(())
 }
 
+/// The request id a `notifications/cancelled` line names, if it is one.
+fn cancelled_request(line: &str) -> Option<Json> {
+    if line.len() > MAX_LINE || !line.contains("notifications/cancelled") {
+        return None;
+    }
+    let msg: Json = serde_json::from_str(line).ok()?;
+    if msg.get("method").and_then(Json::as_str) != Some("notifications/cancelled") {
+        return None;
+    }
+    msg.get("params")?.get("requestId").cloned()
+}
+
+fn parse(line: &str) -> Result<Json, Json> {
+    if line.len() > MAX_LINE {
+        return Err(error(Json::Null, -32600, "request too large"));
+    }
+    serde_json::from_str(line).map_err(|e| error(Json::Null, -32700, &format!("parse error: {e}")))
+}
+
 /// One request line to its reply line (`None` for notifications).
 pub fn handle_line(line: &str, session: &mut Session) -> Option<Json> {
-    if line.len() > MAX_LINE {
-        return Some(error(Json::Null, -32600, "request too large"));
+    match parse(line) {
+        Ok(req) => handle_request(&req, session),
+        Err(reply) => Some(reply),
     }
-    let req: Json = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => return Some(error(Json::Null, -32700, &format!("parse error: {e}"))),
-    };
+}
+
+fn handle_request(req: &Json, session: &mut Session) -> Option<Json> {
     let id = req.get("id").cloned()?;
     let method = req.get("method").and_then(Json::as_str).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(Json::Null);
@@ -103,6 +190,41 @@ mod tests {
         assert!(list.to_string().contains("report_render"));
         let r = handle_line(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"file_openSample","arguments":{}}}"#, &mut s).unwrap();
         assert_eq!(r["result"]["isError"], json!(false));
+    }
+
+    #[test]
+    fn a_cancel_notification_stops_the_running_request() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-mcp-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("x.db");
+        std::fs::write(&db, b"").unwrap();
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n";
+        let call = move |id: u32| {
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                   "params": {"name": "data_loadSqlite", "arguments": {"path": db.to_string_lossy(), "query": endless}}})
+        };
+        let cancel = |id: u32| json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id}});
+        let feeder = std::thread::spawn(move || {
+            // Request 1 is cancelled while it runs; request 2 before it starts.
+            writeln!(writer, "{}", call(1)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            writeln!(writer, "{}\n{}\n{}", cancel(2), cancel(1), call(2)).unwrap();
+            writeln!(writer, r#"{{"jsonrpc":"2.0","id":3,"method":"ping"}}"#).unwrap();
+        });
+        let mut out = Vec::new();
+        #[allow(clippy::disallowed_methods)] // native test
+        let started = std::time::Instant::now();
+        serve(std::io::BufReader::new(reader), &mut out, &mut Session::default()).unwrap();
+        feeder.join().unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        let replies: Vec<Json> = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(replies.len(), 2, "{replies:?}");
+        assert_eq!(replies[0]["id"], json!(1));
+        assert_eq!(replies[0]["result"]["isError"], json!(true));
+        assert!(replies[0]["result"]["content"][0]["text"].as_str().unwrap().contains("stopped on request"));
+        assert_eq!(replies[1]["id"], json!(3), "request 2 was skipped");
     }
 
     #[test]

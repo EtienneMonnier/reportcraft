@@ -8,7 +8,7 @@ mod html;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use reportcraft_core::{Error, Result, RowSet, Value, limits};
+use reportcraft_core::{Cancel, Error, Result, RowSet, Value, limits};
 use reportcraft_model::{AggregateFn, Band, Content, Report, TextStyle};
 use serde::{Deserialize, Serialize};
 
@@ -60,11 +60,19 @@ pub enum Shape {
     },
 }
 
+/// Rows laid out between two looks at the cancel flag.
+const CANCEL_EVERY: usize = 256;
+
 /// Parameter values for one render, by parameter name.
 pub type Params = BTreeMap<String, String>;
 
 /// Lays `report` out over `rows`.
 pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Document> {
+    layout_with_cancel(report, rows, params, &Cancel::default())
+}
+
+/// `layout`, stopping with an error once `cancel` is raised or past its deadline.
+pub fn layout_with_cancel(report: &Report, rows: &RowSet, params: &Params, cancel: &Cancel) -> Result<Document> {
     report.validate()?;
     let group_cols = report
         .groups
@@ -79,6 +87,9 @@ pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Documen
     w.page_header();
     let mut open_from = 0;
     for (pos, &row) in order.iter().enumerate() {
+        if pos % CANCEL_EVERY == 0 {
+            cancel.check("the render")?;
+        }
         if pos > 0 {
             let prev = order.get(pos - 1).copied().unwrap_or(row);
             let level = group_cols.iter().position(|&c| rows.value(row_of(rows, prev), c) != rows.value(row_of(rows, row), c));
@@ -556,6 +567,17 @@ mod tests {
         assert!(doc.pages.iter().all(|p| !p.items.is_empty()), "no blank page");
         let first_texts: Vec<&str> = doc.pages.iter().filter_map(|p| p.items.first().map(|i| i.text.as_str())).collect();
         assert_eq!(first_texts, ["Lyon", "Lyon", "Lyon", "Lyon", "Paris", "Paris"]);
+    }
+
+    #[test]
+    fn a_cancelled_render_stops() {
+        let report = Report::new("r");
+        let cancel = Cancel::default();
+        assert!(layout_with_cancel(&report, &rows(), &Params::new(), &cancel).is_ok());
+        cancel.cancel();
+        assert!(matches!(layout_with_cancel(&report, &rows(), &Params::new(), &cancel), Err(Error::Cancelled(_))));
+        let late = Cancel::default().with_time_limit(std::time::Duration::ZERO);
+        assert!(matches!(layout_with_cancel(&report, &rows(), &Params::new(), &late), Err(Error::TooLarge(_))));
     }
 
     #[test]

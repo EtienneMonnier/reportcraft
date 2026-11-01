@@ -11,10 +11,12 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--query-log]
-  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--query-log]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--query-log] [--timeout SECONDS] [--max-memory MB]
+  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--query-log] [--timeout SECONDS] [--max-memory MB]
                                             errors and warnings, checked against the data when given
-  (--query-log prints each query run, its time and row count, to stderr)
+  (--query-log prints each query run, its time and row count, to stderr;
+   --timeout SECONDS limits the query and the render, default 30 and 120;
+   --max-memory MB limits the rows read, default 1024)
   schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
                                             tables, columns and keys; rows with --preview
   (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
@@ -85,13 +87,18 @@ fn read(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The session with the report and data loaded, the `--param` values, and `--timeout`.
+type Loaded = (Session, serde_json::Map<String, Json>, Option<u64>);
+
 /// Loads the report and data named by the shared options (`REPORT.json`, `--sample`, `--data`,
 /// `--sqlite` with `--query`) and hands every other option to `other`.
 fn load_inputs<'a>(
     args: &'a [String],
     mut other: impl FnMut(&'a str, &mut std::slice::Iter<'a, String>) -> Result<(), String>,
-) -> Result<(Session, serde_json::Map<String, Json>), String> {
+) -> Result<Loaded, String> {
     let mut s = Session::default();
+    let (mut timeout, mut max_memory) = (None, None);
+    let number = |v: &str, flag: &str| v.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{flag}` expects a positive whole number"));
     let (mut sqlite, mut postgres, mut query, mut show_log) = (None, None, None, false);
     let mut params = serde_json::Map::new();
     let mut it = args.iter();
@@ -119,17 +126,25 @@ fn load_inputs<'a>(
             "--postgres" => postgres = Some(flag_value(&mut it, a)?.to_owned()),
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
             "--query-log" => show_log = true,
+            "--timeout" => timeout = Some(number(flag_value(&mut it, a)?, a)?),
+            "--max-memory" => max_memory = Some(number(flag_value(&mut it, a)?, a)?),
             path if !path.starts_with("--") => {
                 exec(&mut s, "report.load", json!({"json": read(path)?}))?;
             }
             flag => other(flag, &mut it)?,
         }
     }
-    let loaded = match (sqlite, postgres, query) {
-        (Some(path), None, Some(query)) => exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query, "params": params})).map(drop),
-        (None, Some(connection), Some(query)) => {
-            exec(&mut s, "data.loadPostgres", json!({"connection": connection, "query": query, "params": params})).map(drop)
+    let load = |source: (&str, String), query: String| {
+        let mut p = json!({"query": query, "params": params, "timeoutSeconds": timeout, "maxMegabytes": max_memory});
+        if let Some(map) = p.as_object_mut() {
+            map.insert(source.0.to_owned(), Json::String(source.1));
+            map.retain(|_, v| !v.is_null());
         }
+        p
+    };
+    let loaded = match (sqlite, postgres, query) {
+        (Some(path), None, Some(query)) => exec(&mut s, "data.loadSqlite", load(("path", path), query)).map(drop),
+        (None, Some(connection), Some(query)) => exec(&mut s, "data.loadPostgres", load(("connection", connection), query)).map(drop),
         (None, None, None) => Ok(()),
         (Some(_), Some(_), _) => Err("use either `--sqlite` or `--postgres`".to_owned()),
         _ => Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
@@ -138,7 +153,10 @@ fn load_inputs<'a>(
     if show_log {
         eprint!("{}", query_log_text(&exec(&mut s, "data.queryLog", json!({}))?));
     }
-    loaded.map(|()| (s, params))
+    if max_memory.is_some() && s.rows.columns.is_empty() && loaded.is_ok() {
+        eprintln!("reportcraft-cli: `--max-memory` applies to `--sqlite` and `--postgres` data only");
+    }
+    loaded.map(|()| (s, params, timeout))
 }
 
 /// One line per query: when, where, how long, how many rows (or the error), then the SQL and its values.
@@ -163,7 +181,7 @@ fn query_log_text(log: &Json) -> String {
 
 fn render(args: &[String]) -> Result<(), String> {
     let (mut format, mut out) = ("html".to_owned(), None);
-    let (mut s, params) = load_inputs(args, |a, it| {
+    let (mut s, params, timeout) = load_inputs(args, |a, it| {
         match a {
             "--format" => format = flag_value(it, a)?.to_owned(),
             "--out" => out = Some(flag_value(it, a)?.to_owned()),
@@ -171,7 +189,11 @@ fn render(args: &[String]) -> Result<(), String> {
         }
         Ok(())
     })?;
-    let result = exec(&mut s, "report.render", json!({"format": format, "params": params}))?;
+    let mut render = json!({"format": format, "params": params});
+    if let (Some(t), Some(map)) = (timeout, render.as_object_mut()) {
+        map.insert("timeoutSeconds".to_owned(), json!(t));
+    }
+    let result = exec(&mut s, "report.render", render)?;
     let body = match result.get("html").and_then(Json::as_str) {
         Some(html) => html.to_owned(),
         None => serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?,
@@ -289,7 +311,7 @@ fn preview_text(rows: &Json) -> String {
 
 fn validate(args: &[String]) -> Result<(), String> {
     let mut as_json = false;
-    let (mut s, _) = load_inputs(args, |a, _| {
+    let (mut s, _, _) = load_inputs(args, |a, _| {
         if a == "--json" {
             as_json = true;
             Ok(())

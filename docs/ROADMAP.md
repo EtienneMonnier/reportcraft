@@ -32,7 +32,11 @@ Anything marked **decision** waits for a maintainer.
   - [x] PostgreSQL schema discovery with R1.2 (same `SchemaSource` trait)
 - [x] R1.8 Typed parameters: number, boolean, date, date range, single and multiple choice, with defaults, allowed values, validation and dependent parameters (§7) (#27)
   - [ ] Dependent parameters: choices computed from a query that uses other parameters (e.g. items of the chosen branch)
-- [ ] R1.9 Cancel long-running queries and renders; time and memory limits (§10, §13)
+- [x] R1.9 Cancel long-running queries and renders; time and memory limits (§10, §13) (#28)
+  - [ ] CLI: Ctrl+C sends PostgreSQL a cancel before exiting (today the server stops the statement at its time limit)
+  - [ ] Designer: a Stop button and progress while a query or render runs (R3)
+  - [ ] MCP: progress notifications for long commands
+  - [ ] CPU limit (one core per render today; revisit with a server profile)
 - [ ] R1.10 Optional cache of query results, with the refresh time shown (§2 FR-DATA-004, §5)
 
 ## R2 — Paginated reports (owner: open)

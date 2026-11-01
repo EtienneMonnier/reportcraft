@@ -174,3 +174,17 @@ columns left to right, the row's height is its tallest label, then the next row 
 that doesn't fit starts a new page. Group headers and footers close a partly filled row and sit
 in the first column, so labels of different groups never share a row. Report headers and
 footers still span the page. With `down` (the default) or one column, nothing changes.
+
+## Cancellation is a shared flag, dropped when the command ends (R1.9)
+
+`reportcraft_core::Cancel` is an atomic flag shared by its clones, plus an optional deadline
+(native only: the web build has no clock). Long work checks it between steps: SQLite through its
+progress handler, PostgreSQL through a watcher thread that sends the server a cancel request
+(the statement is stopped there, not just abandoned), the layout every 256 rows. A raised flag
+gives `Error::Cancelled`; a passed deadline gives `Error::TooLarge` like the existing time
+limits. The session lowers the flag when a command ends, so a stop request never outlives the
+command it was meant for. The MCP server reads messages on a separate thread so a
+`notifications/cancelled` reaches the running request; one for a request not yet started makes
+the server skip it without a reply, as the protocol allows. Memory is limited by an estimate of
+the rows' size (enum plus text), cheap to keep up to date and close enough to stop a runaway
+query long before the process runs out of memory.

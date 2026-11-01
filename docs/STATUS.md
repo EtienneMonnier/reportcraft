@@ -40,7 +40,12 @@
   (file, or `user@host:port/database`, never the password), SQL as sent, bound values, duration and
   row count or error; the newest 200 are kept (`data.queryLog`, `data.clearQueryLog`,
   `--query-log` in `render` and `validate`, printed to stderr even when the query fails).
-- CLI and MCP server reaching every command. 69 tests (plus 8 live PostgreSQL tests run on demand), including 10 golden rendering snapshots; `cargo xtask ci` green.
+- Cancellation and limits: a running query or render stops on request (`Session::cancel_handle`;
+  MCP `notifications/cancelled`), SQLite through its progress handler, PostgreSQL by a cancel sent
+  to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
+  (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
+  `--max-memory`). A stopped command leaves the session as it was.
+- CLI and MCP server reaching every command. 75 tests (plus 8 live PostgreSQL tests run on demand), including 10 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).
