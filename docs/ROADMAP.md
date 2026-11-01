@@ -33,7 +33,10 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R1.10 Optional cache of query results, with the refresh time shown (§2 FR-DATA-004, §5)
 
 ## R2 — Paginated reports (owner: open)
-- [ ] R2.1 Number, date and currency formats on fields (shared rules with GridCraft's numfmt where possible) — claimed: Claude (for EtienneMonnier), branch feature/r2.1-formats
+- [x] R2.1 Number, date and currency formats on fields (shared rules with GridCraft's numfmt where possible) (#7)
+  - [ ] Day and month names in the report's language (`%A`, `%B` are English today)
+  - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
+  - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
 - [ ] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — **decision**: syntax
 - [ ] R2.3 Keep-together, repeat group header on new page, page break before group
 - [ ] R2.4 Lines, boxes and images in bands

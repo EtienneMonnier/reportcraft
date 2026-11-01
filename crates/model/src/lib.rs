@@ -5,6 +5,10 @@
 //! from the band's top-left corner.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod format;
+
+pub use format::{Format, LOCALES, LocaleStyle, MAX_DECIMALS, locale_or_default, locale_style};
+
 use reportcraft_core::{Column, Error, FieldType, Result, limits};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +20,9 @@ pub const FORMAT_VERSION: u32 = 1;
 pub struct Report {
     pub format_version: u32,
     pub title: String,
+    /// How numbers and dates are written (`en`, `en-US`, `fr`, `de-CH`…; unknown tags write as `en`).
+    #[serde(default = "default_locale")]
+    pub locale: String,
     #[serde(default)]
     pub page: PageSetup,
     #[serde(default)]
@@ -36,6 +43,15 @@ pub struct Report {
     pub page_footer: Band,
     #[serde(default)]
     pub report_footer: Band,
+}
+
+/// Whether a `strftime`-style pattern only uses known directives.
+pub fn date_pattern_is_valid(pattern: &str) -> bool {
+    pattern.len() <= 200 && !chrono::format::StrftimeItems::new(pattern).any(|i| matches!(i, chrono::format::Item::Error))
+}
+
+fn default_locale() -> String {
+    "en".to_owned()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -100,6 +116,9 @@ pub struct Element {
     #[serde(default)]
     pub style: TextStyle,
     pub content: Content,
+    /// How the value is written; `None` writes it plainly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -163,6 +182,7 @@ impl Report {
         Self {
             format_version: FORMAT_VERSION,
             title: title.into(),
+            locale: default_locale(),
             page: PageSetup::default(),
             parameters: Vec::new(),
             sort: Vec::new(),
@@ -234,6 +254,14 @@ impl Report {
                 return Err(Error::Invalid(format!("{name}: band is taller than the room between page header and footer")));
             }
             for el in &band.elements {
+                if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
+                    return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
+                }
+                if let Some(Format::Date { pattern: Some(p) }) = &el.format
+                    && !date_pattern_is_valid(p)
+                {
+                    return Err(Error::Invalid(format!("{name}: date pattern `{p}` is not valid")));
+                }
                 if ![el.x_mm, el.y_mm, el.width_mm, el.height_mm].into_iter().all(finite_pos)
                     || !(el.style.size_pt.is_finite() && el.style.size_pt > 0.0 && el.style.size_pt <= 400.0)
                 {
@@ -328,6 +356,13 @@ impl Report {
                             out.push(Diagnostic::warning(&at, format!("`{field}` is not numeric: this total shows nothing")));
                         }
                     }
+                    Content::Field { field } if el.format.as_ref().is_some_and(Format::is_numeric) => {
+                        if let Some(Some(c)) = column(field)
+                            && matches!(c.field_type, FieldType::Text | FieldType::Bool)
+                        {
+                            out.push(Diagnostic::warning(&at, format!("`{field}` is not numeric: the number format won't apply")));
+                        }
+                    }
                     Content::Parameter { name } if !self.parameters.iter().any(|p| &p.name == name) => {
                         out.push(Diagnostic::warning(
                             &at,
@@ -337,6 +372,9 @@ impl Report {
                     _ => {}
                 }
             }
+        }
+        if locale_style(&self.locale).is_none() {
+            out.push(Diagnostic::warning("locale", format!("unknown locale `{}`: numbers and dates are written as in `en`", self.locale)));
         }
         if elements == 0 {
             out.push(Diagnostic::warning("report", "the report has no elements: every page is blank"));
@@ -361,6 +399,7 @@ mod tests {
                 height_mm: 5.0,
                 style: TextStyle::default(),
                 content: Content::Field { field: "name".into() },
+                format: Some(Format::Number { decimals: 2, grouping: true }),
             }],
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
@@ -371,7 +410,15 @@ mod tests {
     fn check_reports_every_problem_with_its_location() {
         let col = |n: &str, t| Column { name: n.into(), field_type: t };
         let columns = [col("branch", FieldType::Text), col("amount", FieldType::Number)];
-        let el = |x: f64, w: f64, content: Content| Element { x_mm: x, y_mm: 0.0, width_mm: w, height_mm: 5.0, style: TextStyle::default(), content };
+        let el = |x: f64, w: f64, content: Content| Element {
+            x_mm: x,
+            y_mm: 0.0,
+            width_mm: w,
+            height_mm: 5.0,
+            style: TextStyle::default(),
+            content,
+            format: None,
+        };
         let mut r = Report::new("t");
         r.groups.push(Group { field: "region".into(), header: Band::default(), footer: Band::default() });
         r.sort.push(SortKey { field: "amount".into(), descending: false });
@@ -396,6 +443,32 @@ mod tests {
         // Without data, only the definition itself is checked.
         assert!(!r.check(None).iter().any(|d| d.message.contains("unknown field")));
         assert!(Report::new("blank").check(None).iter().any(|d| d.message.contains("blank")));
+    }
+
+    #[test]
+    fn formats_are_validated_and_checked() {
+        let el = |content: Content, format: Format| Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 10.0,
+            height_mm: 4.0,
+            style: TextStyle::default(),
+            content,
+            format: Some(format),
+        };
+        let mut r = Report::new("t");
+        r.locale = "xx-YY".into();
+        r.detail =
+            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "name".into() }, Format::Number { decimals: 2, grouping: true })] };
+        let columns = [Column { name: "name".into(), field_type: FieldType::Text }];
+        let found = r.check(Some(&columns));
+        assert!(found.iter().any(|d| d.location == "locale" && d.severity == Severity::Warning));
+        assert!(found.iter().any(|d| d.message.contains("number format won't apply")));
+        r.detail.elements = vec![el(Content::Text { text: "x".into() }, Format::Date { pattern: Some("%Q".into()) })];
+        assert!(r.validate().is_err(), "unknown strftime directive");
+        r.detail.elements = vec![el(Content::Text { text: "x".into() }, Format::Percent { decimals: 11 })];
+        assert!(r.validate().is_err(), "too many decimals");
+        assert!(date_pattern_is_valid("%d/%m/%Y %H:%M") && !date_pattern_is_valid("%"));
     }
 
     #[test]

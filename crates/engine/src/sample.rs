@@ -1,6 +1,6 @@
 //! Built-in samples, defined in code. The data is invented for ReportCraft.
 
-use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Group, Parameter, Report, SortKey, TextStyle};
+use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Format, Group, Parameter, Report, SortKey, TextStyle};
 
 /// A sample's report definition and CSV data, by name.
 pub fn by_name(name: &str) -> Option<(Report, &'static str)> {
@@ -24,7 +24,12 @@ Annecy,Scaffold tower,9,405.00
 ";
 
 fn text(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content }
+    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None }
+}
+
+/// Amounts: two decimals, grouped thousands.
+fn money(el: Element) -> Element {
+    Element { format: Some(Format::Number { decimals: 2, grouping: true }), ..el }
 }
 
 fn field(name: &str) -> Content {
@@ -64,17 +69,21 @@ fn rentals() -> Report {
             elements: vec![
                 text(0.0, 80.0, Content::Text { text: "Branch total".into() }, bold),
                 text(90.0, 30.0, sum("days"), bold_right),
-                text(130.0, 50.0, sum("amount"), bold_right),
+                money(text(130.0, 50.0, sum("amount"), bold_right)),
             ],
         },
     });
     r.detail = Band {
         height_mm: 6.0,
-        elements: vec![text(5.0, 75.0, field("item"), plain), text(90.0, 30.0, field("days"), right), text(130.0, 50.0, field("amount"), right)],
+        elements: vec![
+            text(5.0, 75.0, field("item"), plain),
+            text(90.0, 30.0, field("days"), right),
+            money(text(130.0, 50.0, field("amount"), right)),
+        ],
     };
     r.report_footer = Band {
         height_mm: 9.0,
-        elements: vec![text(0.0, 80.0, Content::Text { text: "Grand total".into() }, bold), text(130.0, 50.0, sum("amount"), bold_right)],
+        elements: vec![text(0.0, 80.0, Content::Text { text: "Grand total".into() }, bold), money(text(130.0, 50.0, sum("amount"), bold_right))],
     };
     r.page_footer = Band { height_mm: 6.0, elements: vec![text(130.0, 50.0, Content::PageNumber, right)] };
     r
