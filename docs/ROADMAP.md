@@ -47,7 +47,9 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts
 - [ ] R2.7 XLSX and DOCX export — **decision**: reuse GridCraft/WordCraft writers or own minimal writers
 - [ ] R2.8 Printing through craft-libs `craft-print`
-- [ ] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) — claimed: Claude (for EtienneMonnier), branch feature/r2.9-paper-columns
+- [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
+  - [ ] Columns filled across then down (needed by labels, R2.12)
+  - [ ] Different first page (no page header on page one, other margins)
 - [ ] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2
 - [ ] R2.11 Barcodes and QR codes (§4 FR-PRINT-003)
 - [ ] R2.12 Labels: detail repeated across a grid of labels per page (§18.5)

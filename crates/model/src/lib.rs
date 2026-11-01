@@ -58,15 +58,116 @@ fn default_locale() -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PageSetup {
+    /// A standard size; when set, it decides the page size and `width_mm`/`height_mm` are ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper: Option<Paper>,
+    #[serde(default, skip_serializing_if = "Orientation::is_portrait")]
+    pub orientation: Orientation,
+    #[serde(default = "a4_width")]
     pub width_mm: f64,
+    #[serde(default = "a4_height")]
     pub height_mm: f64,
     pub margin_mm: f64,
+    /// Group and detail bands flow down one column, then the next; report and page headers and
+    /// footers span the page.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub columns: u8,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub column_gap_mm: f64,
+}
+
+/// Most columns a page may have.
+pub const MAX_COLUMNS: u8 = 16;
+
+fn a4_width() -> f64 {
+    210.0
+}
+fn a4_height() -> f64 {
+    297.0
+}
+fn one() -> u8 {
+    1
+}
+fn is_one(n: &u8) -> bool {
+    *n == 1
+}
+fn is_zero(n: &f64) -> bool {
+    *n == 0.0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Paper {
+    A3,
+    A4,
+    A5,
+    Letter,
+    Legal,
+}
+
+impl Paper {
+    /// Portrait width and height in millimetres.
+    pub fn size_mm(self) -> (f64, f64) {
+        match self {
+            Paper::A3 => (297.0, 420.0),
+            Paper::A4 => (210.0, 297.0),
+            Paper::A5 => (148.0, 210.0),
+            Paper::Letter => (215.9, 279.4),
+            Paper::Legal => (215.9, 355.6),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Orientation {
+    #[default]
+    Portrait,
+    Landscape,
+}
+
+impl Orientation {
+    fn is_portrait(&self) -> bool {
+        *self == Orientation::Portrait
+    }
+}
+
+impl PageSetup {
+    /// A standard paper size, 15 mm margins, one column.
+    pub fn paper(paper: Paper, orientation: Orientation) -> Self {
+        Self { paper: Some(paper), orientation, ..Self::default() }
+    }
+
+    /// The page's width and height: the paper's when set, else `width_mm`/`height_mm`; landscape
+    /// puts the long side across.
+    pub fn size(&self) -> (f64, f64) {
+        let (w, h) = self.paper.map_or((self.width_mm, self.height_mm), Paper::size_mm);
+        if self.orientation == Orientation::Landscape && w < h { (h, w) } else { (w, h) }
+    }
+
+    /// Width between the margins.
+    pub fn body_width(&self) -> f64 {
+        self.size().0 - 2.0 * self.margin_mm
+    }
+
+    /// Width of one column (the body width when there is one column).
+    pub fn column_width(&self) -> f64 {
+        let n = f64::from(self.columns.max(1));
+        (self.body_width() - self.column_gap_mm * (n - 1.0)) / n
+    }
 }
 
 impl Default for PageSetup {
     /// A4 portrait, 15 mm margins.
     fn default() -> Self {
-        Self { width_mm: 210.0, height_mm: 297.0, margin_mm: 15.0 }
+        Self {
+            paper: None,
+            orientation: Orientation::Portrait,
+            width_mm: a4_width(),
+            height_mm: a4_height(),
+            margin_mm: 15.0,
+            columns: 1,
+            column_gap_mm: 0.0,
+        }
     }
 }
 
@@ -230,15 +331,22 @@ impl Report {
     pub fn validate(&self) -> Result<()> {
         let p = &self.page;
         let finite_pos = |v: f64| v.is_finite() && v >= 0.0;
-        if !(finite_pos(p.width_mm) && finite_pos(p.height_mm) && finite_pos(p.margin_mm)) {
+        let (width, height) = p.size();
+        if !(finite_pos(width) && finite_pos(height) && finite_pos(p.margin_mm) && finite_pos(p.column_gap_mm)) {
             return Err(Error::Invalid("page sizes must be finite and not negative".into()));
         }
-        if p.width_mm > 5_000.0 || p.height_mm > 5_000.0 {
+        if width > 5_000.0 || height > 5_000.0 {
             return Err(Error::TooLarge("page larger than 5 m".into()));
         }
-        let body = p.height_mm - 2.0 * p.margin_mm;
-        if p.width_mm - 2.0 * p.margin_mm <= 0.0 || body <= 0.0 {
+        let body = height - 2.0 * p.margin_mm;
+        if p.body_width() <= 0.0 || body <= 0.0 {
             return Err(Error::Invalid("margins leave no room on the page".into()));
+        }
+        if p.columns == 0 || p.columns > MAX_COLUMNS {
+            return Err(Error::Invalid(format!("columns must be between 1 and {MAX_COLUMNS}")));
+        }
+        if p.column_width() <= 0.0 {
+            return Err(Error::Invalid("the column gap leaves no room for the columns".into()));
         }
         if let Some(problem) = self.parameters.iter().flat_map(Parameter::declaration_problems).next() {
             return Err(Error::Invalid(problem));
@@ -333,16 +441,19 @@ impl Report {
                 out.push(Diagnostic::warning(format!("parameters[{i}]"), format!("parameter `{}` is declared twice", p.name)));
             }
         }
-        let body_width = self.page.width_mm - 2.0 * self.page.margin_mm;
+        let full_width = self.page.body_width();
+        let column_width = self.page.column_width();
         let mut elements = 0usize;
         for (band_name, band) in self.bands() {
             let repeating = band_name == "page_header" || band_name == "page_footer";
+            let spans_page = repeating || band_name.starts_with("report_");
+            let (width, edge) = if spans_page || self.page.columns <= 1 { (full_width, "the right margin") } else { (column_width, "its column") };
             for (i, el) in band.elements.iter().enumerate() {
                 elements += 1;
                 let at = format!("{band_name}.elements[{i}]");
                 let right = el.x_mm + el.width_mm;
-                if right > body_width + 1e-9 {
-                    out.push(Diagnostic::warning(&at, format!("extends {:.1} mm past the right margin", right - body_width)));
+                if right > width + 1e-9 {
+                    out.push(Diagnostic::warning(&at, format!("extends {:.1} mm past {edge}", right - width)));
                 }
                 if el.y_mm + el.height_mm > band.height_mm + 1e-9 {
                     out.push(Diagnostic::warning(&at, "extends below its band and may overlap the next one"));
@@ -379,7 +490,7 @@ impl Report {
             }
         }
         let repeated: f64 = self.groups.iter().filter(|g| g.repeat_header).map(|g| g.header.height_mm).sum();
-        let body = self.page.height_mm - 2.0 * self.page.margin_mm - self.page_header.height_mm - self.page_footer.height_mm;
+        let body = self.page.size().1 - 2.0 * self.page.margin_mm - self.page_header.height_mm - self.page_footer.height_mm;
         if repeated > 0.0 && repeated + self.detail.height_mm > body {
             out.push(Diagnostic::warning("groups", "repeated group headers leave no room for a detail row on a page"));
         }
@@ -486,6 +597,26 @@ mod tests {
         r.detail.elements = vec![el(Content::Text { text: "x".into() }, Format::Percent { decimals: 11 })];
         assert!(r.validate().is_err(), "too many decimals");
         assert!(date_pattern_is_valid("%d/%m/%Y %H:%M") && !date_pattern_is_valid("%"));
+    }
+
+    #[test]
+    fn paper_sizes_orientation_and_columns() {
+        let a4l = PageSetup::paper(Paper::A4, Orientation::Landscape);
+        assert_eq!(a4l.size(), (297.0, 210.0));
+        let custom = PageSetup { width_mm: 100.0, height_mm: 50.0, orientation: Orientation::Landscape, ..PageSetup::default() };
+        assert_eq!(custom.size(), (100.0, 50.0), "already landscape");
+        let tall = PageSetup { orientation: Orientation::Landscape, ..PageSetup::default() };
+        assert_eq!(tall.size(), (297.0, 210.0), "default A4 turned");
+        let cols = PageSetup { columns: 3, column_gap_mm: 5.0, ..PageSetup::paper(Paper::A4, Orientation::Portrait) };
+        assert!((cols.column_width() - (180.0 - 10.0) / 3.0).abs() < 1e-9);
+        let read: PageSetup = serde_json::from_str(r#"{"paper":"Letter","orientation":"landscape","margin_mm":10}"#).unwrap();
+        assert_eq!(read.size(), (279.4, 215.9));
+        let mut r = Report::new("t");
+        r.page.columns = 0;
+        assert!(r.validate().is_err());
+        r.page.columns = 4;
+        r.page.column_gap_mm = 100.0;
+        assert!(r.validate().is_err(), "the gap leaves no room");
     }
 
     #[test]

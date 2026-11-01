@@ -143,3 +143,17 @@ only page and repeated headers is "fresh": no break is taken there (a break woul
 room), which rules out blank pages and endless breaks, and `page_break_before` on a group that
 already starts a page does nothing. A group's footer that flows to a new page shows the group's
 repeated header above it. `report.validate` warns when repeated headers leave no room for a row.
+
+## Paper, orientation and columns (R2.9)
+
+`PageSetup` gains `paper` (A3, A4, A5, Letter, Legal), `orientation`, `columns` and
+`column_gap_mm`, all optional. `width_mm`/`height_mm` stay the source of truth when no paper is
+named, so earlier files read the same; landscape puts the long side across whichever way the size
+was given. `PageSetup::size()` is the one place that answers "how big is the page".
+
+With several columns, group headers and footers and the detail band go into the current column
+(their elements are positioned within the column's width) and flow down, then into the next
+column below the page header, repeating the open groups' headers, then onto a new page. Report and
+page headers and footers span the page; the report footer is placed below the lowest column. With
+one column the layout is unchanged, and the existing snapshots did not move. `report.validate`
+checks column bands against the column width.

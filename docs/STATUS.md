@@ -16,6 +16,9 @@
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
 - Banded layout: report/page headers and footers, nested groups, detail, sort, sum/count/avg/min/max,
   parameters, page breaks, "page N / M"; HTML output, printable from a browser.
+- Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
+  gap (group and detail bands flow down a column then the next; report and page headers and
+  footers span the page).
 - Group pagination: keep a group on one page when it fits, repeat its header on the pages it
   continues on, start each group on a new page; never a blank page or an endless break.
 - `report.validate` / `reportcraft-cli validate`: every error and warning with its location (unknown
@@ -29,7 +32,7 @@
   formats (a date range writes both ends).
 - Parameters in queries, bound and never spliced: `:name`, `:range.from` / `:range.to`, `IN (:list)`
   (`data.loadSqlite` / `data.loadPostgres` take `params`; the CLI's `--param` reaches the query).
-- CLI and MCP server reaching every command. 62 tests (plus 8 live PostgreSQL tests run on demand), including 7 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 64 tests (plus 8 live PostgreSQL tests run on demand), including 8 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).
