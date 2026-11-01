@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 reportcraft-core.workspace = true
+reportcraft-barcode.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

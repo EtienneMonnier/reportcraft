@@ -572,6 +572,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "reportcraft-barcode"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "reportcraft-cli"
 version = "0.1.0"
 dependencies = [
@@ -624,6 +632,7 @@ name = "reportcraft-layout"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "reportcraft-barcode",
  "reportcraft-core",
  "reportcraft-model",
  "serde",
@@ -642,6 +651,7 @@ name = "reportcraft-model"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "reportcraft-barcode",
  "reportcraft-core",
  "serde",
  "serde_json",

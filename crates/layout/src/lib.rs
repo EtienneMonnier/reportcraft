@@ -58,7 +58,19 @@ pub enum Shape {
         border_color: String,
         fill: Option<String>,
     },
+    /// A barcode drawn over the box: `rows` × `columns` modules, row-major, `1` dark and `0`
+    /// light, to be surrounded by `quiet` light modules. A linear barcode has one row, stretched
+    /// to the box's height; a matrix code is square, as large as the box allows.
+    Barcode {
+        columns: usize,
+        rows: usize,
+        quiet: usize,
+        modules: String,
+    },
 }
+
+/// Height of the text under a linear barcode.
+const BARCODE_TEXT_MM: f64 = 3.5;
 
 /// Rows laid out between two looks at the cancel flag.
 const CANCEL_EVERY: usize = 256;
@@ -408,6 +420,10 @@ impl<'a> Writer<'a> {
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
             }
+            if let Content::Barcode { .. } = &el.content {
+                self.barcode(el, scope, left);
+                continue;
+            }
             let text = self.eval(&el.content, el.format.as_ref(), scope);
             let shape = match &el.content {
                 Content::Line { thickness_mm, color } => Some(Shape::Line { thickness_mm: *thickness_mm, color: color.clone() }),
@@ -425,6 +441,51 @@ impl<'a> Writer<'a> {
                 style: el.style,
                 text,
             });
+        }
+    }
+
+    /// A barcode element: the symbol, the text under a linear one, or the value as text when the
+    /// symbology can't hold it.
+    fn barcode(&mut self, el: &reportcraft_model::Element, scope: Scope<'_>, left: f64) {
+        let Content::Barcode { symbology, field, text, show_text, ec_level } = &el.content else { return };
+        let value = match (field, text) {
+            (Some(f), _) => match (self.rows.column_index(f), scope.current) {
+                (Some(c), Some(r)) => self.rows.value(row_of(self.rows, r), c).to_string(),
+                _ => String::new(),
+            },
+            (None, Some(t)) => t.clone(),
+            (None, None) => String::new(),
+        };
+        let (x, y) = (left + el.x_mm, self.y + el.y_mm);
+        let item = |y_mm: f64, height_mm: f64, text: String, shape: Option<Shape>| Item {
+            x_mm: x,
+            y_mm,
+            width_mm: el.width_mm,
+            height_mm,
+            style: el.style,
+            text,
+            shape,
+        };
+        if value.trim().is_empty() {
+            return;
+        }
+        let symbol = match reportcraft_barcode::encode(*symbology, &value, *ec_level) {
+            Ok(s) => s,
+            Err(_) => {
+                self.page.items.push(item(y, el.height_mm, value, None));
+                return;
+            }
+        };
+        let with_text = symbology.is_linear() && *show_text && el.height_mm >= 2.0 * BARCODE_TEXT_MM;
+        let bars_height = if with_text { el.height_mm - BARCODE_TEXT_MM } else { el.height_mm };
+        let modules = symbol.modules.iter().map(|&d| if d { '1' } else { '0' }).collect();
+        let shape = Shape::Barcode { columns: symbol.columns, rows: symbol.rows, quiet: symbol.quiet, modules };
+        self.page.items.push(item(y, bars_height, String::new(), Some(shape)));
+        if with_text {
+            let mut under = item(y + bars_height, BARCODE_TEXT_MM, symbol.text, None);
+            under.style.size_pt = 8.0;
+            under.style.align = reportcraft_model::Align::Center;
+            self.page.items.push(under);
         }
     }
 
@@ -453,7 +514,7 @@ impl<'a> Writer<'a> {
                     .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()));
                 raw.map(|r| format::write(&Value::Text(r), format, &self.locale)).unwrap_or_default()
             }
-            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } => String::new(),
+            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } => String::new(),
         }
     }
 

@@ -25,6 +25,12 @@ fn snapshot(doc: &Document) -> String {
                     Shape::Rect { border_mm, border_color, fill } => {
                         format!("rect {border_mm:.2}mm {border_color} fill {}", fill.as_deref().unwrap_or("none"))
                     }
+                    // Linear: every module. Matrix: its size and dark-module count (the encoders
+                    // have their own tests, checked against a decoder).
+                    Shape::Barcode { columns, rows, quiet, modules } if *rows == 1 => format!("barcode {columns} modules quiet {quiet} {modules}"),
+                    Shape::Barcode { columns, rows, quiet, modules } => {
+                        format!("barcode {columns}x{rows} quiet {quiet}, {} dark", modules.bytes().filter(|&b| b == b'1').count())
+                    }
                 };
                 let _ = writeln!(out, "  {:>7.2} {:>7.2} {:>6.2}x{:<5.2} {what}", it.x_mm, it.y_mm, it.width_mm, it.height_mm);
                 continue;
@@ -390,4 +396,67 @@ fn labels_across() {
     let mut rows = rentals(25);
     rows.rows.sort_by(|a, b| a[0].sort_cmp(&b[0]));
     check("labels_across", &r, &rows, &Params::new());
+}
+
+#[test]
+fn barcodes() {
+    use reportcraft_model::{EcLevel, Symbology};
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let mut r = Report::new("Asset labels");
+    r.page = reportcraft_model::PageSetup { margin_mm: 10.0, columns: 2, column_gap_mm: 5.0, ..reportcraft_model::PageSetup::default() };
+    let code = |symbology, field_name: &str, x: f64, y: f64, w: f64, h: f64| Element {
+        x_mm: x,
+        y_mm: y,
+        width_mm: w,
+        height_mm: h,
+        style: plain,
+        format: None,
+        content: Content::Barcode { symbology, field: Some(field_name.into()), text: None, show_text: true, ec_level: EcLevel::M },
+    };
+    r.report_header = Band {
+        height_mm: 22.0,
+        elements: vec![
+            el(0.0, 120.0, Content::Text { text: "Asset labels".into() }, bold),
+            Element {
+                x_mm: 150.0,
+                y_mm: 0.0,
+                width_mm: 20.0,
+                height_mm: 20.0,
+                style: plain,
+                format: None,
+                content: Content::Barcode {
+                    symbology: Symbology::Qr,
+                    field: None,
+                    text: Some("https://example.com/assets".into()),
+                    show_text: false,
+                    ec_level: EcLevel::Q,
+                },
+            },
+        ],
+    };
+    r.detail = Band {
+        height_mm: 50.0,
+        elements: vec![
+            el(0.0, 60.0, field("name"), bold),
+            code(Symbology::Code128, "asset", 0.0, 7.0, 60.0, 15.0),
+            code(Symbology::Ean13, "ean", 0.0, 24.0, 40.0, 20.0),
+            code(Symbology::Qr, "url", 62.0, 7.0, 22.0, 22.0),
+        ],
+    };
+    let col = |name: &str| Column { name: name.into(), field_type: FieldType::Text };
+    let text = |v: &str| if v.is_empty() { Value::Null } else { Value::Text(v.into()) };
+    let rows = RowSet {
+        columns: vec![col("name"), col("asset"), col("ean"), col("url")],
+        rows: [
+            ["Scaffold tower", "AS-00017", "400638133393", "https://example.com/a/17"],
+            ["Mini excavator", "AS-00942", "4006381333931", "https://example.com/a/942"],
+            // Not an EAN-13: written as text. No URL: no QR code.
+            ["Generator 6 kVA", "AS-01003", "40063813339X", ""],
+        ]
+        .iter()
+        .map(|r| r.iter().map(|v| text(v)).collect())
+        .collect(),
+    };
+    check("barcodes", &r, &rows, &Params::new());
 }

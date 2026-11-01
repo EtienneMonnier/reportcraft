@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 reportcraft-core.workspace = true
 reportcraft-model.workspace = true
+reportcraft-barcode.workspace = true
 serde.workspace = true
 chrono.workspace = true
 

@@ -8,6 +8,7 @@ use std::process::{Command, ExitCode};
 /// Register a new crate here.
 const LAYERS: &[(&str, u8)] = &[
     ("reportcraft-core", 0),
+    ("reportcraft-barcode", 0),
     ("reportcraft-model", 1),
     ("reportcraft-data", 2),
     ("reportcraft-layout", 3),

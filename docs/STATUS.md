@@ -21,6 +21,10 @@
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
   gap (group and detail bands flow down a column then the next; report and page headers and
   footers span the page).
+- Barcodes: Code 128, EAN-13 (check digit added or verified) and QR code (UTF-8, levels L/M/Q/H,
+  versions 1–40), from a field or a fixed text, drawn as SVG with their quiet zone; a value the
+  symbology can't hold is written as text. Every symbology was checked with an independent decoder
+  (zxing-cpp), from the encoder and from a rendered page.
 - Labels: `column_order: across` fills a row of columns with detail bands, then the next row;
   group headers and footers start a new row.
 - Group pagination: keep a group on one page when it fits, repeat its header on the pages it
@@ -45,7 +49,7 @@
   to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
   (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
   `--max-memory`). A stopped command leaves the session as it was.
-- CLI and MCP server reaching every command. 75 tests (plus 8 live PostgreSQL tests run on demand), including 10 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 88 tests (plus 8 live PostgreSQL tests run on demand), including 11 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).

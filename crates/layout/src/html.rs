@@ -80,11 +80,46 @@ fn shapes(out: &mut String, page: &crate::Page, width: f64, height: f64) {
                     it.x_mm, it.y_mm, it.width_mm, it.height_mm
                 );
             }
+            Shape::Barcode { columns, rows, quiet, modules } => barcode(out, it, *columns, *rows, *quiet, modules),
             // A colour that isn't #rgb/#rrggbb never reaches the page.
             _ => {}
         }
     }
     out.push_str("</svg>\n");
+}
+
+/// A barcode on a white ground (its quiet zone included), dark modules as one path in module
+/// units: runs of dark modules in a row become one rectangle.
+fn barcode(out: &mut String, it: &crate::Item, columns: usize, rows: usize, quiet: usize, modules: &str) {
+    if columns == 0 || rows == 0 || modules.len() != columns * rows {
+        return;
+    }
+    let span = (columns + 2 * quiet) as f64;
+    let (width, height, sx, sy) = if rows == 1 {
+        (it.width_mm, it.height_mm, it.width_mm / span, it.height_mm)
+    } else {
+        let side = it.width_mm.min(it.height_mm);
+        (side, side, side / ((rows + 2 * quiet) as f64).max(span), side / ((rows + 2 * quiet) as f64).max(span))
+    };
+    if !(width > 0.0 && height > 0.0) {
+        return;
+    }
+    let _ = writeln!(out, "<rect x=\"{:.3}\" y=\"{:.3}\" width=\"{width:.3}\" height=\"{height:.3}\" fill=\"#ffffff\"/>", it.x_mm, it.y_mm);
+    let (ox, oy) = (it.x_mm + quiet as f64 * sx, it.y_mm + if rows == 1 { 0.0 } else { quiet as f64 * sy });
+    let mut d = String::new();
+    for (y, row) in modules.as_bytes().chunks(columns).enumerate() {
+        let mut x = 0;
+        while x < columns {
+            if row.get(x) == Some(&b'1') {
+                let run = row.iter().skip(x).take_while(|&&c| c == b'1').count();
+                let _ = write!(d, "M{x} {y}h{run}v1h-{run}z");
+                x += run;
+            } else {
+                x += 1;
+            }
+        }
+    }
+    let _ = writeln!(out, "<path transform=\"translate({ox:.3} {oy:.3}) scale({sx:.5} {sy:.5})\" fill=\"#000000\" d=\"{d}\"/>");
 }
 
 fn escape(s: &str) -> String {
