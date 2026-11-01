@@ -9,7 +9,7 @@
   (`data.loadSqlite`, `reportcraft-cli render … --sqlite FILE --query SQL`).
 - Banded layout: report/page headers and footers, nested groups, detail, sort, sum/count/avg/min/max,
   parameters, page breaks, "page N / M"; HTML output, printable from a browser.
-- CLI and MCP server reaching every command. 22 tests; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 27 tests, including 5 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No PostgreSQL or ODBC source yet, no number formats, no PDF, no designer UI (see `ROADMAP.md`).
