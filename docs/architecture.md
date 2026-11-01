@@ -18,6 +18,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `postgres` | Read-only PostgreSQL source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `layout` | Banded layout to `Document` (pages of positioned text); HTML writer |
+| L4 | `pdf` | PDF writer over `Document` through craft-libs' `craft-pdf` (Krilla): embedded font subsets, shaped text, vector shapes and barcodes |
 | L5 | `engine` | `Session`, the command registry (`cmd.rs`), built-in samples |
 | L6 | `mcp` | MCP server over stdio (hand-written JSON-RPC), one tool per command |
 | L6 | `ui-egui` | _(planned, R3.1)_ the designer |
@@ -34,7 +35,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
    footer at the bottom of each page. A band that doesn't fit moves to the next page. Aggregates
    are computed over the rows of the enclosing group (or the whole report). Page numbers are filled
    in once the page count is known.
-4. Writers turn the `Document` into HTML (today), PDF, XLSX or DOCX (roadmap R2).
+4. Writers turn the `Document` into HTML or PDF (today), XLSX or DOCX (roadmap R2.7).
 
 ## Report file
 

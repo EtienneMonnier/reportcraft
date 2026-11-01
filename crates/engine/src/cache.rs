@@ -1,6 +1,8 @@
 //! The query cache: results kept for a while so a report can be rendered again (other
 //! parameters for the layout, another format) without querying the database again. A load uses
 //! it only when it asks to (`cacheSeconds`), and says when the rows it hands over were read.
+// The web build has no clock and no database to cache: the store is unused there.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use std::collections::VecDeque;
 use std::sync::Arc;

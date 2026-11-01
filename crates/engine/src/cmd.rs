@@ -107,7 +107,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.render",
         label: "Render",
         menu: "Report",
-        params: r#"{"format"?: "html" | "json" (default "html"), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}, "timeoutSeconds"?: integer (default 120, at most 3600)}"#,
+        params: r#"{"format"?: "html" | "pdf" | "json" (default "html"; pdf comes back base64-encoded, fonts from REPORTCRAFT_FONT/REPORTCRAFT_FONT_BOLD, CRAFT_FONTS_DIR or the system), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}, "timeoutSeconds"?: integer (default 120, at most 3600)}"#,
         run: report_render,
     },
 ];
@@ -545,6 +545,27 @@ fn render_limit(s: &Session, _: &Json) -> reportcraft_core::Cancel {
     s.cancel().clone()
 }
 
+/// The laid-out document as PDF, base64-encoded, with the fonts used and any warnings.
+#[cfg(not(target_arch = "wasm32"))]
+fn render_pdf(s: &Session, doc: &reportcraft_layout::Document, cancel: &reportcraft_core::Cancel) -> EngineResult<Json> {
+    let fonts = reportcraft_pdf::Fonts::find()?;
+    let producer = concat!("ReportCraft ", env!("CARGO_PKG_VERSION"));
+    let pdf = reportcraft_pdf::to_pdf(doc, &fonts, producer, cancel)?;
+    Ok(json!({
+        "pages": doc.pages.len(),
+        "pdfBase64": crate::base64::encode(&pdf.bytes),
+        "bytes": pdf.bytes.len(),
+        "fonts": {"regular": fonts.source.regular, "bold": fonts.source.bold},
+        "warnings": pdf.warnings,
+        "refreshedAt": s.refreshed_at,
+    }))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render_pdf(_: &Session, _: &reportcraft_layout::Document, _: &reportcraft_core::Cancel) -> EngineResult<Json> {
+    Err(bad("report.render", "PDF export needs font files, not available in the browser build yet"))
+}
+
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let resolved = resolve_parameters(s, "report.render", params)?;
     let mut values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
@@ -558,7 +579,8 @@ fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let doc = reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?;
     match params.get("format").and_then(Json::as_str).unwrap_or("html") {
         "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc), "refreshedAt": s.refreshed_at})),
+        "pdf" => render_pdf(s, &doc, &render_limit(s, params)),
         "json" => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),
-        other => Err(bad("report.render", format!("unknown format `{other}` (html or json)"))),
+        other => Err(bad("report.render", format!("unknown format `{other}` (html, pdf or json)"))),
     }
 }

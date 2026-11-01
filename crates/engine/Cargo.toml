@@ -12,6 +12,7 @@ reportcraft-core.workspace = true
 reportcraft-model.workspace = true
 reportcraft-data.workspace = true
 reportcraft-layout.workspace = true
+reportcraft-pdf.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
