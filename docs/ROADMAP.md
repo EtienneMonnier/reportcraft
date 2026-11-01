@@ -18,13 +18,16 @@ Anything marked **decision** waits for a maintainer.
 ## R1 — Data connections (owner: open)
 - [x] R1.1 SQLite source (read-only), with a query and typed columns (#1)
   - [ ] Pick the database file through a named connection once R1.3 lands, so an MCP agent can only open files the user chose (specification §11)
-- [ ] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases
+- [x] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases (#2)
+  - [ ] TLS connections (`sslmode=require`): only plain connections today — **decision**: rustls-based connector
+  - [ ] Read `~/.pgpass` / `PGPASSFILE` as libpq does (PGPASSWORD works today)
+  - [ ] Run the live PostgreSQL tests in CI (needs a PostgreSQL service in craft-common-actions or a local job)
 - [ ] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
 - [ ] R1.5 Report parameters passed to queries as bound parameters (never string-spliced)
 - [ ] R1.6 Query log (what ran, when, how many rows)
 - [x] R1.7 Schema discovery: tables, views, columns, types, keys and relationships, with data preview (§2 FR-DATA-002) (#26)
-  - [ ] PostgreSQL schema discovery with R1.2 (same `SchemaSource` trait)
+  - [x] PostgreSQL schema discovery with R1.2 (same `SchemaSource` trait)
 - [ ] R1.8 Typed parameters: number, boolean, date, date range, single and multiple choice, with defaults, allowed values, validation and dependent parameters (§7)
 - [ ] R1.9 Cancel long-running queries and renders; time and memory limits (§10, §13)
 - [ ] R1.10 Optional cache of query results, with the refresh time shown (§2 FR-DATA-004, §5)

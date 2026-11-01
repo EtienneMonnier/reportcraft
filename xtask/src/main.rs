@@ -13,6 +13,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("reportcraft-layout", 3),
     // Native data sources: they implement `reportcraft-data`'s trait, so they sit above it.
     ("reportcraft-sqlite", 3),
+    ("reportcraft-postgres", 3),
     ("reportcraft-engine", 5),
     ("reportcraft-mcp", 6),
     ("reportcraft-ui-egui", 6),

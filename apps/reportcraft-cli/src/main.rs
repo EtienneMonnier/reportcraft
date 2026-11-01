@@ -11,10 +11,12 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL] [--format html|json] [--param NAME=VALUE]... [--out FILE]
-  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL] [--json]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... [--out FILE]
+  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json]
                                             errors and warnings, checked against the data when given
-  schema --sqlite FILE [--table NAME] [--preview N] [--json]   tables, columns and keys; rows with --preview
+  schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
+                                            tables, columns and keys; rows with --preview
+  (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
   mcp                                       MCP server on stdio
@@ -89,7 +91,7 @@ fn load_inputs<'a>(
     mut other: impl FnMut(&'a str, &mut std::slice::Iter<'a, String>) -> Result<(), String>,
 ) -> Result<Session, String> {
     let mut s = Session::default();
-    let (mut sqlite, mut query) = (None, None);
+    let (mut sqlite, mut postgres, mut query) = (None, None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -100,6 +102,7 @@ fn load_inputs<'a>(
                 exec(&mut s, "data.loadCsv", json!({"csv": read(flag_value(&mut it, a)?)?}))?;
             }
             "--sqlite" => sqlite = Some(flag_value(&mut it, a)?.to_owned()),
+            "--postgres" => postgres = Some(flag_value(&mut it, a)?.to_owned()),
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
             path if !path.starts_with("--") => {
                 exec(&mut s, "report.load", json!({"json": read(path)?}))?;
@@ -107,12 +110,16 @@ fn load_inputs<'a>(
             flag => other(flag, &mut it)?,
         }
     }
-    match (sqlite, query) {
-        (Some(path), Some(query)) => {
+    match (sqlite, postgres, query) {
+        (Some(path), None, Some(query)) => {
             exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query}))?;
         }
-        (None, None) => {}
-        _ => return Err("`--sqlite` and `--query` go together".to_owned()),
+        (None, Some(connection), Some(query)) => {
+            exec(&mut s, "data.loadPostgres", json!({"connection": connection, "query": query}))?;
+        }
+        (None, None, None) => {}
+        (Some(_), Some(_), _) => return Err("use either `--sqlite` or `--postgres`".to_owned()),
+        _ => return Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
     }
     Ok(s)
 }
@@ -169,28 +176,40 @@ fn print_sample(name: &str) -> Result<(), String> {
 }
 
 fn schema(args: &[String]) -> Result<(), String> {
-    let (mut path, mut table, mut preview, mut as_json) = (None, None, None, false);
+    let (mut path, mut connection, mut table, mut preview, mut as_json) = (None, None, None, None, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--sqlite" => path = Some(flag_value(&mut it, a)?.to_owned()),
+            "--postgres" => connection = Some(flag_value(&mut it, a)?.to_owned()),
             "--table" => table = Some(flag_value(&mut it, a)?.to_owned()),
             "--preview" => preview = Some(flag_value(&mut it, a)?.parse::<u64>().map_err(|_| "`--preview` expects a number of rows")?),
             "--json" => as_json = true,
             other => return Err(format!("unknown option `{other}`")),
         }
     }
-    let path = path.ok_or("`schema` needs `--sqlite FILE`")?;
+    let (describe, preview_cmd, source) = match (path, connection) {
+        (Some(p), None) => ("data.describeSqlite", "data.previewSqlite", json!({"path": p})),
+        (None, Some(c)) => ("data.describePostgres", "data.previewPostgres", json!({"connection": c})),
+        _ => return Err("`schema` needs `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
+    };
+    let with = |extra: Json| {
+        let mut p = source.clone();
+        if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            p.extend(e.clone());
+        }
+        p
+    };
     let mut s = Session::default();
     if let (Some(n), Some(t)) = (preview, table.as_deref()) {
-        let rows = exec(&mut s, "data.previewSqlite", json!({"path": path, "table": t, "limit": n}))?;
+        let rows = exec(&mut s, preview_cmd, with(json!({"table": t, "limit": n})))?;
         println!("{}", if as_json { rows.to_string() } else { preview_text(&rows) });
         return Ok(());
     }
     if preview.is_some() {
         return Err("`--preview` needs `--table NAME`".to_owned());
     }
-    let described = exec(&mut s, "data.describeSqlite", json!({"path": path, "table": table}))?;
+    let described = exec(&mut s, describe, with(json!({"table": table})))?;
     if as_json {
         println!("{described}");
         return Ok(());
