@@ -3,7 +3,7 @@
 
 use reportcraft_core::RowSet;
 use reportcraft_data::{CsvSource, DataSource};
-use reportcraft_layout::{Params, layout_with_cancel, to_html};
+use reportcraft_layout::{Params, to_html};
 use reportcraft_model::Report;
 use serde_json::{Value as Json, json};
 
@@ -29,12 +29,18 @@ static COMMANDS: &[CommandSpec] = &[
         run: report_load,
     },
     CommandSpec { id: "report.get", label: "Report definition", menu: "Report", params: "{}", run: report_get },
-    CommandSpec { id: "data.loadCsv", label: "Load CSV data", menu: "Data", params: r#"{"csv": string (header row first)}"#, run: data_load_csv },
+    CommandSpec {
+        id: "data.loadCsv",
+        label: "Load CSV data",
+        menu: "Data",
+        params: r#"{"csv": string (header row first), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        run: data_load_csv,
+    },
     CommandSpec {
         id: "data.loadSqlite",
         label: "Load SQLite data",
         menu: "Data",
-        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400)}"#,
+        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
         run: data_load_sqlite,
     },
     CommandSpec {
@@ -55,7 +61,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadPostgres",
         label: "Load PostgreSQL data",
         menu: "Data",
-        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400)}"#,
+        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
         run: data_load_postgres,
     },
     CommandSpec {
@@ -72,6 +78,7 @@ static COMMANDS: &[CommandSpec] = &[
         params: r#"{"connection": string, "table": string, "limit"?: integer (default 20, at most 1000)}"#,
         run: data_preview_postgres,
     },
+    CommandSpec { id: "data.datasets", label: "Datasets", menu: "Data", params: "{}", run: data_datasets },
     CommandSpec {
         id: "data.preview",
         label: "Preview data",
@@ -126,6 +133,7 @@ fn file_new(s: &mut Session, params: &Json) -> EngineResult<Json> {
     s.report = Report::new(title);
     s.rows = Default::default();
     s.refreshed_at = None;
+    s.datasets.clear();
     Ok(json!({"title": title}))
 }
 
@@ -149,8 +157,37 @@ fn report_get(s: &mut Session, _: &Json) -> EngineResult<Json> {
 }
 
 fn data_load_csv(s: &mut Session, params: &Json) -> EngineResult<Json> {
-    set_rows(s, CsvSource::new(str_param("data.loadCsv", params, "csv")?).read(None)?);
+    let rows = CsvSource::new(str_param("data.loadCsv", params, "csv")?).read(None)?;
+    if let Some(name) = dataset_of("data.loadCsv", params)? {
+        if !s.datasets.contains_key(&name) && s.datasets.len() >= MAX_DATASETS {
+            return Err(bad("data.loadCsv", format!("at most {MAX_DATASETS} datasets")));
+        }
+        let n = rows.rows.len();
+        let columns = serde_json::to_value(&rows.columns).unwrap_or_default();
+        s.datasets.insert(name.clone(), std::sync::Arc::new(rows));
+        return Ok(json!({"dataset": name, "columns": columns, "rows": n}));
+    }
+    set_rows(s, rows);
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+}
+
+/// Most named datasets a session keeps.
+const MAX_DATASETS: usize = 64;
+
+/// The `dataset` a load names, checked: letters, digits, `_` or `-`.
+fn dataset_of(command: &str, params: &Json) -> EngineResult<Option<String>> {
+    match params.get("dataset") {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::String(name)) if !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') => {
+            Ok(Some(name.clone()))
+        }
+        Some(_) => Err(bad(command, "`dataset` must be a name of letters, digits, `_` or `-` (at most 64)")),
+    }
+}
+
+fn data_datasets(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    let list: Vec<Json> = s.datasets.iter().map(|(name, rows)| json!({"name": name, "columns": rows.columns, "rows": rows.rows.len()})).collect();
+    Ok(json!({"datasets": list}))
 }
 
 /// Hands newly read rows to the report, noting when they were read.
@@ -199,6 +236,13 @@ struct Query<'a> {
 /// the rows to the report.
 #[cfg(not(target_arch = "wasm32"))]
 fn load_from_database(s: &mut Session, q: Query<'_>, params: &Json, read: impl FnOnce() -> reportcraft_core::Result<RowSet>) -> EngineResult<Json> {
+    let dataset = dataset_of(q.command, params)?;
+    if let Some(name) = &dataset
+        && !s.datasets.contains_key(name)
+        && s.datasets.len() >= MAX_DATASETS
+    {
+        return Err(bad(q.command, format!("at most {MAX_DATASETS} datasets")));
+    }
     let max_age = params.get("cacheSeconds").and_then(Json::as_u64).unwrap_or(0).min(86_400);
     let key = format!("{}\n{}\n{}\n{:?}\n{:?}\n{}", q.source, q.target, q.bound.sql, q.bound.values, q.limit, max_bytes_of(params));
     let mut logged = Logged::new(q.command, q.source, q.target, q.bound);
@@ -208,23 +252,33 @@ fn load_from_database(s: &mut Session, q: Query<'_>, params: &Json, read: impl F
         logged.entry.from_cache = true;
         logged.entry.rows = Some(hit.rows.rows.len());
         s.query_log.push(logged.entry);
-        s.rows = hit.rows;
-        s.refreshed_at = Some(hit.refreshed_at);
-        return Ok(loaded(s, true));
+        return Ok(hand_over(s, dataset, hit.rows, Some(hit.refreshed_at), true));
     }
     let rows = std::sync::Arc::new(logged.finish(&mut s.query_log, read())?);
-    s.refreshed_at = now_local();
+    let at = now_local();
     if max_age > 0 {
-        s.cache.put(key, std::sync::Arc::clone(&rows), s.refreshed_at.clone().unwrap_or_default());
+        s.cache.put(key, std::sync::Arc::clone(&rows), at.clone().unwrap_or_default());
     }
-    s.rows = rows;
-    Ok(loaded(s, false))
+    Ok(hand_over(s, dataset, rows, at, false))
 }
 
-/// What a load command answers.
+/// Gives loaded rows to the report, or to a named dataset, and says what was loaded.
 #[cfg(not(target_arch = "wasm32"))]
-fn loaded(s: &Session, from_cache: bool) -> Json {
-    json!({"columns": s.rows.columns, "rows": s.rows.rows.len(), "refreshedAt": s.refreshed_at, "fromCache": from_cache})
+fn hand_over(s: &mut Session, dataset: Option<String>, rows: std::sync::Arc<RowSet>, at: Option<String>, from_cache: bool) -> Json {
+    let mut out = json!({"columns": rows.columns, "rows": rows.rows.len(), "refreshedAt": at, "fromCache": from_cache});
+    match dataset {
+        Some(name) => {
+            if let Some(map) = out.as_object_mut() {
+                map.insert("dataset".into(), Json::String(name.clone()));
+            }
+            s.datasets.insert(name, rows);
+        }
+        None => {
+            s.rows = rows;
+            s.refreshed_at = at;
+        }
+    }
+    out
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -421,12 +475,14 @@ fn data_clear_query_log(s: &mut Session, _: &Json) -> EngineResult<Json> {
 fn report_validate(s: &mut Session, params: &Json) -> EngineResult<Json> {
     use reportcraft_model::{Diagnostic, Severity};
     let columns = (!s.rows.columns.is_empty()).then_some(s.rows.columns.as_slice());
+    let datasets: std::collections::BTreeMap<String, Vec<reportcraft_core::Column>> =
+        s.datasets.iter().map(|(name, rows)| (name.clone(), rows.columns.clone())).collect();
     let diagnostics = match params.get("json").and_then(Json::as_str) {
         Some(text) => match Report::from_json(text) {
-            Ok(report) => report.check(columns),
+            Ok(report) => report.check_with_datasets(columns, &datasets),
             Err(e) => vec![Diagnostic { severity: Severity::Error, location: "file".into(), message: e.to_string() }],
         },
-        None => s.report.check(columns),
+        None => s.report.check_with_datasets(columns, &datasets),
     };
     let errors = diagnostics.iter().filter(|d| d.severity == Severity::Error).count();
     Ok(json!({
@@ -499,7 +555,7 @@ fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     if let Some(now) = now_local() {
         values.insert(reportcraft_layout::PRINTED_AT.to_owned(), now);
     }
-    let doc = layout_with_cancel(&s.report, &s.rows, &values, &render_limit(s, params))?;
+    let doc = reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?;
     match params.get("format").and_then(Json::as_str).unwrap_or("html") {
         "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc), "refreshedAt": s.refreshed_at})),
         "json" => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),

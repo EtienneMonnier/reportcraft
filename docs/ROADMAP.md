@@ -53,7 +53,11 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.4 Lines and boxes in bands (#10)
   - [ ] Images in bands: from a field (blob or path) or embedded in the report, with size limits and ATTRIBUTION rules
   - [ ] Text colour and background on text elements
-- [ ] R2.5 Sub-reports
+- [x] R2.5 Sub-reports (#11)
+  - [ ] Repeat a subreport's header on the pages it continues on
+  - [ ] Expose a subreport's totals to the parent (§8 "results to the parent")
+  - [ ] Pass parent fields to the subreport's query as parameters (one query per parent row), besides links
+  - [ ] Subreports in labels (columns across) and in page headers/footers
 - [ ] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts
 - [ ] R2.7 XLSX and DOCX export — **decision**: reuse GridCraft/WordCraft writers or own minimal writers
 - [ ] R2.8 Printing through craft-libs `craft-print`

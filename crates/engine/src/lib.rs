@@ -45,6 +45,8 @@ pub struct Session {
     pub rows: Arc<RowSet>,
     /// When the rows were read (RFC 3339, local time); `None` in the web build.
     pub refreshed_at: Option<String>,
+    /// Named datasets, read by subreports (loaded with `"dataset": name`).
+    pub datasets: reportcraft_layout::Datasets,
     /// Results kept for loads that ask for them (`cacheSeconds`).
     pub cache: QueryCache,
     /// Kept when another report is opened: it belongs to the session, not the report.
@@ -59,6 +61,7 @@ impl Default for Session {
             report: Report::new("Untitled report"),
             rows: Arc::default(),
             refreshed_at: None,
+            datasets: reportcraft_layout::Datasets::new(),
             cache: QueryCache::default(),
             query_log: QueryLog::default(),
             cancel: Cancel::default(),
@@ -236,6 +239,34 @@ mod tests {
         assert!(html.unwrap()["refreshedAt"].is_string());
         assert_eq!(s.execute("data.clearCache", &json!({})).unwrap()["cleared"], json!(1));
         assert_eq!(load(&mut s, 60)["fromCache"], json!(false));
+    }
+
+    #[test]
+    fn subreports_read_named_datasets() {
+        let mut s = Session::default();
+        let sub = json!({
+            "x_mm": 0, "y_mm": 6, "width_mm": 100, "height_mm": 5,
+            "content": {"kind": "subreport", "dataset": "lines", "links": [{"parent": "id", "child": "order_id"}],
+                "report": {"format_version": 1, "title": "Lines",
+                    "detail": {"height_mm": 5, "elements": [{"x_mm": 0, "y_mm": 0, "width_mm": 60, "height_mm": 5, "content": {"kind": "field", "field": "item"}}]}}}
+        });
+        let report = json!({"format_version": 1, "title": "Orders",
+            "detail": {"height_mm": 12, "elements": [{"x_mm": 0, "y_mm": 0, "width_mm": 60, "height_mm": 5, "content": {"kind": "field", "field": "id"}}, sub]}});
+        s.execute("report.load", &json!({"json": report.to_string()})).unwrap();
+        s.execute("data.loadCsv", &json!({"csv": "id\n7\n8\n"})).unwrap();
+        let missing = s.execute("report.validate", &json!({})).unwrap();
+        assert!(missing["diagnostics"].to_string().contains("dataset `lines` is not loaded"), "{missing}");
+        assert!(s.execute("report.render", &json!({})).unwrap_err().to_string().contains("lines"));
+        let loaded = s.execute("data.loadCsv", &json!({"csv": "order_id,item\n7,Tent\n7,Stove\n9,Lamp\n", "dataset": "lines"})).unwrap();
+        assert_eq!((loaded["dataset"].clone(), loaded["rows"].clone()), (json!("lines"), json!(3)));
+        assert_eq!(s.rows.rows.len(), 2, "the report's own data is untouched");
+        assert_eq!(s.execute("report.validate", &json!({})).unwrap()["errors"], json!(0));
+        let html = s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().to_owned();
+        assert!(html.contains("Tent") && html.contains("Stove") && !html.contains("Lamp"), "only order 7's lines");
+        assert_eq!(s.execute("data.datasets", &json!({})).unwrap()["datasets"][0]["rows"], json!(3));
+        assert!(s.execute("data.loadCsv", &json!({"csv": "a\n1\n", "dataset": "bad name"})).is_err());
+        s.execute("file.new", &json!({})).unwrap();
+        assert!(s.datasets.is_empty());
     }
 
     #[test]

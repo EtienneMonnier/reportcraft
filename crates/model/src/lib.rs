@@ -324,7 +324,30 @@ pub enum Content {
         #[serde(default)]
         ec_level: EcLevel,
     },
+    /// Another report laid out in this element's place, over a dataset of its own, flowing
+    /// across pages below the band's other elements. With `links`, it reads only the rows that
+    /// match the current row (an invoice's lines, a customer's rentals).
+    Subreport {
+        report: Box<Report>,
+        /// The named dataset it reads (loaded with `"dataset": name`).
+        dataset: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        links: Vec<SubreportLink>,
+        /// With no matching rows, show nothing (else its headers and footers, totals at zero).
+        #[serde(default = "yes")]
+        hide_when_empty: bool,
+    },
 }
+
+/// A subreport reads the rows whose `child` field equals the current row's `parent` field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubreportLink {
+    pub parent: String,
+    pub child: String,
+}
+
+/// Reports nest at most this deep, the main report included.
+pub const MAX_SUBREPORT_DEPTH: usize = 3;
 
 fn yes() -> bool {
     true
@@ -408,6 +431,10 @@ impl Report {
 
     /// Rejects geometry and sizes a render could not honour.
     pub fn validate(&self) -> Result<()> {
+        self.validate_at(0)
+    }
+
+    fn validate_at(&self, depth: usize) -> Result<()> {
         let p = &self.page;
         let finite_pos = |v: f64| v.is_finite() && v >= 0.0;
         let (width, height) = p.size();
@@ -445,7 +472,30 @@ impl Report {
             if !repeating && band.height_mm + fixed > body {
                 return Err(Error::Invalid(format!("{name}: band is taller than the room between page header and footer")));
             }
+            if band.elements.iter().filter(|e| matches!(e.content, Content::Subreport { .. })).count() > 1 {
+                return Err(Error::Invalid(format!("{name}: one subreport per band (put the next one in another band)")));
+            }
             for el in &band.elements {
+                if let Content::Subreport { report, dataset, .. } = &el.content {
+                    if depth + 1 >= MAX_SUBREPORT_DEPTH {
+                        return Err(Error::TooLarge(format!(
+                            "{name}: reports nest at most {MAX_SUBREPORT_DEPTH} deep (the main report, a subreport, one inside it)"
+                        )));
+                    }
+                    if repeating {
+                        return Err(Error::Invalid(format!("{name}: page headers and footers can't hold a subreport")));
+                    }
+                    if self.page.columns > 1 && self.page.column_order == ColumnOrder::Across {
+                        return Err(Error::Invalid(format!("{name}: labels (columns across) can't hold a subreport")));
+                    }
+                    if dataset.trim().is_empty() || !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+                        return Err(Error::Invalid(format!("{name}: subreport dataset `{dataset}` must be letters, digits, `_` or `-`")));
+                    }
+                    if report.bands().iter().any(|(_, b)| b.elements.iter().any(|e| matches!(e.content, Content::PageNumber))) {
+                        return Err(Error::Invalid(format!("{name}: page numbers belong to the main report, not a subreport")));
+                    }
+                    report.validate_at(depth + 1).map_err(|e| Error::Invalid(format!("{name}: subreport: {e}")))?;
+                }
                 let shape_ok = match &el.content {
                     Content::Line { thickness_mm, color } => (0.0..=MAX_LINE_MM).contains(thickness_mm) && color_is_valid(color),
                     Content::Rect { border_mm, border_color, fill } => {
@@ -515,10 +565,23 @@ impl Report {
     /// Every problem found in the definition, and against the data's columns when given.
     /// Unlike `validate`, it doesn't stop at the first problem and also reports warnings.
     pub fn check(&self, columns: Option<&[Column]>) -> Vec<Diagnostic> {
+        self.check_with_datasets(columns, &std::collections::BTreeMap::new())
+    }
+
+    /// `check`, with the columns of the named datasets subreports read. When the main data is
+    /// given, a subreport whose dataset isn't is an error.
+    pub fn check_with_datasets(&self, columns: Option<&[Column]>, datasets: &std::collections::BTreeMap<String, Vec<Column>>) -> Vec<Diagnostic> {
         let mut out = Vec::new();
         if let Err(e) = self.validate() {
             out.push(Diagnostic::error("report", e.to_string()));
         }
+        out.extend(self.check_inner(columns, datasets));
+        out
+    }
+
+    /// Everything `check` finds but what `validate` already said.
+    fn check_inner(&self, columns: Option<&[Column]>, datasets: &std::collections::BTreeMap<String, Vec<Column>>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
         let column = |name: &str| columns.map(|cols| cols.iter().find(|c| c.name.eq_ignore_ascii_case(name)));
         let unknown = |name: &str| {
             let names: Vec<&str> = columns.unwrap_or_default().iter().map(|c| c.name.as_str()).collect();
@@ -600,6 +663,35 @@ impl Report {
         }
         if elements == 0 {
             out.push(Diagnostic::warning("report", "the report has no elements: every page is blank"));
+        }
+        out.extend(self.check_subreports(columns, datasets));
+        out
+    }
+
+    /// Each subreport against its dataset, and its links against both sides.
+    fn check_subreports(&self, columns: Option<&[Column]>, datasets: &std::collections::BTreeMap<String, Vec<Column>>) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        let has = |cols: &[Column], name: &str| cols.iter().any(|c| c.name.eq_ignore_ascii_case(name));
+        for (band_name, band) in self.bands() {
+            for (i, el) in band.elements.iter().enumerate() {
+                let Content::Subreport { report, dataset, links, .. } = &el.content else { continue };
+                let at = format!("{band_name}.elements[{i}]");
+                let child = datasets.get(dataset).map(Vec::as_slice);
+                if columns.is_some() && child.is_none() {
+                    out.push(Diagnostic::error(&at, format!("dataset `{dataset}` is not loaded: load it with \"dataset\": \"{dataset}\"")));
+                }
+                for (k, link) in links.iter().enumerate() {
+                    if columns.is_some_and(|c| !has(c, &link.parent)) {
+                        out.push(Diagnostic::error(format!("{at}.links[{k}]"), format!("unknown field `{}` in the main data", link.parent)));
+                    }
+                    if child.is_some_and(|c| !has(c, &link.child)) {
+                        out.push(Diagnostic::error(format!("{at}.links[{k}]"), format!("unknown field `{}` in dataset `{dataset}`", link.child)));
+                    }
+                }
+                for d in report.check_inner(child, datasets) {
+                    out.push(Diagnostic { location: format!("{at}.report.{}", d.location), ..d });
+                }
+            }
         }
         out
     }
@@ -752,6 +844,57 @@ mod tests {
         let mut r = Report::new("x");
         r.detail.height_mm = 1_000.0;
         assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn subreports_are_checked_against_their_dataset() {
+        let child = |content: Content| {
+            let mut c = Report::new("child");
+            c.detail = Band {
+                height_mm: 5.0,
+                elements: vec![Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content, format: None }],
+            };
+            c
+        };
+        let parent = |sub: Report, links: Vec<SubreportLink>, band: &str| {
+            let mut r = Report::new("p");
+            let el = Element {
+                x_mm: 0.0,
+                y_mm: 0.0,
+                width_mm: 100.0,
+                height_mm: 5.0,
+                style: TextStyle::default(),
+                format: None,
+                content: Content::Subreport { report: Box::new(sub), dataset: "lines".into(), links, hide_when_empty: true },
+            };
+            let b = Band { height_mm: 10.0, elements: vec![el] };
+            if band == "page_header" {
+                r.page_header = b
+            } else {
+                r.detail = b
+            }
+            r
+        };
+        let link = vec![SubreportLink { parent: "id".into(), child: "order_id".into() }];
+        let ok = parent(child(Content::Field { field: "item".into() }), link.clone(), "detail");
+        let main = [Column { name: "id".into(), field_type: FieldType::Integer }];
+        let mut sets = std::collections::BTreeMap::new();
+        sets.insert(
+            "lines".to_owned(),
+            vec![Column { name: "order_id".into(), field_type: FieldType::Integer }, Column { name: "item".into(), field_type: FieldType::Text }],
+        );
+        assert!(ok.check_with_datasets(Some(&main), &sets).iter().all(|d| d.severity != Severity::Error));
+        let typo = parent(child(Content::Field { field: "itme".into() }), link.clone(), "detail").check_with_datasets(Some(&main), &sets);
+        assert!(typo.iter().any(|d| d.location == "detail.elements[0].report.detail.elements[0]" && d.message.contains("itme")), "{typo:?}");
+        let bad_link =
+            parent(child(Content::Text { text: "x".into() }), vec![SubreportLink { parent: "nope".into(), child: "order_id".into() }], "detail");
+        assert!(bad_link.check_with_datasets(Some(&main), &sets).iter().any(|d| d.location.ends_with("links[0]")));
+        assert!(ok.check_with_datasets(Some(&main), &Default::default()).iter().any(|d| d.message.contains("not loaded")));
+        assert!(parent(child(Content::Text { text: "x".into() }), vec![], "page_header").validate().is_err(), "not in page headers");
+        assert!(parent(child(Content::PageNumber), vec![], "detail").validate().is_err(), "page numbers stay in the main report");
+        let deep = parent(parent(parent(child(Content::Text { text: "x".into() }), vec![], "detail"), vec![], "detail"), vec![], "detail");
+        assert!(deep.validate().unwrap_err().to_string().contains("nest"));
+        assert!(parent(parent(child(Content::Text { text: "x".into() }), vec![], "detail"), vec![], "detail").validate().is_ok(), "two levels");
     }
 
     #[test]

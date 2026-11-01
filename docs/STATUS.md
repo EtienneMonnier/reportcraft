@@ -44,6 +44,12 @@
   (file, or `user@host:port/database`, never the password), SQL as sent, bound values, duration and
   row count or error; the newest 200 are kept (`data.queryLog`, `data.clearQueryLog`,
   `--query-log` in `render` and `validate`, printed to stderr even when the query fails).
+- Subreports: a `subreport` element lays out another report over a named dataset (loaded with
+  `"dataset": name`, `data.datasets`; CLI `--sub NAME=FILE.csv`, `--sub-query NAME=SQL`), with
+  links that keep the rows matching the current row (`1` matches `"1"`; a missing value matches
+  nothing). It flows below its band across columns and pages, band by band; with no rows it is
+  hidden (or shows its headers and footers); a missing dataset is an error; reports nest 3 deep.
+  `report.validate` checks subreport fields and links against the datasets.
 - Query cache: a load with `cacheSeconds` reuses the same query's rows (same source, SQL, values
   and limits) read less than that long ago; at most 8 results and 1 GiB are kept, for the session
   (`data.clearCache`). Loads and `report.render` answer `refreshedAt`; reports can show it
@@ -54,7 +60,7 @@
   to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
   (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
   `--max-memory`). A stopped command leaves the session as it was.
-- CLI and MCP server reaching every command. 91 tests (plus 8 live PostgreSQL tests run on demand), including 11 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 94 tests (plus 8 live PostgreSQL tests run on demand), including 12 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).
