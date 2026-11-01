@@ -63,6 +63,9 @@ fn rentals() -> Report {
     };
     r.groups.push(Group {
         field: "branch".into(),
+        keep_together: false,
+        repeat_header: false,
+        page_break_before: false,
         header: Band { height_mm: 7.0, elements: vec![text(0.0, 120.0, field("branch"), bold)] },
         footer: Band {
             height_mm: 8.0,
