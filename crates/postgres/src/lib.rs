@@ -6,6 +6,8 @@
 //! (`DECLARE … CURSOR FOR`), which only accepts `SELECT` and `VALUES`, in batches up to the row
 //! cap, so a large result is never loaded whole. Values come back as text and are converted by
 //! column type. The connection string is never written to errors or logs: it may hold a password.
+//! A raised `Cancel` flag cancels the running statement on the server; rows and their memory are
+//! capped.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::str::FromStr;
@@ -14,7 +16,7 @@ use std::time::Duration;
 use postgres::error::SqlState;
 use postgres::types::{ToSql, Type};
 use postgres::{Client, Config, NoTls, SimpleQueryMessage, Transaction};
-use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value, limits};
+use reportcraft_core::{Cancel, Column, Error, FieldType, Result, RowSet, Value, limits};
 use reportcraft_data::{BindValue, ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
 
 /// How long a query may run by default.
@@ -25,6 +27,8 @@ const MAX_TABLES: usize = 10_000;
 /// Rows fetched from the cursor per round trip.
 const BATCH: usize = 1_000;
 const CURSOR: &str = "reportcraft_rows";
+/// How often a running query looks at its cancel flag.
+const WATCH_INTERVAL: Duration = Duration::from_millis(50);
 
 /// A query over one PostgreSQL database.
 #[derive(Clone)]
@@ -34,6 +38,8 @@ pub struct PostgresSource {
     query: String,
     binds: Vec<BindValue>,
     timeout: Duration,
+    cancel: Cancel,
+    max_bytes: usize,
 }
 
 impl std::fmt::Debug for PostgresSource {
@@ -48,7 +54,26 @@ impl std::fmt::Debug for PostgresSource {
 
 impl PostgresSource {
     pub fn new(conninfo: impl Into<String>, query: impl Into<String>) -> Self {
-        Self { conninfo: conninfo.into(), query: query.into(), binds: Vec::new(), timeout: DEFAULT_TIMEOUT }
+        Self {
+            conninfo: conninfo.into(),
+            query: query.into(),
+            binds: Vec::new(),
+            timeout: DEFAULT_TIMEOUT,
+            cancel: Cancel::default(),
+            max_bytes: limits::DEFAULT_DATA_BYTES,
+        }
+    }
+
+    /// Cancels the running statement on the server when `cancel` is raised (from another thread).
+    pub fn with_cancel(mut self, cancel: Cancel) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    /// Stops reading once the rows take about this much memory (at most `limits::MAX_DATA_BYTES`).
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes.min(limits::MAX_DATA_BYTES);
+        self
     }
 
     /// Values for the query's `$1`, `$2`… placeholders, sent as text (see `reportcraft_data::bind`,
@@ -104,6 +129,30 @@ impl PostgresSource {
         config.connect(NoTls).map_err(|e| Error::Io(format!("cannot connect to PostgreSQL: {}", message(&e))))
     }
 
+    /// Runs `work` in a read-only transaction while a watcher cancels the running statement on the
+    /// server as soon as the cancel flag is raised.
+    fn watched(&self, client: &mut Client, work: impl FnOnce(&mut Transaction<'_>) -> Result<RowSet>) -> Result<RowSet> {
+        let token = client.cancel_token();
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let result = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    if self.cancel.is_cancelled() {
+                        // Best effort: if the request can't reach the server, the time limit still applies.
+                        let _ = token.cancel_query(NoTls);
+                        return;
+                    }
+                    std::thread::sleep(WATCH_INTERVAL);
+                }
+            });
+            let result = self.begin(client).and_then(|mut tx| work(&mut tx));
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            result
+        });
+        // A cancelled statement reports `QUERY_CANCELED`, like a time limit: say which it was.
+        result.map_err(|e| if self.cancel.is_cancelled() { Error::Cancelled("the query was stopped on request".into()) } else { e })
+    }
+
     /// A read-only transaction with the time limit set; dropping it rolls back.
     fn begin<'c>(&self, client: &'c mut Client) -> Result<Transaction<'c>> {
         let mut tx = client.build_transaction().read_only(true).start().map_err(|e| query_error(&e))?;
@@ -153,7 +202,7 @@ fn to_value(raw: Option<&str>, t: FieldType) -> Value {
 }
 
 /// Runs one read-only statement through a cursor and collects up to `max_rows` rows.
-fn run(tx: &mut Transaction<'_>, sql: &str, binds: &[BindValue], max_rows: usize) -> Result<RowSet> {
+fn run(tx: &mut Transaction<'_>, sql: &str, binds: &[BindValue], max_rows: usize, max_bytes: usize, cancel: &Cancel) -> Result<RowSet> {
     if sql.trim().is_empty() {
         return Err(Error::Invalid("the query is empty".into()));
     }
@@ -176,13 +225,24 @@ fn run(tx: &mut Transaction<'_>, sql: &str, binds: &[BindValue], max_rows: usize
     let params: Vec<&(dyn ToSql + Sync)> = texts.iter().map(|t| t as &(dyn ToSql + Sync)).collect();
     tx.execute(&format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {sql}"), &params).map_err(|e| query_error(&e))?;
     let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut bytes = 0usize;
     while rows.len() < max_rows {
+        cancel.check("the query")?;
         let want = BATCH.min(max_rows - rows.len());
         let mut got = 0usize;
         for msg in tx.simple_query(&format!("FETCH {want} FROM {CURSOR}")).map_err(|e| query_error(&e))? {
             if let SimpleQueryMessage::Row(r) = msg {
                 got += 1;
-                rows.push(columns.iter().enumerate().map(|(i, c)| to_value(r.get(i), c.field_type)).collect());
+                let row: Vec<Value> = columns.iter().enumerate().map(|(i, c)| to_value(r.get(i), c.field_type)).collect();
+                bytes = bytes.saturating_add(std::mem::size_of::<Vec<Value>>() + row.iter().map(Value::size).sum::<usize>());
+                if bytes > max_bytes {
+                    return Err(Error::TooLarge(format!(
+                        "the rows take more than {} MiB after {} rows; narrow the query or raise the memory limit",
+                        max_bytes >> 20,
+                        rows.len()
+                    )));
+                }
+                rows.push(row);
             }
         }
         if got < want {
@@ -202,9 +262,9 @@ impl DataSource for PostgresSource {
             return Err(Error::TooLarge("query text longer than 1 MiB".into()));
         }
         let max_rows = limit.unwrap_or(limits::MAX_ROWS).min(limits::MAX_ROWS);
+        self.cancel.check("the query")?;
         let mut client = self.connect()?;
-        let mut tx = self.begin(&mut client)?;
-        run(&mut tx, &self.query, &self.binds, max_rows)
+        self.watched(&mut client, |tx| run(tx, &self.query, &self.binds, max_rows, self.max_bytes, &self.cancel))
     }
 }
 
@@ -330,7 +390,7 @@ impl SchemaSource for PostgresSource {
         let rel = rels.iter().find(|r| r.display().eq_ignore_ascii_case(table)).ok_or_else(|| Error::NotFound(format!("table or view `{table}`")))?;
         let limit = limit.min(limits::MAX_ROWS);
         let sql = format!("SELECT * FROM {}.{} LIMIT {limit}", quote_identifier(&rel.schema), quote_identifier(&rel.name));
-        run(&mut tx, &sql, &[], limit)
+        run(&mut tx, &sql, &[], limit, self.max_bytes, &self.cancel)
     }
 }
 

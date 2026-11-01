@@ -3,7 +3,7 @@
 
 use reportcraft_core::RowSet;
 use reportcraft_data::{CsvSource, DataSource};
-use reportcraft_layout::{Params, layout, to_html};
+use reportcraft_layout::{Params, layout_with_cancel, to_html};
 use reportcraft_model::Report;
 use serde_json::{Value as Json, json};
 
@@ -34,7 +34,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadSqlite",
         label: "Load SQLite data",
         menu: "Data",
-        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
+        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384)}"#,
         run: data_load_sqlite,
     },
     CommandSpec {
@@ -55,7 +55,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadPostgres",
         label: "Load PostgreSQL data",
         menu: "Data",
-        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
+        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384)}"#,
         run: data_load_postgres,
     },
     CommandSpec {
@@ -99,7 +99,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.render",
         label: "Render",
         menu: "Report",
-        params: r#"{"format"?: "html" | "json" (default "html"), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}}"#,
+        params: r#"{"format"?: "html" | "json" (default "html"), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}, "timeoutSeconds"?: integer (default 120, at most 3600)}"#,
         run: report_render,
     },
 ];
@@ -159,7 +159,11 @@ fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Sqlite)?;
     let logged = Logged::new(CMD, "sqlite", path.to_owned(), &bound);
-    let source = reportcraft_sqlite::SqliteSource::new(path, bound.sql).with_binds(bound.values).with_timeout(timeout);
+    let source = reportcraft_sqlite::SqliteSource::new(path, bound.sql)
+        .with_binds(bound.values)
+        .with_timeout(timeout)
+        .with_cancel(s.cancel().clone())
+        .with_max_bytes(max_bytes_of(params));
     s.rows = logged.finish(&mut s.query_log, source.read(limit))?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
 }
@@ -251,6 +255,16 @@ impl Logged {
     }
 }
 
+/// The memory the loaded rows may take (`maxMegabytes`).
+#[cfg(not(target_arch = "wasm32"))]
+fn max_bytes_of(params: &Json) -> usize {
+    params
+        .get("maxMegabytes")
+        .and_then(Json::as_u64)
+        .and_then(|mb| usize::try_from(mb).ok())
+        .map_or(reportcraft_core::limits::DEFAULT_DATA_BYTES, |mb| mb.max(1).saturating_mul(1 << 20))
+}
+
 /// Optional row limit and time limit shared by the database loaders.
 #[cfg(not(target_arch = "wasm32"))]
 fn limits_of(params: &Json) -> (Option<usize>, std::time::Duration) {
@@ -266,7 +280,11 @@ fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Postgres)?;
-    let source = reportcraft_postgres::PostgresSource::new(connection, bound.sql.clone()).with_binds(bound.values.clone()).with_timeout(timeout);
+    let source = reportcraft_postgres::PostgresSource::new(connection, bound.sql.clone())
+        .with_binds(bound.values.clone())
+        .with_timeout(timeout)
+        .with_cancel(s.cancel().clone())
+        .with_max_bytes(max_bytes_of(params));
     let logged = Logged::new(CMD, "postgres", source.target(), &bound);
     s.rows = logged.finish(&mut s.query_log, source.read(limit))?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
@@ -394,10 +412,22 @@ pub(crate) fn resolve_parameters(
         .map_err(|problems| bad(command, problems.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("; ")))
 }
 
+/// The session's cancel flag, with the render's time limit (`timeoutSeconds`) on native builds.
+#[cfg(not(target_arch = "wasm32"))]
+fn render_limit(s: &Session, params: &Json) -> reportcraft_core::Cancel {
+    let seconds = params.get("timeoutSeconds").and_then(Json::as_u64).unwrap_or(120).clamp(1, 3_600);
+    s.cancel().with_time_limit(std::time::Duration::from_secs(seconds))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render_limit(s: &Session, _: &Json) -> reportcraft_core::Cancel {
+    s.cancel().clone()
+}
+
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let resolved = resolve_parameters(s, "report.render", params)?;
     let values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
-    let doc = layout(&s.report, &s.rows, &values)?;
+    let doc = layout_with_cancel(&s.report, &s.rows, &values, &render_limit(s, params))?;
     match params.get("format").and_then(Json::as_str).unwrap_or("html") {
         "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc)})),
         "json" => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),

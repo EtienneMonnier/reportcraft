@@ -124,6 +124,20 @@ fn errors_are_clear_and_long_queries_are_cancelled() {
     assert!(matches!(source(&c, "SELECT * FROM rc_live.missing").read(None), Err(Error::Invalid(_))));
     let slow = source(&c, "SELECT pg_sleep(5)").with_timeout(Duration::from_millis(300)).read(None);
     assert!(matches!(slow, Err(Error::TooLarge(_))), "{slow:?}");
+    let cancel = reportcraft_core::Cancel::default();
+    let raiser = cancel.clone();
+    #[allow(clippy::disallowed_methods)] // native test
+    let started = std::time::Instant::now();
+    let stopper = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        raiser.cancel();
+    });
+    let stopped = source(&c, "SELECT pg_sleep(20)").with_cancel(cancel).read(None);
+    stopper.join().unwrap();
+    assert!(matches!(stopped, Err(Error::Cancelled(_))), "{stopped:?}");
+    assert!(started.elapsed() < Duration::from_secs(5), "cancelled on the server, not left to finish");
+    let big = source(&c, "SELECT repeat('x', 1000) FROM generate_series(1, 5000)").with_max_bytes(1 << 20).read(None);
+    assert!(matches!(&big, Err(Error::TooLarge(m)) if m.contains("MiB")), "{big:?}");
     let nowhere = PostgresSource::new("host=127.0.0.1 port=1 user=x password=s3cret connect_timeout=2", "SELECT 1").read(None);
     let e = nowhere.unwrap_err();
     assert!(matches!(e, Error::Io(_)) && !e.to_string().contains("s3cret"), "{e}");

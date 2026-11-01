@@ -19,6 +19,60 @@ pub mod limits {
     pub const MAX_GROUPS: usize = 16;
     /// Most elements in one band.
     pub const MAX_ELEMENTS_PER_BAND: usize = 512;
+    /// Default for the memory a data source's rows may take (an estimate, see `Value::size`).
+    pub const DEFAULT_DATA_BYTES: usize = 1 << 30;
+    /// Most memory a caller may allow a data source's rows to take.
+    pub const MAX_DATA_BYTES: usize = 16 << 30;
+}
+
+/// Stops long work (a query, a render): a flag another thread raises, plus an optional deadline.
+/// Clones share the flag. Work checks it between steps and stops with `Error::Cancelled` or, past
+/// the deadline, `Error::TooLarge`.
+#[derive(Debug, Clone, Default)]
+pub struct Cancel {
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    deadline: Option<std::time::Instant>,
+}
+
+impl Cancel {
+    /// Asks the work using this flag (or a clone of it) to stop.
+    pub fn cancel(&self) {
+        self.flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Lowers the flag, ready for the next piece of work.
+    pub fn reset(&self) {
+        self.flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The same flag, with a deadline `limit` from now. Native only: the web build has no clock.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_time_limit(&self, limit: std::time::Duration) -> Self {
+        #[allow(clippy::disallowed_methods)]
+        let now = std::time::Instant::now();
+        Self { flag: self.flag.clone(), deadline: now.checked_add(limit) }
+    }
+
+    pub fn is_past_deadline(&self) -> bool {
+        // Only a native caller can have set a deadline, so the clock is never read on wasm.
+        #[allow(clippy::disallowed_methods)]
+        self.deadline.is_some_and(|d| std::time::Instant::now() >= d)
+    }
+
+    /// `Err` once the work should stop. `what` names it in the message ("the render").
+    pub fn check(&self, what: &str) -> Result<()> {
+        if self.is_cancelled() {
+            Err(Error::Cancelled(format!("{what} was stopped on request")))
+        } else if self.is_past_deadline() {
+            Err(Error::TooLarge(format!("{what} ran past its time limit and was stopped")))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// One value in a row.
@@ -46,6 +100,11 @@ impl Value {
 
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
+    }
+
+    /// The memory the value takes, roughly: the enum plus any text.
+    pub fn size(&self) -> usize {
+        std::mem::size_of::<Value>() + if let Value::Text(t) = self { t.len() } else { 0 }
     }
 
     /// Total order used for sorting and group breaks: nulls first, then numbers, then text.
@@ -160,6 +219,8 @@ pub enum Error {
     Unsupported(String),
     #[error("i/o: {0}")]
     Io(String),
+    #[error("cancelled: {0}")]
+    Cancelled(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -167,6 +228,21 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_is_shared_by_clones_and_deadlines_stop_work() {
+        let c = Cancel::default();
+        let other = c.clone();
+        assert!(c.check("the render").is_ok());
+        other.cancel();
+        assert!(matches!(c.check("the render"), Err(Error::Cancelled(_))));
+        c.reset();
+        assert!(!other.is_cancelled());
+        let late = c.with_time_limit(std::time::Duration::ZERO);
+        assert!(matches!(late.check("the query"), Err(Error::TooLarge(m)) if m.contains("time limit")));
+        late.cancel();
+        assert!(c.is_cancelled(), "a deadline keeps the shared flag");
+    }
 
     #[test]
     fn numbers_sort_before_text_and_after_null() {

@@ -3,13 +3,13 @@
 //!
 //! Read-only is enforced three ways: the file is opened read-only, the query must be a single
 //! statement SQLite reports as read-only, and `ATTACH` is disabled so the query cannot reach
-//! another file. Queries are stopped after a time limit and rows are capped.
+//! another file. Queries stop after a time limit or when cancelled; rows and their memory are capped.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value, limits};
+use reportcraft_core::{Cancel, Column, Error, FieldType, Result, RowSet, Value, limits};
 use reportcraft_data::{BindValue, ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
 use rusqlite::limits::Limit;
 use rusqlite::types::{Value as SqlValue, ValueRef};
@@ -29,11 +29,32 @@ pub struct SqliteSource {
     query: String,
     binds: Vec<BindValue>,
     timeout: Duration,
+    cancel: Cancel,
+    max_bytes: usize,
 }
 
 impl SqliteSource {
     pub fn new(path: impl Into<PathBuf>, query: impl Into<String>) -> Self {
-        Self { path: path.into(), query: query.into(), binds: Vec::new(), timeout: DEFAULT_TIMEOUT }
+        Self {
+            path: path.into(),
+            query: query.into(),
+            binds: Vec::new(),
+            timeout: DEFAULT_TIMEOUT,
+            cancel: Cancel::default(),
+            max_bytes: limits::DEFAULT_DATA_BYTES,
+        }
+    }
+
+    /// Stops the query when `cancel` is raised (from another thread).
+    pub fn with_cancel(mut self, cancel: Cancel) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    /// Stops reading once the rows take about this much memory (at most `limits::MAX_DATA_BYTES`).
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes.min(limits::MAX_DATA_BYTES);
+        self
     }
 
     /// Values for the query's `?1`, `?2`… placeholders (see `reportcraft_data::bind`).
@@ -66,12 +87,13 @@ impl SqliteSource {
         // The clock is read off wasm only: this crate is native-only.
         #[allow(clippy::disallowed_methods)]
         let deadline = Instant::now().checked_add(self.timeout);
+        let cancel = self.cancel.clone();
         conn.progress_handler(
             PROGRESS_STEPS,
             Some(move || {
                 #[allow(clippy::disallowed_methods)]
                 let now = Instant::now();
-                deadline.is_some_and(|d| now >= d)
+                cancel.is_cancelled() || deadline.is_some_and(|d| now >= d)
             }),
         )
         .map_err(|e| io(&self.path, &e))?;
@@ -118,12 +140,17 @@ impl DataSource for SqliteSource {
             return Err(Error::TooLarge("query text longer than 1 MiB".into()));
         }
         let max_rows = limit.unwrap_or(limits::MAX_ROWS).min(limits::MAX_ROWS);
-        run(&self.open()?, &self.query, &self.binds, max_rows)
+        if self.cancel.is_cancelled() {
+            return Err(Error::Cancelled("the query was stopped on request".into()));
+        }
+        let read = run(&self.open()?, &self.query, &self.binds, max_rows, self.max_bytes);
+        // An interrupted query is a time limit unless the caller asked to stop.
+        read.map_err(|e| if self.cancel.is_cancelled() { Error::Cancelled("the query was stopped on request".into()) } else { e })
     }
 }
 
 /// Runs one read-only statement and collects its rows.
-fn run(conn: &Connection, sql: &str, binds: &[BindValue], max_rows: usize) -> Result<RowSet> {
+fn run(conn: &Connection, sql: &str, binds: &[BindValue], max_rows: usize, max_bytes: usize) -> Result<RowSet> {
     let mut stmt = conn.prepare(sql).map_err(|e| query_error(&e))?;
     if !stmt.readonly() {
         return Err(Error::Invalid("only queries that read data are allowed (SELECT, WITH …)".into()));
@@ -154,11 +181,16 @@ fn run(conn: &Connection, sql: &str, binds: &[BindValue], max_rows: usize) -> Re
         BindValue::Date(_) => SqlValue::Text(b.as_text().unwrap_or_default()),
     });
     let mut cursor = stmt.query(rusqlite::params_from_iter(values)).map_err(|e| query_error(&e))?;
+    let mut bytes = 0usize;
     while rows.len() < max_rows {
         let Some(row) = cursor.next().map_err(|e| query_error(&e))? else { break };
         let mut values = Vec::with_capacity(names.len());
         for i in 0..names.len() {
             values.push(row.get_ref(i).map(to_value).map_err(|e| query_error(&e))?);
+        }
+        bytes = bytes.saturating_add(row_size(&values));
+        if bytes > max_bytes {
+            return Err(too_much_memory(max_bytes, rows.len()));
         }
         rows.push(values);
     }
@@ -212,8 +244,17 @@ impl SchemaSource for SqliteSource {
         let schema = self.schema()?;
         let found = schema.table(table).ok_or_else(|| Error::NotFound(format!("table or view `{table}`")))?;
         let limit = limit.min(limits::MAX_ROWS);
-        run(&self.open()?, &format!("SELECT * FROM {} LIMIT {limit}", quote_identifier(&found.name)), &[], limit)
+        run(&self.open()?, &format!("SELECT * FROM {} LIMIT {limit}", quote_identifier(&found.name)), &[], limit, self.max_bytes)
     }
+}
+
+/// The memory one row takes, roughly.
+fn row_size(row: &[Value]) -> usize {
+    std::mem::size_of::<Vec<Value>>() + row.iter().map(Value::size).sum::<usize>()
+}
+
+fn too_much_memory(max_bytes: usize, rows: usize) -> Error {
+    Error::TooLarge(format!("the rows take more than {} MiB after {rows} rows; narrow the query or raise the memory limit", max_bytes >> 20))
 }
 
 /// `"name"` with inner quotes doubled: safe for any table name.
@@ -461,6 +502,37 @@ mod tests {
         let endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n";
         let r = SqliteSource::new(&path, endless).with_timeout(Duration::from_millis(200)).read(None);
         assert!(matches!(r, Err(Error::TooLarge(_))), "{r:?}");
+    }
+
+    #[test]
+    fn a_running_query_stops_when_cancelled() {
+        let path = sample_db("cancel");
+        let cancel = Cancel::default();
+        let raiser = cancel.clone();
+        let endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n";
+        #[allow(clippy::disallowed_methods)] // native test
+        let started = Instant::now();
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            raiser.cancel();
+        });
+        let r = SqliteSource::new(&path, endless).with_cancel(cancel.clone()).read(None);
+        stopper.join().unwrap();
+        assert!(matches!(r, Err(Error::Cancelled(_))), "{r:?}");
+        assert!(started.elapsed() < Duration::from_secs(5), "stopped well before the 30 s limit");
+        assert!(
+            matches!(SqliteSource::new(&path, "SELECT 1").with_cancel(cancel).read(None), Err(Error::Cancelled(_))),
+            "a raised flag stops the next query"
+        );
+    }
+
+    #[test]
+    fn rows_past_the_memory_limit_are_an_error() {
+        let path = sample_db("memory");
+        let wide = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000) SELECT i, printf('%.1000c', 'x') FROM n";
+        let r = SqliteSource::new(&path, wide).with_max_bytes(1 << 20).read(None);
+        assert!(matches!(&r, Err(Error::TooLarge(m)) if m.contains("1 MiB")), "{r:?}");
+        assert_eq!(SqliteSource::new(&path, wide).with_max_bytes(16 << 20).read(None).unwrap().rows.len(), 5000);
     }
 
     #[test]

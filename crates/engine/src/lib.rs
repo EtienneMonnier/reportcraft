@@ -10,7 +10,7 @@ pub mod sample;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use reportcraft_core::{Error, RowSet};
+use reportcraft_core::{Cancel, Error, RowSet};
 use reportcraft_model::Report;
 use serde_json::Value as Json;
 
@@ -39,11 +39,13 @@ pub struct Session {
     pub rows: RowSet,
     /// Kept when another report is opened: it belongs to the session, not the report.
     pub query_log: QueryLog,
+    /// Raised through `cancel_handle` to stop the running command.
+    cancel: Cancel,
 }
 
 impl Default for Session {
     fn default() -> Self {
-        Self { report: Report::new("Untitled report"), rows: RowSet::default(), query_log: QueryLog::default() }
+        Self { report: Report::new("Untitled report"), rows: RowSet::default(), query_log: QueryLog::default(), cancel: Cancel::default() }
     }
 }
 
@@ -53,14 +55,30 @@ impl Session {
     pub fn execute(&mut self, id: &str, params: &Json) -> EngineResult<Json> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_owned()))?;
         let before = self.clone();
-        match catch_unwind(AssertUnwindSafe(|| (spec.run)(self, params))) {
+        let result = match catch_unwind(AssertUnwindSafe(|| (spec.run)(self, params))) {
             Ok(result) => result,
             Err(_) => {
                 *self = before;
                 log::error!("command `{id}` panicked; session restored");
                 Err(EngineError::Internal(format!("command `{id}` failed unexpectedly")))
             }
-        }
+        };
+        // A stop request ends with the command it was meant for.
+        self.cancel.reset();
+        result
+    }
+
+    /// A handle another thread uses to stop the command running now (`Cancel::cancel`). The
+    /// command fails with a `cancelled` error and, like any failed command, leaves the session as
+    /// it was. The request is dropped when that command ends; raising it while no command runs
+    /// stops the next one, so callers raise it only while a command is running.
+    pub fn cancel_handle(&self) -> Cancel {
+        self.cancel.clone()
+    }
+
+    /// The flag commands pass to long work.
+    pub(crate) fn cancel(&self) -> &Cancel {
+        &self.cancel
     }
 }
 
@@ -144,6 +162,33 @@ mod tests {
         assert_eq!(s.query_log.len(), 4, "the log belongs to the session, not the report");
         assert_eq!(s.execute("data.clearQueryLog", &json!({})).unwrap()["cleared"], json!(4));
         assert!(s.query_log.is_empty());
+    }
+
+    #[test]
+    fn a_running_load_stops_on_request_and_the_session_carries_on() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-engine-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("x.db");
+        rusqlite::Connection::open(&db).unwrap().execute_batch("CREATE TABLE t (a INT); INSERT INTO t VALUES (1);").unwrap();
+        let path = db.to_string_lossy();
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let handle = s.cancel_handle();
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            handle.cancel();
+        });
+        let endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n";
+        let stopped = s.execute("data.loadSqlite", &json!({"path": path, "query": endless}));
+        stopper.join().unwrap();
+        assert!(matches!(&stopped, Err(EngineError::Core(Error::Cancelled(_)))), "{stopped:?}");
+        assert_eq!(s.rows.rows.len(), 7, "the sample rows are still loaded");
+        assert!(s.query_log.last(1).next().unwrap().error.as_deref().unwrap().contains("stopped on request"));
+        let next = s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT * FROM t"})).unwrap();
+        assert_eq!(next["rows"], json!(1), "the request ended with the command it stopped");
+        let tight = s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT printf('%.2000000c', 'x')", "maxMegabytes": 1}));
+        assert!(tight.unwrap_err().to_string().contains("1 MiB"));
     }
 
     #[test]
