@@ -11,9 +11,10 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE]
-  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--query-log]
+  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--query-log]
                                             errors and warnings, checked against the data when given
+  (--query-log prints each query run, its time and row count, to stderr)
   schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
                                             tables, columns and keys; rows with --preview
   (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
@@ -91,7 +92,7 @@ fn load_inputs<'a>(
     mut other: impl FnMut(&'a str, &mut std::slice::Iter<'a, String>) -> Result<(), String>,
 ) -> Result<(Session, serde_json::Map<String, Json>), String> {
     let mut s = Session::default();
-    let (mut sqlite, mut postgres, mut query) = (None, None, None);
+    let (mut sqlite, mut postgres, mut query, mut show_log) = (None, None, None, false);
     let mut params = serde_json::Map::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -117,24 +118,47 @@ fn load_inputs<'a>(
             "--sqlite" => sqlite = Some(flag_value(&mut it, a)?.to_owned()),
             "--postgres" => postgres = Some(flag_value(&mut it, a)?.to_owned()),
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
+            "--query-log" => show_log = true,
             path if !path.starts_with("--") => {
                 exec(&mut s, "report.load", json!({"json": read(path)?}))?;
             }
             flag => other(flag, &mut it)?,
         }
     }
-    match (sqlite, postgres, query) {
-        (Some(path), None, Some(query)) => {
-            exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query, "params": params}))?;
-        }
+    let loaded = match (sqlite, postgres, query) {
+        (Some(path), None, Some(query)) => exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query, "params": params})).map(drop),
         (None, Some(connection), Some(query)) => {
-            exec(&mut s, "data.loadPostgres", json!({"connection": connection, "query": query, "params": params}))?;
+            exec(&mut s, "data.loadPostgres", json!({"connection": connection, "query": query, "params": params})).map(drop)
         }
-        (None, None, None) => {}
-        (Some(_), Some(_), _) => return Err("use either `--sqlite` or `--postgres`".to_owned()),
-        _ => return Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
+        (None, None, None) => Ok(()),
+        (Some(_), Some(_), _) => Err("use either `--sqlite` or `--postgres`".to_owned()),
+        _ => Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
+    };
+    // Shown even when the query failed: that's when it helps most.
+    if show_log {
+        eprint!("{}", query_log_text(&exec(&mut s, "data.queryLog", json!({}))?));
     }
-    Ok((s, params))
+    loaded.map(|()| (s, params))
+}
+
+/// One line per query: when, where, how long, how many rows (or the error), then the SQL and its values.
+fn query_log_text(log: &Json) -> String {
+    let mut out = String::new();
+    for e in log["entries"].as_array().into_iter().flatten() {
+        let text = |k: &str| e[k].as_str().unwrap_or("").to_owned();
+        let outcome = match e["rows"].as_u64() {
+            Some(n) => format!("{n} row(s)"),
+            None => format!("failed: {}", text("error")),
+        };
+        out.push_str(&format!("query  {}  {} {}  {} ms  {outcome}\n", text("at"), text("source"), text("target"), e["durationMs"]));
+        out.push_str(&format!("       {}\n", text("sql").split_whitespace().collect::<Vec<_>>().join(" ")));
+        let values: Vec<String> =
+            e["values"].as_array().into_iter().flatten().map(|v| v.as_str().map_or_else(|| "NULL".to_owned(), |s| format!("{s:?}"))).collect();
+        if !values.is_empty() {
+            out.push_str(&format!("       values: {}\n", values.join(", ")));
+        }
+    }
+    out
 }
 
 fn render(args: &[String]) -> Result<(), String> {

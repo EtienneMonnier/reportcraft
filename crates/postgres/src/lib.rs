@@ -69,6 +69,25 @@ impl PostgresSource {
         self
     }
 
+    /// Where the source connects, for logs and listings: `user@host:port/database`, never the
+    /// password or any other option. `PostgreSQL` when the connection string isn't valid.
+    pub fn target(&self) -> String {
+        let Ok(config) = Config::from_str(&self.conninfo) else { return "PostgreSQL".to_owned() };
+        let hosts: Vec<String> = config
+            .get_hosts()
+            .iter()
+            .map(|h| match h {
+                postgres::config::Host::Tcp(name) => name.clone(),
+                #[cfg(unix)]
+                postgres::config::Host::Unix(path) => path.display().to_string(),
+            })
+            .collect();
+        let host = if hosts.is_empty() { "localhost".to_owned() } else { hosts.join(",") };
+        let port = config.get_ports().first().copied().unwrap_or(5432);
+        let user = config.get_user().map(|u| format!("{u}@")).unwrap_or_default();
+        format!("{user}{host}:{port}/{}", config.get_dbname().unwrap_or(""))
+    }
+
     fn connect(&self) -> Result<Client> {
         let mut config = Config::from_str(&self.conninfo).map_err(|_| Error::Invalid("the PostgreSQL connection string is not valid".into()))?;
         config.application_name("ReportCraft");
@@ -340,6 +359,10 @@ mod tests {
         let e = PostgresSource::new("postgresql://u:s3cret@[bad", "SELECT 1").read(None).unwrap_err();
         assert!(!e.to_string().contains("s3cret"), "{e}");
         assert!(!format!("{:?}", PostgresSource::new("password=s3cret", "SELECT 1")).contains("s3cret"));
+        let url = PostgresSource::database("postgresql://odoo:s3cret@db.local:5433/rent?sslmode=disable");
+        assert_eq!(url.target(), "odoo@db.local:5433/rent");
+        assert_eq!(PostgresSource::database("host=h dbname=d password=s3cret").target(), "h:5432/d");
+        assert_eq!(PostgresSource::database("not = valid = 's3cret").target(), "PostgreSQL");
     }
 
     #[test]
