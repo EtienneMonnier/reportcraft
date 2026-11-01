@@ -42,7 +42,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
   - [ ] Keep a band with the next one (a group header never alone at the bottom of a page)
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
-- [ ] R2.4 Lines, boxes and images in bands
+- [ ] R2.4 Lines, boxes and images in bands — claimed: Claude (for EtienneMonnier), branch feature/r2.4-lines-boxes (lines and boxes; images left open)
 - [ ] R2.5 Sub-reports
 - [ ] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts
 - [ ] R2.7 XLSX and DOCX export — **decision**: reuse GridCraft/WordCraft writers or own minimal writers
