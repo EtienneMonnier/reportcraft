@@ -130,3 +130,16 @@ without a value binds NULL. Parameters are resolved only when the query uses the
 connectors check that the number of placeholders matches the number of values. PostgreSQL
 accepts bound values in `DECLARE … CURSOR` through the extended protocol, so results are still
 read in batches.
+
+## Group pagination and the "fresh page" rule (R2.3)
+
+Groups gain `keep_together`, `repeat_header` and `page_break_before` (optional, default off, so
+existing files and snapshots are unchanged). The layout tracks the open groups: a new page prints
+the page header, then the headers of the open groups that repeat, outermost first, reading the
+group's first row. `keep_together` computes the group's height (header, nested groups or rows,
+footer) and moves it to a new page only if it doesn't fit in the room left but does fit on a new
+page below the page and repeated headers; a taller group flows from where it is. A page that holds
+only page and repeated headers is "fresh": no break is taken there (a break would not give more
+room), which rules out blank pages and endless breaks, and `page_break_before` on a group that
+already starts a page does nothing. A group's footer that flows to a new page shows the group's
+repeated header above it. `report.validate` warns when repeated headers leave no room for a row.

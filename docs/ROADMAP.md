@@ -39,7 +39,9 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
   - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
 - [ ] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — **decision**: syntax
-- [ ] R2.3 Keep-together, repeat group header on new page, page break before group
+- [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
+  - [ ] Keep a band with the next one (a group header never alone at the bottom of a page)
+  - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
 - [ ] R2.4 Lines, boxes and images in bands
 - [ ] R2.5 Sub-reports
 - [ ] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts

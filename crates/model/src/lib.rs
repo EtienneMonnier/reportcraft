@@ -80,6 +80,15 @@ pub struct SortKey {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     pub field: String,
+    /// Starts the group on a new page when it fits on one page but not in the room left.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_together: bool,
+    /// Prints the group's header again at the top of each page the group continues on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeat_header: bool,
+    /// Starts every group on a new page (except one that already starts a page).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page_break_before: bool,
     #[serde(default)]
     pub header: Band,
     #[serde(default)]
@@ -369,6 +378,11 @@ impl Report {
                 }
             }
         }
+        let repeated: f64 = self.groups.iter().filter(|g| g.repeat_header).map(|g| g.header.height_mm).sum();
+        let body = self.page.height_mm - 2.0 * self.page.margin_mm - self.page_header.height_mm - self.page_footer.height_mm;
+        if repeated > 0.0 && repeated + self.detail.height_mm > body {
+            out.push(Diagnostic::warning("groups", "repeated group headers leave no room for a detail row on a page"));
+        }
         if locale_style(&self.locale).is_none() {
             out.push(Diagnostic::warning("locale", format!("unknown locale `{}`: numbers and dates are written as in `en`", self.locale)));
         }
@@ -416,7 +430,14 @@ mod tests {
             format: None,
         };
         let mut r = Report::new("t");
-        r.groups.push(Group { field: "region".into(), header: Band::default(), footer: Band::default() });
+        r.groups.push(Group {
+            field: "region".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
+            header: Band::default(),
+            footer: Band::default(),
+        });
         r.sort.push(SortKey { field: "amount".into(), descending: false });
         r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 20.0, Content::Field { field: "branch".into() })] };
         r.detail = Band {

@@ -137,11 +137,17 @@ fn nested_groups_across_pages() {
     r.groups = vec![
         Group {
             field: "region".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
             header: Band { height_mm: 7.0, elements: vec![el(0.0, 80.0, field("region"), bold)] },
             footer: Band { height_mm: 6.0, elements: vec![el(90.0, 40.0, agg(AggregateFn::Sum, "amount"), right)] },
         },
         Group {
             field: "branch".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
             header: Band { height_mm: 6.0, elements: vec![el(4.0, 80.0, field("branch"), bold)] },
             footer: Band {
                 height_mm: 6.0,
@@ -226,4 +232,38 @@ fn formats_in_french() {
     };
     let params = Params::from([("period".to_owned(), "2026-10-01..2026-10-31".to_owned())]);
     check("formats_in_french", &r, &rows, &params);
+}
+
+/// Group pagination: each region starts a page and repeats its header on the pages it continues
+/// on; each branch is kept on one page when it fits.
+#[test]
+fn group_pagination() {
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let mut r = Report::new("Group pagination");
+    r.page.width_mm = 148.0;
+    r.page.height_mm = 105.0;
+    r.page.margin_mm = 8.0;
+    r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold)] };
+    r.groups = vec![
+        Group {
+            field: "region".into(),
+            keep_together: false,
+            repeat_header: true,
+            page_break_before: true,
+            header: Band { height_mm: 7.0, elements: vec![el(0.0, 80.0, field("region"), bold)] },
+            footer: Band { height_mm: 6.0, elements: vec![el(0.0, 80.0, Content::Text { text: "end of region".into() }, plain)] },
+        },
+        Group {
+            field: "branch".into(),
+            keep_together: true,
+            repeat_header: false,
+            page_break_before: false,
+            header: Band { height_mm: 6.0, elements: vec![el(4.0, 80.0, field("branch"), bold)] },
+            footer: Band { height_mm: 6.0, elements: vec![el(4.0, 40.0, agg(AggregateFn::Count, "item"), plain)] },
+        },
+    ];
+    r.detail = Band { height_mm: 5.0, elements: vec![el(8.0, 60.0, field("item"), plain)] };
+    r.page_footer = Band { height_mm: 5.0, elements: vec![el(90.0, 40.0, Content::PageNumber, plain)] };
+    check("group_pagination", &r, &rentals(24), &Params::new());
 }
