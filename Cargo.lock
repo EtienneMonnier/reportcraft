@@ -594,7 +594,9 @@ dependencies = [
 name = "reportcraft-data"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "reportcraft-core",
+ "reportcraft-model",
  "serde",
  "thiserror",
 ]
@@ -649,9 +651,11 @@ dependencies = [
 name = "reportcraft-postgres"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "postgres",
  "reportcraft-core",
  "reportcraft-data",
+ "reportcraft-model",
 ]
 
 [[package]]

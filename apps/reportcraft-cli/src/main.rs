@@ -89,12 +89,25 @@ fn read(path: &str) -> Result<String, String> {
 fn load_inputs<'a>(
     args: &'a [String],
     mut other: impl FnMut(&'a str, &mut std::slice::Iter<'a, String>) -> Result<(), String>,
-) -> Result<Session, String> {
+) -> Result<(Session, serde_json::Map<String, Json>), String> {
     let mut s = Session::default();
     let (mut sqlite, mut postgres, mut query) = (None, None, None);
+    let mut params = serde_json::Map::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--param" => {
+                // Repeating a name gives a parameter several values.
+                let (k, v) = flag_value(&mut it, a)?.split_once('=').ok_or("`--param` expects NAME=VALUE")?;
+                let v = Json::String(v.to_owned());
+                match params.get_mut(k) {
+                    Some(Json::Array(list)) => list.push(v),
+                    Some(first) => *first = Json::Array(vec![first.take(), v]),
+                    None => {
+                        params.insert(k.to_owned(), v);
+                    }
+                }
+            }
             "--sample" => {
                 exec(&mut s, "file.openSample", json!({"name": flag_value(&mut it, a)?}))?;
             }
@@ -112,36 +125,24 @@ fn load_inputs<'a>(
     }
     match (sqlite, postgres, query) {
         (Some(path), None, Some(query)) => {
-            exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query}))?;
+            exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query, "params": params}))?;
         }
         (None, Some(connection), Some(query)) => {
-            exec(&mut s, "data.loadPostgres", json!({"connection": connection, "query": query}))?;
+            exec(&mut s, "data.loadPostgres", json!({"connection": connection, "query": query, "params": params}))?;
         }
         (None, None, None) => {}
         (Some(_), Some(_), _) => return Err("use either `--sqlite` or `--postgres`".to_owned()),
         _ => return Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
     }
-    Ok(s)
+    Ok((s, params))
 }
 
 fn render(args: &[String]) -> Result<(), String> {
-    let (mut format, mut out, mut params) = ("html".to_owned(), None, serde_json::Map::new());
-    let mut s = load_inputs(args, |a, it| {
+    let (mut format, mut out) = ("html".to_owned(), None);
+    let (mut s, params) = load_inputs(args, |a, it| {
         match a {
             "--format" => format = flag_value(it, a)?.to_owned(),
             "--out" => out = Some(flag_value(it, a)?.to_owned()),
-            "--param" => {
-                // Repeating a name gives a parameter several values.
-                let (k, v) = flag_value(it, a)?.split_once('=').ok_or("`--param` expects NAME=VALUE")?;
-                let v = Json::String(v.to_owned());
-                match params.get_mut(k) {
-                    Some(Json::Array(list)) => list.push(v),
-                    Some(first) => *first = Json::Array(vec![first.take(), v]),
-                    None => {
-                        params.insert(k.to_owned(), v);
-                    }
-                }
-            }
             other => return Err(format!("unknown option `{other}`")),
         }
         Ok(())
@@ -264,7 +265,7 @@ fn preview_text(rows: &Json) -> String {
 
 fn validate(args: &[String]) -> Result<(), String> {
     let mut as_json = false;
-    let mut s = load_inputs(args, |a, _| {
+    let (mut s, _) = load_inputs(args, |a, _| {
         if a == "--json" {
             as_json = true;
             Ok(())

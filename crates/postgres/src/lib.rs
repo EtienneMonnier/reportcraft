@@ -12,10 +12,10 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use postgres::error::SqlState;
-use postgres::types::Type;
+use postgres::types::{ToSql, Type};
 use postgres::{Client, Config, NoTls, SimpleQueryMessage, Transaction};
 use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value, limits};
-use reportcraft_data::{ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
+use reportcraft_data::{BindValue, ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
 
 /// How long a query may run by default.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -32,18 +32,30 @@ pub struct PostgresSource {
     /// libpq-style connection string or `postgresql://` URL. Never printed.
     conninfo: String,
     query: String,
+    binds: Vec<BindValue>,
     timeout: Duration,
 }
 
 impl std::fmt::Debug for PostgresSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PostgresSource").field("query", &self.query).field("timeout", &self.timeout).finish_non_exhaustive()
+        f.debug_struct("PostgresSource")
+            .field("query", &self.query)
+            .field("binds", &self.binds.len())
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
     }
 }
 
 impl PostgresSource {
     pub fn new(conninfo: impl Into<String>, query: impl Into<String>) -> Self {
-        Self { conninfo: conninfo.into(), query: query.into(), timeout: DEFAULT_TIMEOUT }
+        Self { conninfo: conninfo.into(), query: query.into(), binds: Vec::new(), timeout: DEFAULT_TIMEOUT }
+    }
+
+    /// Values for the query's `$1`, `$2`… placeholders, sent as text (see `reportcraft_data::bind`,
+    /// whose PostgreSQL placeholders cast them to their type). Values are never printed.
+    pub fn with_binds(mut self, binds: Vec<BindValue>) -> Self {
+        self.binds = binds;
+        self
     }
 
     /// A source for schema discovery and previews only (no report query).
@@ -122,7 +134,7 @@ fn to_value(raw: Option<&str>, t: FieldType) -> Value {
 }
 
 /// Runs one read-only statement through a cursor and collects up to `max_rows` rows.
-fn run(tx: &mut Transaction<'_>, sql: &str, max_rows: usize) -> Result<RowSet> {
+fn run(tx: &mut Transaction<'_>, sql: &str, binds: &[BindValue], max_rows: usize) -> Result<RowSet> {
     if sql.trim().is_empty() {
         return Err(Error::Invalid("the query is empty".into()));
     }
@@ -134,7 +146,16 @@ fn run(tx: &mut Transaction<'_>, sql: &str, max_rows: usize) -> Result<RowSet> {
         return Err(Error::TooLarge(format!("more than {} columns", limits::MAX_COLUMNS)));
     }
     let columns: Vec<Column> = stmt.columns().iter().map(|c| Column { name: c.name().to_owned(), field_type: field_type(c.type_()) }).collect();
-    tx.batch_execute(&format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {sql}")).map_err(|e| query_error(&e))?;
+    if stmt.params().len() != binds.len() {
+        return Err(Error::Invalid(format!(
+            "the query has {} placeholder(s) but {} value(s): name report parameters as `:name`",
+            stmt.params().len(),
+            binds.len()
+        )));
+    }
+    let texts: Vec<Option<String>> = binds.iter().map(BindValue::as_text).collect();
+    let params: Vec<&(dyn ToSql + Sync)> = texts.iter().map(|t| t as &(dyn ToSql + Sync)).collect();
+    tx.execute(&format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {sql}"), &params).map_err(|e| query_error(&e))?;
     let mut rows: Vec<Vec<Value>> = Vec::new();
     while rows.len() < max_rows {
         let want = BATCH.min(max_rows - rows.len());
@@ -164,7 +185,7 @@ impl DataSource for PostgresSource {
         let max_rows = limit.unwrap_or(limits::MAX_ROWS).min(limits::MAX_ROWS);
         let mut client = self.connect()?;
         let mut tx = self.begin(&mut client)?;
-        run(&mut tx, &self.query, max_rows)
+        run(&mut tx, &self.query, &self.binds, max_rows)
     }
 }
 
@@ -290,7 +311,7 @@ impl SchemaSource for PostgresSource {
         let rel = rels.iter().find(|r| r.display().eq_ignore_ascii_case(table)).ok_or_else(|| Error::NotFound(format!("table or view `{table}`")))?;
         let limit = limit.min(limits::MAX_ROWS);
         let sql = format!("SELECT * FROM {}.{} LIMIT {limit}", quote_identifier(&rel.schema), quote_identifier(&rel.name));
-        run(&mut tx, &sql, limit)
+        run(&mut tx, &sql, &[], limit)
     }
 }
 
