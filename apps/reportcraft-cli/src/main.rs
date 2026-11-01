@@ -11,10 +11,12 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--query-log] [--timeout SECONDS] [--max-memory MB]
-  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--query-log] [--timeout SECONDS] [--max-memory MB]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
+  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
                                             errors and warnings, checked against the data when given
-  (--query-log prints each query run, its time and row count, to stderr;
+  (--sub NAME=FILE.csv and --sub-query NAME=SQL load a dataset for subreports; --sub-query runs on
+   the --sqlite or --postgres database, after --query;
+   --query-log prints each query run, its time and row count, to stderr;
    --timeout SECONDS limits the query and the render, default 30 and 120;
    --max-memory MB limits the rows read, default 1024)
   schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
@@ -100,6 +102,9 @@ fn load_inputs<'a>(
     let (mut timeout, mut max_memory) = (None, None);
     let number = |v: &str, flag: &str| v.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{flag}` expects a positive whole number"));
     let (mut sqlite, mut postgres, mut query, mut show_log) = (None, None, None, false);
+    let mut sub_queries: Vec<(String, String)> = Vec::new();
+    let named =
+        |v: &str, flag: &str| v.split_once('=').map(|(n, x)| (n.to_owned(), x.to_owned())).ok_or_else(|| format!("`{flag}` expects NAME=VALUE"));
     let mut params = serde_json::Map::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -126,6 +131,11 @@ fn load_inputs<'a>(
             "--postgres" => postgres = Some(flag_value(&mut it, a)?.to_owned()),
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
             "--query-log" => show_log = true,
+            "--sub" => {
+                let (name, path) = named(flag_value(&mut it, a)?, a)?;
+                exec(&mut s, "data.loadCsv", json!({"csv": read(&path)?, "dataset": name}))?;
+            }
+            "--sub-query" => sub_queries.push(named(flag_value(&mut it, a)?, a)?),
             "--timeout" => timeout = Some(number(flag_value(&mut it, a)?, a)?),
             "--max-memory" => max_memory = Some(number(flag_value(&mut it, a)?, a)?),
             path if !path.starts_with("--") => {
@@ -142,13 +152,32 @@ fn load_inputs<'a>(
         }
         p
     };
-    let loaded = match (sqlite, postgres, query) {
+    let database = match (&sqlite, &postgres) {
+        (Some(path), None) => Some(("data.loadSqlite", ("path", path.clone()))),
+        (None, Some(connection)) => Some(("data.loadPostgres", ("connection", connection.clone()))),
+        _ => None,
+    };
+    let mut loaded = match (sqlite, postgres, query) {
         (Some(path), None, Some(query)) => exec(&mut s, "data.loadSqlite", load(("path", path), query)).map(drop),
         (None, Some(connection), Some(query)) => exec(&mut s, "data.loadPostgres", load(("connection", connection), query)).map(drop),
         (None, None, None) => Ok(()),
         (Some(_), Some(_), _) => Err("use either `--sqlite` or `--postgres`".to_owned()),
         _ => Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
     };
+    for (name, sql) in sub_queries {
+        if loaded.is_err() {
+            break;
+        }
+        let Some((command, source)) = database.clone() else {
+            loaded = Err("`--sub-query` needs `--sqlite FILE` or `--postgres CONNECTION`".to_owned());
+            break;
+        };
+        let mut p = load(source, sql);
+        if let Some(map) = p.as_object_mut() {
+            map.insert("dataset".to_owned(), Json::String(name));
+        }
+        loaded = exec(&mut s, command, p).map(drop);
+    }
     // Shown even when the query failed: that's when it helps most.
     if show_log {
         eprint!("{}", query_log_text(&exec(&mut s, "data.queryLog", json!({}))?));

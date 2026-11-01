@@ -212,3 +212,18 @@ MCP server and the future control channel, not a one-shot CLI run; a disk cache 
 settings location (R1.3). Rows are held in an `Arc`, shared by the cache and the session, which
 also stops `Session::execute` from copying the loaded rows before every command. Every load says
 when its rows were read (`refreshedAt`, local time), and a report can print it.
+
+## Subreports are laid out apart, then placed block by block (R2.5)
+
+A subreport element holds a whole report definition and the name of a dataset. The session keeps
+named datasets beside the report's own rows, loaded by the same commands with `"dataset"`; links
+pick the dataset rows matching the current row, through an index built once per element (values
+compared as text, so an integer id matches the same id read as text; nulls match nothing). The
+subreport is laid out by the same writer on an endless page as wide as its element, without page
+header or footer, recording where each band (and each block of a nested subreport) starts. The
+parent cuts it at those marks and places the blocks below the band's top, moving to the next
+column or page between blocks; a block never splits, and one taller than a page is placed anyway
+on a fresh page, as bands are. The band then ends below the subreport, keeping the room it had
+under the element. Page numbers stay in the main report (a subreport has no pages of its own),
+and nesting is capped at three reports. With no matching rows a subreport is hidden by default,
+or shows its headers and footers with zero totals (`hide_when_empty: false`).

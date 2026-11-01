@@ -6,10 +6,11 @@ mod format;
 mod html;
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use reportcraft_core::{Cancel, Error, Result, RowSet, Value, limits};
-use reportcraft_model::{AggregateFn, Band, Content, Report, TextStyle};
+use reportcraft_model::{AggregateFn, Band, Content, Element, Report, SubreportLink, TextStyle};
 use serde::{Deserialize, Serialize};
 
 pub use format::write as format_value;
@@ -83,6 +84,9 @@ const CANCEL_EVERY: usize = 256;
 /// Parameter values for one render, by parameter name.
 pub type Params = BTreeMap<String, String>;
 
+/// Named datasets that subreports read.
+pub type Datasets = BTreeMap<String, Arc<RowSet>>;
+
 /// Lays `report` out over `rows`.
 pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Document> {
     layout_with_cancel(report, rows, params, &Cancel::default())
@@ -90,14 +94,36 @@ pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Documen
 
 /// `layout`, stopping with an error once `cancel` is raised or past its deadline.
 pub fn layout_with_cancel(report: &Report, rows: &RowSet, params: &Params, cancel: &Cancel) -> Result<Document> {
+    render(report, rows, &Datasets::new(), params, cancel)
+}
+
+/// `layout_with_cancel`, with the datasets the report's subreports read.
+pub fn render(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Params, cancel: &Cancel) -> Result<Document> {
     report.validate()?;
+    let ctx = Context { datasets, params, cancel, depth: 0 };
+    Ok(run(report, rows, &ctx)?.into_document())
+}
+
+/// What a report and its subreports share while being laid out.
+#[derive(Clone, Copy)]
+struct Context<'a> {
+    datasets: &'a Datasets,
+    params: &'a Params,
+    cancel: &'a Cancel,
+    /// 0 for the main report, 1 for its subreports…
+    depth: usize,
+}
+
+/// Lays a (validated) report out and hands back the writer with every page.
+fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Writer<'a>> {
+    let cancel = ctx.cancel;
     let group_cols = report
         .groups
         .iter()
         .map(|g| rows.column_index(&g.field).ok_or_else(|| Error::NotFound(format!("group field `{}`", g.field))))
         .collect::<Result<Vec<_>>>()?;
     let order = sorted_rows(report, rows, &group_cols)?;
-    let mut w = Writer::new(report, rows, params);
+    let mut w = Writer::new(report, rows, ctx);
     // Page one: the report header comes first, then the page header.
     w.start_page(false, &order)?;
     w.full_band(&report.report_header, Scope { rows: &order, current: order.first().copied() }, &order)?;
@@ -140,7 +166,64 @@ pub fn layout_with_cancel(report: &Report, rows: &RowSet, params: &Params, cance
     }
     w.full_band(&report.report_footer, Scope { rows: &order, current: order.last().copied() }, &order)?;
     w.finish_page()?;
-    Ok(w.into_document())
+    Ok(w)
+}
+
+/// Height of the endless page a subreport is laid out on before it is cut into blocks.
+const SUBREPORT_PAGE_MM: f64 = 1e9;
+
+/// A stretch of laid-out content that moves as one: a band, or part of a subreport. Its items
+/// run from `item` to the next block's `item`.
+#[derive(Debug, Clone, Copy)]
+struct Mark {
+    item: usize,
+    top: f64,
+    height: f64,
+}
+
+/// A subreport's content cut at its band boundaries, items relative to each block's top.
+struct Block {
+    height: f64,
+    items: Vec<Item>,
+}
+
+/// Lays a subreport out over its rows on an endless page as wide as its element, and cuts it
+/// into the blocks the parent places one after another.
+fn subreport_blocks(child: &Report, rows: &RowSet, ctx: &Context<'_>) -> Result<Vec<Block>> {
+    let w = run(child, rows, ctx)?;
+    let mut items: Vec<Item> = w.pages.into_iter().flat_map(|p| p.items).collect();
+    let marks = w.marks;
+    let mut blocks = Vec::with_capacity(marks.len());
+    for m in marks.iter().rev() {
+        let mut part = items.split_off(m.item.min(items.len()));
+        for it in &mut part {
+            it.y_mm -= m.top;
+        }
+        blocks.push(Block { height: m.height, items: part });
+    }
+    blocks.reverse();
+    Ok(blocks)
+}
+
+/// The report a subreport element lays out: its own bands on an endless page as wide as the
+/// element, without page header or footer.
+fn subreport_report(child: &Report, width_mm: f64) -> Report {
+    let page = reportcraft_model::PageSetup {
+        paper: None,
+        orientation: reportcraft_model::Orientation::Portrait,
+        width_mm,
+        height_mm: SUBREPORT_PAGE_MM,
+        margin_mm: 0.0,
+        columns: 1,
+        column_gap_mm: 0.0,
+        column_order: reportcraft_model::ColumnOrder::Down,
+    };
+    Report { page, page_header: Band::default(), page_footer: Band::default(), ..child.clone() }
+}
+
+/// The text a value matches on in a subreport link: `1`, `1.0` and `"1"` match.
+fn link_key(v: &Value) -> String {
+    v.to_string()
 }
 
 fn row_of(rows: &RowSet, i: usize) -> &[reportcraft_core::Value] {
@@ -228,15 +311,29 @@ struct Writer<'a> {
     row_height: f64,
     /// Items that show the page number, by page.
     page_number_items: Vec<(usize, usize)>,
+    datasets: &'a Datasets,
+    cancel: &'a Cancel,
+    depth: usize,
+    /// Where each band or subreport block starts (what a parent cuts a subreport at).
+    marks: Vec<Mark>,
+    /// Per subreport element: its dataset's rows by link key, and the report it lays out.
+    link_index: HashMap<usize, HashMap<Vec<String>, Vec<usize>>>,
+    child_reports: HashMap<usize, Arc<Report>>,
 }
 
 impl<'a> Writer<'a> {
-    fn new(report: &'a Report, rows: &'a RowSet, params: &'a Params) -> Self {
+    fn new(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Self {
         let locale = reportcraft_model::locale_or_default(&report.locale);
         Self {
             report,
             rows,
-            params,
+            params: ctx.params,
+            datasets: ctx.datasets,
+            cancel: ctx.cancel,
+            depth: ctx.depth,
+            marks: Vec::new(),
+            link_index: HashMap::new(),
+            child_reports: HashMap::new(),
             locale,
             pages: Vec::new(),
             page: Page::default(),
@@ -332,21 +429,129 @@ impl<'a> Writer<'a> {
             return Ok(());
         }
         if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
-            if self.column + 1 < usize::from(self.report.page.columns) {
-                // Next column on the same page.
-                self.column += 1;
-                self.y = self.column_top;
-                self.repeat_headers(order);
-                self.fresh = true;
-            } else {
-                self.new_page(order)?;
-            }
+            self.next_column_or_page(true, order)?;
         }
-        self.draw(band, scope, true);
-        self.y += band.height_mm;
+        self.place(band, scope, true, order)?;
         self.column_bottom = self.column_bottom.max(self.y);
         self.fresh = false;
         Ok(())
+    }
+
+    /// Moves on to the next column, or the next page after the last column.
+    fn next_column_or_page(&mut self, columned: bool, order: &[usize]) -> Result<()> {
+        if columned && self.column + 1 < usize::from(self.report.page.columns) {
+            self.column += 1;
+            self.y = self.column_top;
+            self.repeat_headers(order);
+            self.fresh = true;
+            Ok(())
+        } else {
+            self.new_page(order)
+        }
+    }
+
+    /// The left edge of the current column, or of the body.
+    fn left(&self, columned: bool) -> f64 {
+        let page = &self.report.page;
+        let column = if columned { self.column as f64 } else { 0.0 };
+        page.margin_mm + column * (page.column_width() + page.column_gap_mm)
+    }
+
+    /// Draws a band at the current height and moves below it, flowing its subreport if it has one.
+    fn place(&mut self, band: &Band, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
+        let (top, item) = (self.y, self.page.items.len());
+        self.draw(band, scope, columned);
+        match band.elements.iter().find(|e| matches!(e.content, Content::Subreport { .. })) {
+            None => {
+                self.marks.push(Mark { item, top, height: band.height_mm });
+                self.y += band.height_mm;
+            }
+            Some(el) => {
+                self.marks.push(Mark { item, top, height: el.y_mm });
+                self.flow_subreport(el, band, top, scope, columned, order)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Lays a subreport out below its band's top, block by block, moving to the next column or
+    /// page between blocks as needed. The band ends below the subreport, keeping the room the
+    /// band had under the element, and never above the band's own bottom.
+    fn flow_subreport(&mut self, el: &Element, band: &Band, top: f64, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
+        let Content::Subreport { report: child, dataset, links, hide_when_empty } = &el.content else { return Ok(()) };
+        if self.depth + 1 >= reportcraft_model::MAX_SUBREPORT_DEPTH {
+            return Err(Error::TooLarge(format!("reports nest at most {} deep", reportcraft_model::MAX_SUBREPORT_DEPTH)));
+        }
+        let rows = self.subreport_rows(el, dataset, links, scope)?;
+        let blocks = if rows.rows.is_empty() && *hide_when_empty {
+            Vec::new()
+        } else {
+            let key = std::ptr::from_ref(el) as usize;
+            let report = Arc::clone(self.child_reports.entry(key).or_insert_with(|| Arc::new(subreport_report(child, el.width_mm))));
+            let ctx = Context { datasets: self.datasets, params: self.params, cancel: self.cancel, depth: self.depth + 1 };
+            subreport_blocks(&report, &rows, &ctx)?
+        };
+        let below = (band.height_mm - el.y_mm - el.height_mm).max(0.0);
+        let mut y = top + el.y_mm;
+        let (mut moved, mut fresh) = (false, false);
+        for block in blocks {
+            if !fresh && y + block.height > self.body_bottom() + 1e-9 {
+                self.next_column_or_page(columned, order)?;
+                y = self.y;
+                moved = true;
+                fresh = true;
+            } else {
+                fresh = false;
+            }
+            let left = self.left(columned) + el.x_mm;
+            self.marks.push(Mark { item: self.page.items.len(), top: y, height: block.height });
+            for mut it in block.items {
+                it.x_mm += left;
+                it.y_mm += y;
+                self.page.items.push(it);
+            }
+            y += block.height;
+        }
+        let end = if moved { y + below } else { (top + band.height_mm).max(y + below) };
+        self.marks.push(Mark { item: self.page.items.len(), top: y, height: end - y });
+        self.y = end;
+        Ok(())
+    }
+
+    /// The subreport's rows: its whole dataset, or with links the rows matching the current row.
+    fn subreport_rows(&mut self, el: &Element, dataset: &str, links: &[SubreportLink], scope: Scope<'_>) -> Result<RowSet> {
+        let data = Arc::clone(self.datasets.get(dataset).ok_or_else(|| Error::NotFound(format!("subreport dataset `{dataset}` (load it first)")))?);
+        if links.is_empty() {
+            return Ok((*data).clone());
+        }
+        let parent_cols = links
+            .iter()
+            .map(|l| self.rows.column_index(&l.parent).ok_or_else(|| Error::NotFound(format!("subreport link field `{}`", l.parent))))
+            .collect::<Result<Vec<_>>>()?;
+        let child_cols = links
+            .iter()
+            .map(|l| data.column_index(&l.child).ok_or_else(|| Error::NotFound(format!("subreport link field `{}` in `{dataset}`", l.child))))
+            .collect::<Result<Vec<_>>>()?;
+        let empty = RowSet { columns: data.columns.clone(), rows: Vec::new() };
+        let Some(current) = scope.current else { return Ok(empty) };
+        let parent = row_of(self.rows, current);
+        // A missing value links to nothing.
+        if parent_cols.iter().any(|&c| self.rows.value(parent, c).is_null()) {
+            return Ok(empty);
+        }
+        let key: Vec<String> = parent_cols.iter().map(|&c| link_key(self.rows.value(parent, c))).collect();
+        let index = self.link_index.entry(std::ptr::from_ref(el) as usize).or_insert_with(|| {
+            let mut index: HashMap<Vec<String>, Vec<usize>> = HashMap::new();
+            for (i, r) in data.rows.iter().enumerate() {
+                if child_cols.iter().any(|&c| data.value(r, c).is_null()) {
+                    continue;
+                }
+                index.entry(child_cols.iter().map(|&c| link_key(data.value(r, c))).collect()).or_default().push(i);
+            }
+            index
+        });
+        let rows = index.get(&key).map(|ix| ix.iter().filter_map(|&i| data.rows.get(i).cloned()).collect()).unwrap_or_default();
+        Ok(RowSet { rows, ..empty })
     }
 
     fn across(&self) -> bool {
@@ -395,8 +600,7 @@ impl<'a> Writer<'a> {
         if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
             self.new_page(order)?;
         }
-        self.draw(band, scope, false);
-        self.y += band.height_mm;
+        self.place(band, scope, false, order)?;
         self.column_top = self.y;
         self.column_bottom = self.y;
         self.fresh = false;
@@ -424,6 +628,10 @@ impl<'a> Writer<'a> {
         for el in &band.elements {
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
+            }
+            if let Content::Subreport { .. } = &el.content {
+                // Laid out by `place`, below the band's top.
+                continue;
             }
             if let Content::Barcode { .. } = &el.content {
                 self.barcode(el, scope, left);
@@ -527,7 +735,7 @@ impl<'a> Writer<'a> {
                     .map(|t| format::write(&Value::Text(t.clone()), Some(format.unwrap_or(&default)), &self.locale))
                     .unwrap_or_default()
             }
-            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } => String::new(),
+            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } | Content::Subreport { .. } => String::new(),
         }
     }
 

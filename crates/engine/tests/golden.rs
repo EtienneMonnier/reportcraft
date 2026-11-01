@@ -58,8 +58,11 @@ fn snapshot(doc: &Document) -> String {
 }
 
 fn check(name: &str, report: &Report, rows: &RowSet, params: &Params) {
-    let doc = layout(report, rows, params).unwrap();
-    let actual = snapshot(&doc);
+    check_doc(name, &layout(report, rows, params).unwrap());
+}
+
+fn check_doc(name: &str, doc: &Document) {
+    let actual = snapshot(doc);
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(format!("{name}.txt"));
     if std::env::var_os("REPORTCRAFT_BLESS").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -459,4 +462,104 @@ fn barcodes() {
         .collect(),
     };
     check("barcodes", &r, &rows, &Params::new());
+}
+
+#[test]
+fn subreports() {
+    use reportcraft_model::{PageSetup, SubreportLink};
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let right = TextStyle { align: Align::Right, ..plain };
+    let money = Some(Format::Number { decimals: 2, grouping: true });
+    let at = |x: f64, w: f64, content: Content, style: TextStyle| Element { y_mm: 0.0, ..el(x, w, content, style) };
+
+    // The rentals of one customer: titles, one line per rental, a total.
+    let mut lines = Report::new("Rentals");
+    lines.sort = vec![SortKey { field: "item".into(), descending: false }];
+    lines.report_header = Band {
+        height_mm: 5.0,
+        elements: vec![
+            at(0.0, 80.0, Content::Text { text: "Item".into() }, bold),
+            at(80.0, 20.0, Content::Text { text: "Days".into() }, bold),
+            at(100.0, 40.0, Content::Text { text: "Amount".into() }, TextStyle { align: Align::Right, ..bold }),
+        ],
+    };
+    lines.detail = Band {
+        height_mm: 5.0,
+        elements: vec![
+            at(0.0, 80.0, field("item"), plain),
+            at(80.0, 20.0, field("days"), plain),
+            Element { format: money.clone(), ..at(100.0, 40.0, field("amount"), right) },
+        ],
+    };
+    lines.report_footer = Band {
+        height_mm: 6.0,
+        elements: vec![
+            at(0.0, 80.0, Content::Text { text: "Total".into() }, bold),
+            Element { format: money.clone(), ..at(100.0, 40.0, agg(AggregateFn::Sum, "amount"), TextStyle { align: Align::Right, ..bold }) },
+        ],
+    };
+
+    let mut r = Report::new("Statements");
+    r.page = PageSetup { height_mm: 120.0, margin_mm: 10.0, ..PageSetup::default() };
+    r.page_header = Band { height_mm: 7.0, elements: vec![el(0.0, 100.0, Content::Text { text: "Customer statements".into() }, bold)] };
+    r.page_footer = Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, right)] };
+    r.detail = Band {
+        height_mm: 14.0,
+        elements: vec![
+            el(0.0, 120.0, field("name"), bold),
+            Element {
+                x_mm: 5.0,
+                y_mm: 6.0,
+                width_mm: 140.0,
+                height_mm: 6.0,
+                style: plain,
+                format: None,
+                content: Content::Subreport {
+                    report: Box::new(lines),
+                    dataset: "rentals".into(),
+                    links: vec![SubreportLink { parent: "id".into(), child: "customer".into() }],
+                    hide_when_empty: true,
+                },
+            },
+        ],
+    };
+    r.report_footer = Band { height_mm: 6.0, elements: vec![el(0.0, 100.0, Content::Text { text: "End of statements".into() }, plain)] };
+
+    let col = |name: &str, t| Column { name: name.into(), field_type: t };
+    let customers = RowSet {
+        columns: vec![col("id", FieldType::Integer), col("name", FieldType::Text)],
+        rows: [(1, "Alpine BTP"), (2, "Chantiers du Lac"), (3, "Rhône Démolition"), (4, "Savoie Toitures")]
+            .iter()
+            .map(|(id, name)| vec![Value::Int(*id), Value::Text((*name).into())])
+            .collect(),
+    };
+    // Customer ids as text on this side: links match `1` and `"1"`. Customer 3 rented nothing.
+    let items = ["Generator", "Mini excavator", "Scaffold tower", "Scissor lift", "Pressure washer"];
+    let mut rentals = vec![];
+    for (customer, n) in [(1, 3), (2, 2), (4, 22)] {
+        for k in 0..n {
+            let item = items[(k * 3 + customer) % items.len()];
+            let days = (k * 7 + customer) % 12 + 1;
+            rentals.push(vec![
+                Value::Text(customer.to_string()),
+                Value::Text(format!("{item} #{}", k + 1)),
+                Value::Int(days as i64),
+                Value::Number(days as f64 * 42.5),
+            ]);
+        }
+    }
+    let rentals = RowSet {
+        columns: vec![
+            col("customer", FieldType::Text),
+            col("item", FieldType::Text),
+            col("days", FieldType::Integer),
+            col("amount", FieldType::Number),
+        ],
+        rows: rentals,
+    };
+    let mut datasets = reportcraft_layout::Datasets::new();
+    datasets.insert("rentals".into(), std::sync::Arc::new(rentals));
+    let doc = reportcraft_layout::render(&r, &customers, &datasets, &Params::new(), &reportcraft_core::Cancel::default()).unwrap();
+    check_doc("subreports", &doc);
 }
