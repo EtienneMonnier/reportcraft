@@ -19,3 +19,6 @@ jobs:
   gate:
     # Tracks @main so suite-wide CI fixes reach every app without a PR in each repository.
     uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
+    with:
+      # A font for the PDF writer's tests (no font lives in the repository).
+      packages: fonts-liberation

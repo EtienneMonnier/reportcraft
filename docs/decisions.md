@@ -227,3 +227,19 @@ on a fresh page, as bands are. The band then ends below the subreport, keeping t
 under the element. Page numbers stay in the main report (a subreport has no pages of its own),
 and nesting is capped at three reports. With no matching rows a subreport is hidden by default,
 or shows its headers and footers with zero totals (`hide_when_empty: false`).
+
+## PDF goes through craft-pdf; fonts are found, not shipped (R2.6)
+
+The PDF writer is its own crate (L4) over `layout::Document`, like the HTML writer, and uses the
+suite's `craft-pdf` (`write`, `write-simple-text`) with the patched Krilla, both pinned to the
+craft-libs revision GridCraft uses (Etienne approved the git dependency and the root
+`[patch.crates-io]`). Text is shaped with rustybuzz (the version Krilla uses, so one copy) and drawn
+as glyph runs: the measured width gives right and centre alignment, and text wider than its box
+starts at the left edge and is clipped to the box, as the HTML writer's CSS does. The baseline
+follows the CSS line box (line height 1.2, half the leading above the ascender), so the PDF and the
+HTML pages match. No font lives in the repository: `REPORTCRAFT_FONT`/`REPORTCRAFT_FONT_BOLD`, then
+a craft-fonts checkout (`CRAFT_FONTS_DIR`, Inter), then common system fonts; none found is an error
+that says what to set. A character the font lacks becomes `.notdef` and a warning, not a silent
+gap. The engine returns the PDF base64-encoded in the command result so the MCP server and the CLI
+share one path. CI installs `fonts-liberation` for the writer's tests, which fail on CI (but skip
+locally) when no font is found.

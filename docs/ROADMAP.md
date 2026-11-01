@@ -58,7 +58,12 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Expose a subreport's totals to the parent (§8 "results to the parent")
   - [ ] Pass parent fields to the subreport's query as parameters (one query per parent row), besides links
   - [ ] Subreports in labels (columns across) and in page headers/footers
-- [ ] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts
+- [x] R2.6 PDF export through craft-libs `craft-pdf`, fonts through craft-fonts (#12)
+  - [ ] Embed craft-fonts at build time (`CRAFT_FONTS_DIR` read by a `build.rs`, as the suite does) instead of finding fonts at run time
+  - [ ] Font fallback per character (a CJK or Arabic value in a Latin report), using craft-fonts' script fonts
+  - [ ] Fonts named in the report definition (family, italic), with the font choice in the designer (R3)
+  - [ ] PDF in the browser build: fonts passed as bytes by the page
+  - [ ] PDF/A for archiving (Krilla validators), document outline from groups, links
 - [ ] R2.7 XLSX and DOCX export — **decision**: reuse GridCraft/WordCraft writers or own minimal writers
 - [ ] R2.8 Printing through craft-libs `craft-print`
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)

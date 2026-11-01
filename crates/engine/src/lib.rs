@@ -6,6 +6,7 @@
 
 // The web build reads no database, so it never fills the cache.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub mod base64;
 mod cache;
 mod cmd;
 pub mod query_log;
@@ -114,6 +115,24 @@ mod tests {
             let _ = s.execute(spec.id, &json!({}));
             let _ = s.execute(spec.id, &Json::Null);
         }
+    }
+
+    #[test]
+    fn renders_pdf_as_base64_with_the_fonts_used() {
+        if let Err(e) = reportcraft_pdf::Fonts::find() {
+            assert!(std::env::var_os("CI").is_none(), "no font on CI: {e}");
+            return;
+        }
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let r = s.execute("report.render", &json!({"format": "pdf"})).unwrap();
+        let bytes = base64::decode(r["pdfBase64"].as_str().unwrap()).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+        assert_eq!(r["bytes"], json!(bytes.len()));
+        assert_eq!(r["pages"], json!(1));
+        assert!(r["fonts"]["regular"].as_str().is_some_and(|f| !f.is_empty()));
+        let err = s.execute("report.render", &json!({"format": "docx"})).unwrap_err().to_string();
+        assert!(err.contains("html, pdf or json"), "{err}");
     }
 
     #[test]

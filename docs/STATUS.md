@@ -16,6 +16,13 @@
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
 - Banded layout: report/page headers and footers, nested groups, detail, sort, sum/count/avg/min/max,
   parameters, page breaks, "page N / M"; HTML output, printable from a browser.
+- PDF output (`report.render` with `"format": "pdf"`, `reportcraft-cli render … --format pdf --out
+  FILE.pdf`) through craft-libs' `craft-pdf`: selectable, searchable text with embedded font subsets
+  (any script the font covers, French spaces and accents included), measured right and centre
+  alignment, lines, rectangles and barcodes as vectors. Fonts come from `REPORTCRAFT_FONT` /
+  `REPORTCRAFT_FONT_BOLD`, a craft-fonts checkout (`CRAFT_FONTS_DIR`, Inter) or the system
+  (Liberation Sans, DejaVu Sans, Noto Sans, Arial); characters the font lacks are reported as
+  warnings. The same document gives the same file (no clock in the PDF).
 - Lines (horizontal, vertical, diagonal) and rectangles (border, fill) in any band, drawn as SVG in
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
@@ -60,7 +67,7 @@
   to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
   (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
   `--max-memory`). A stopped command leaves the session as it was.
-- CLI and MCP server reaching every command. 94 tests (plus 8 live PostgreSQL tests run on demand), including 12 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 103 tests (plus 8 live PostgreSQL tests run on demand), including 12 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).
