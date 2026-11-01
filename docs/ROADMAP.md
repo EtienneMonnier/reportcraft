@@ -50,11 +50,12 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R2.7 XLSX and DOCX export — **decision**: reuse GridCraft/WordCraft writers or own minimal writers
 - [ ] R2.8 Printing through craft-libs `craft-print`
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
-  - [ ] Columns filled across then down (needed by labels, R2.12)
+  - [x] Columns filled across then down (needed by labels, R2.12)
   - [ ] Different first page (no page header on page one, other margins)
 - [ ] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2
 - [ ] R2.11 Barcodes and QR codes (§4 FR-PRINT-003)
-- [ ] R2.12 Labels: detail repeated across a grid of labels per page (§18.5) — claimed: Claude (for EtienneMonnier), branch feature/r2.12-labels
+- [x] R2.12 Labels: detail repeated across a grid of labels per page (§18.5) (#33)
+  - [ ] Start printing at a given label (to reuse a partly used sheet)
 - [x] R2.13 Golden rendering tests: reference reports whose page count and geometry are checked on every change (§13, §15) (#34)
   - [ ] Add a golden PDF check once PDF export lands (R2.6): page count and text positions read back from the file
 - [x] R2.14 `report.validate` command: structured diagnostics for a definition without rendering it (§11, §15) (#35)

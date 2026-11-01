@@ -74,6 +74,24 @@ pub struct PageSetup {
     pub columns: u8,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub column_gap_mm: f64,
+    /// `down`: fill a column, then the next (lists). `across`: fill a row of columns with detail
+    /// bands, then the next row (labels); group headers and footers start a new row.
+    #[serde(default, skip_serializing_if = "ColumnOrder::is_down")]
+    pub column_order: ColumnOrder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColumnOrder {
+    #[default]
+    Down,
+    Across,
+}
+
+impl ColumnOrder {
+    fn is_down(&self) -> bool {
+        *self == ColumnOrder::Down
+    }
 }
 
 /// Most columns a page may have.
@@ -167,6 +185,7 @@ impl Default for PageSetup {
             margin_mm: 15.0,
             columns: 1,
             column_gap_mm: 0.0,
+            column_order: ColumnOrder::Down,
         }
     }
 }

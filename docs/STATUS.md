@@ -21,6 +21,8 @@
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
   gap (group and detail bands flow down a column then the next; report and page headers and
   footers span the page).
+- Labels: `column_order: across` fills a row of columns with detail bands, then the next row;
+  group headers and footers start a new row.
 - Group pagination: keep a group on one page when it fits, repeat its header on the pages it
   continues on, start each group on a new page; never a blank page or an endless break.
 - `report.validate` / `reportcraft-cli validate`: every error and warning with its location (unknown
@@ -34,7 +36,7 @@
   formats (a date range writes both ends).
 - Parameters in queries, bound and never spliced: `:name`, `:range.from` / `:range.to`, `IN (:list)`
   (`data.loadSqlite` / `data.loadPostgres` take `params`; the CLI's `--param` reaches the query).
-- CLI and MCP server reaching every command. 66 tests (plus 8 live PostgreSQL tests run on demand), including 9 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 67 tests (plus 8 live PostgreSQL tests run on demand), including 10 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).
