@@ -58,6 +58,13 @@ static COMMANDS: &[CommandSpec] = &[
         run: data_preview,
     },
     CommandSpec {
+        id: "report.validate",
+        label: "Check report",
+        menu: "Report",
+        params: r#"{"json"?: string (a definition to check instead of the open report)}"#,
+        run: report_validate,
+    },
+    CommandSpec {
         id: "report.render",
         label: "Render",
         menu: "Report",
@@ -170,6 +177,26 @@ fn data_preview(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let limit = usize::try_from(limit).unwrap_or(1_000);
     let rows: Vec<_> = s.rows.rows.iter().take(limit).collect();
     Ok(json!({"columns": s.rows.columns, "rows": rows, "total": s.rows.rows.len()}))
+}
+
+fn report_validate(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    use reportcraft_model::{Diagnostic, Severity};
+    let columns = (!s.rows.columns.is_empty()).then_some(s.rows.columns.as_slice());
+    let diagnostics = match params.get("json").and_then(Json::as_str) {
+        Some(text) => match Report::from_json(text) {
+            Ok(report) => report.check(columns),
+            Err(e) => vec![Diagnostic { severity: Severity::Error, location: "file".into(), message: e.to_string() }],
+        },
+        None => s.report.check(columns),
+    };
+    let errors = diagnostics.iter().filter(|d| d.severity == Severity::Error).count();
+    Ok(json!({
+        "valid": errors == 0,
+        "errors": errors,
+        "warnings": diagnostics.len() - errors,
+        "dataChecked": columns.is_some(),
+        "diagnostics": diagnostics,
+    }))
 }
 
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {

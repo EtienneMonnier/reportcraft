@@ -49,3 +49,12 @@ connection as queries. A foreign key that names no target column is resolved to 
 primary key. Nullability follows SQLite exactly: a primary-key column accepts NULL unless it says
 NOT NULL, except a single `INTEGER PRIMARY KEY` (the rowid). Previews only accept a name that
 the schema lists, and quote it, so a table name can never inject SQL.
+
+## Diagnostics: `check` collects, `validate` guards (R2.14)
+
+`Report::validate` stays the guard that rendering relies on: it stops at the first structural
+problem. `Report::check` collects every finding as a `Diagnostic` (severity, location such as
+`detail.elements[2]` or `groups[0].footer`, message), including warnings and, when the data's
+columns are known, unknown fields and totals over text. `report.validate` returns them with
+counts and whether the data was checked, so an agent can fix a definition before rendering it.
+A definition that does not parse is a diagnostic at location `file`, not a command error.

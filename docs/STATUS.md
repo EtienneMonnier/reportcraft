@@ -12,7 +12,10 @@
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
 - Banded layout: report/page headers and footers, nested groups, detail, sort, sum/count/avg/min/max,
   parameters, page breaks, "page N / M"; HTML output, printable from a browser.
-- CLI and MCP server reaching every command. 29 tests, including 5 golden rendering snapshots; `cargo xtask ci` green.
+- `report.validate` / `reportcraft-cli validate`: every error and warning with its location (unknown
+  fields, text totals, undeclared parameters, elements past the margin or their band, fields in page
+  headers/footers), checked against the loaded data's columns.
+- CLI and MCP server reaching every command. 31 tests, including 5 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No PostgreSQL or ODBC source yet, no number formats, no PDF, no designer UI (see `ROADMAP.md`).
