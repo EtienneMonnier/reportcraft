@@ -267,3 +267,28 @@ fn group_pagination() {
     r.page_footer = Band { height_mm: 5.0, elements: vec![el(90.0, 40.0, Content::PageNumber, plain)] };
     check("group_pagination", &r, &rentals(24), &Params::new());
 }
+
+/// A5 landscape, three columns: group and detail bands flow down a column then the next, the
+/// repeated group header starts each column, and the report footer sits below the columns.
+#[test]
+fn landscape_columns() {
+    use reportcraft_model::{Orientation, PageSetup, Paper};
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let mut r = Report::new("Columns");
+    r.page = PageSetup { margin_mm: 10.0, columns: 3, column_gap_mm: 4.0, ..PageSetup::paper(Paper::A5, Orientation::Landscape) };
+    r.report_header = Band { height_mm: 8.0, elements: vec![el(0.0, 190.0, Content::Text { text: "Items by region".into() }, bold)] };
+    r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 190.0, Content::Text { text: "Rentals".into() }, plain)] };
+    r.groups = vec![Group {
+        field: "region".into(),
+        keep_together: false,
+        repeat_header: true,
+        page_break_before: false,
+        header: Band { height_mm: 6.0, elements: vec![el(0.0, 56.0, field("region"), bold)] },
+        footer: Band { height_mm: 6.0, elements: vec![el(0.0, 56.0, agg(AggregateFn::Count, "item"), plain)] },
+    }];
+    r.detail = Band { height_mm: 5.0, elements: vec![el(2.0, 40.0, field("item"), plain), el(42.0, 14.0, field("days"), plain)] };
+    r.page_footer = Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, plain)] };
+    r.report_footer = Band { height_mm: 6.0, elements: vec![el(0.0, 190.0, agg(AggregateFn::Sum, "days"), bold)] };
+    check("landscape_columns", &r, &rentals(70), &Params::new());
+}

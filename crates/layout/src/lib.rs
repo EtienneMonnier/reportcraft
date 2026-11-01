@@ -55,7 +55,7 @@ pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Documen
     let mut w = Writer::new(report, rows, params);
     // Page one: the report header comes first, then the page header.
     w.start_page(false, &order)?;
-    w.band_in(&report.report_header, Scope { rows: &order, current: order.first().copied() }, &order)?;
+    w.full_band(&report.report_header, Scope { rows: &order, current: order.first().copied() }, &order)?;
     w.page_header();
     let mut open_from = 0;
     for (pos, &row) in order.iter().enumerate() {
@@ -90,7 +90,7 @@ pub fn layout(report: &Report, rows: &RowSet, params: &Params) -> Result<Documen
     if !order.is_empty() {
         w.close_groups(&order, order.len(), 0)?;
     }
-    w.band_in(&report.report_footer, Scope { rows: &order, current: order.last().copied() }, &order)?;
+    w.full_band(&report.report_footer, Scope { rows: &order, current: order.last().copied() }, &order)?;
     w.finish_page()?;
     Ok(w.into_document())
 }
@@ -171,6 +171,11 @@ struct Writer<'a> {
     fresh: bool,
     /// Groups open at this point, outermost first.
     open: Vec<OpenGroup>,
+    /// The column group and detail bands are going into, its top on this page, and the lowest
+    /// point any column reached.
+    column: usize,
+    column_top: f64,
+    column_bottom: f64,
     /// Items that show the page number, by page.
     page_number_items: Vec<(usize, usize)>,
 }
@@ -188,12 +193,15 @@ impl<'a> Writer<'a> {
             y: 0.0,
             fresh: true,
             open: Vec::new(),
+            column: 0,
+            column_top: 0.0,
+            column_bottom: 0.0,
             page_number_items: Vec::new(),
         }
     }
 
     fn body_bottom(&self) -> f64 {
-        self.report.page.height_mm - self.report.page.margin_mm - self.report.page_footer.height_mm
+        self.report.page.size().1 - self.report.page.margin_mm - self.report.page_footer.height_mm
     }
 
     fn start_page(&mut self, with_header: bool, order: &[usize]) -> Result<()> {
@@ -202,20 +210,28 @@ impl<'a> Writer<'a> {
         }
         self.page = Page::default();
         self.y = self.report.page.margin_mm;
+        self.column = 0;
+        self.column_top = self.y;
+        self.column_bottom = self.y;
         if with_header {
             self.page_header();
-            // Groups that continue on this page say so again.
-            let open = self.open.clone();
-            for g in open {
-                let (Some(group), Some(scope)) = (self.report.groups.get(g.level), order.get(g.start..g.end)) else { continue };
-                if group.repeat_header && !group.header.is_empty() {
-                    self.draw(&group.header, Scope { rows: scope, current: order.get(g.start).copied() });
-                    self.y += group.header.height_mm;
-                }
-            }
+            self.repeat_headers(order);
         }
         self.fresh = true;
         Ok(())
+    }
+
+    /// Groups that continue on a new page or column say so again.
+    fn repeat_headers(&mut self, order: &[usize]) {
+        let open = self.open.clone();
+        for g in open {
+            let (Some(group), Some(scope)) = (self.report.groups.get(g.level), order.get(g.start..g.end)) else { continue };
+            if group.repeat_header && !group.header.is_empty() {
+                self.draw(&group.header, Scope { rows: scope, current: order.get(g.start).copied() }, true);
+                self.y += group.header.height_mm;
+                self.column_bottom = self.column_bottom.max(self.y);
+            }
+        }
     }
 
     fn new_page(&mut self, order: &[usize]) -> Result<()> {
@@ -231,13 +247,16 @@ impl<'a> Writer<'a> {
     }
 
     fn page_header(&mut self) {
-        self.draw(&self.report.page_header, Scope { rows: &[], current: None });
+        self.draw(&self.report.page_header, Scope { rows: &[], current: None }, false);
         self.y += self.report.page_header.height_mm;
+        // Columns start below the page header (and below the report header on page one).
+        self.column_top = self.y;
+        self.column_bottom = self.y;
     }
 
     fn finish_page(&mut self) -> Result<()> {
         self.y = self.body_bottom();
-        self.draw(&self.report.page_footer, Scope { rows: &[], current: None });
+        self.draw(&self.report.page_footer, Scope { rows: &[], current: None }, false);
         self.pages.push(std::mem::take(&mut self.page));
         Ok(())
     }
@@ -249,10 +268,37 @@ impl<'a> Writer<'a> {
             return Ok(());
         }
         if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+            if self.column + 1 < usize::from(self.report.page.columns) {
+                // Next column on the same page.
+                self.column += 1;
+                self.y = self.column_top;
+                self.repeat_headers(order);
+                self.fresh = true;
+            } else {
+                self.new_page(order)?;
+            }
+        }
+        self.draw(band, scope, true);
+        self.y += band.height_mm;
+        self.column_bottom = self.column_bottom.max(self.y);
+        self.fresh = false;
+        Ok(())
+    }
+
+    /// Places a band that spans the page (report header or footer) below every column.
+    fn full_band(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
+        if band.is_empty() {
+            return Ok(());
+        }
+        self.y = self.y.max(self.column_bottom);
+        self.column = 0;
+        if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
             self.new_page(order)?;
         }
-        self.draw(band, scope);
+        self.draw(band, scope, false);
         self.y += band.height_mm;
+        self.column_top = self.y;
+        self.column_bottom = self.y;
         self.fresh = false;
         Ok(())
     }
@@ -270,8 +316,11 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn draw(&mut self, band: &Band, scope: Scope<'_>) {
-        let left = self.report.page.margin_mm;
+    /// Draws a band at the current height; `columned` bands go into the current column.
+    fn draw(&mut self, band: &Band, scope: Scope<'_>, columned: bool) {
+        let page = &self.report.page;
+        let column = if columned { self.column as f64 } else { 0.0 };
+        let left = page.margin_mm + column * (page.column_width() + page.column_gap_mm);
         for el in &band.elements {
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
@@ -324,7 +373,8 @@ impl<'a> Writer<'a> {
                 it.text = format!("{} / {total}", page + 1);
             }
         }
-        Document { title: self.report.title.clone(), width_mm: self.report.page.width_mm, height_mm: self.report.page.height_mm, pages: self.pages }
+        let (width_mm, height_mm) = self.report.page.size();
+        Document { title: self.report.title.clone(), width_mm, height_mm, pages: self.pages }
     }
 }
 
