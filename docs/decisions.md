@@ -157,3 +157,12 @@ column below the page header, repeating the open groups' headers, then onto a ne
 page headers and footers span the page; the report footer is placed below the lowest column. With
 one column the layout is unchanged, and the existing snapshots did not move. `report.validate`
 checks column bands against the column width.
+
+## Lines and rectangles; colours are a closed format (R2.4)
+
+Two content kinds draw shapes over the element's box: `line` (top-left to bottom-right corner,
+so a zero height is a horizontal rule) and `rect` (border and/or fill). Laid-out items carry an
+optional `shape` instead of text; the HTML writer draws a page's shapes as one SVG layer under
+the text. Colours are accepted only as `#rgb` or `#rrggbb`, checked when the report is validated
+and again by the writer, which draws nothing for anything else: a colour string can never carry
+markup or CSS into an output. Images are a follow-up (source, size limits, attribution).
