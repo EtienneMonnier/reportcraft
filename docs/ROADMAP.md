@@ -28,7 +28,8 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R1.6 Query log (what ran, when, how many rows)
 - [x] R1.7 Schema discovery: tables, views, columns, types, keys and relationships, with data preview (§2 FR-DATA-002) (#26)
   - [x] PostgreSQL schema discovery with R1.2 (same `SchemaSource` trait)
-- [ ] R1.8 Typed parameters: number, boolean, date, date range, single and multiple choice, with defaults, allowed values, validation and dependent parameters (§7) — claimed: Claude (for EtienneMonnier), branch feature/r1.8-typed-parameters
+- [x] R1.8 Typed parameters: number, boolean, date, date range, single and multiple choice, with defaults, allowed values, validation and dependent parameters (§7) (#27)
+  - [ ] Dependent parameters: choices computed from a query that uses other parameters (e.g. items of the chosen branch)
 - [ ] R1.9 Cancel long-running queries and renders; time and memory limits (§10, §13)
 - [ ] R1.10 Optional cache of query results, with the refresh time shown (§2 FR-DATA-004, §5)
 

@@ -11,7 +11,7 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... [--out FILE]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE]
   validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json]
                                             errors and warnings, checked against the data when given
   schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
@@ -131,8 +131,16 @@ fn render(args: &[String]) -> Result<(), String> {
             "--format" => format = flag_value(it, a)?.to_owned(),
             "--out" => out = Some(flag_value(it, a)?.to_owned()),
             "--param" => {
+                // Repeating a name gives a parameter several values.
                 let (k, v) = flag_value(it, a)?.split_once('=').ok_or("`--param` expects NAME=VALUE")?;
-                params.insert(k.to_owned(), Json::String(v.to_owned()));
+                let v = Json::String(v.to_owned());
+                match params.get_mut(k) {
+                    Some(Json::Array(list)) => list.push(v),
+                    Some(first) => *first = Json::Array(vec![first.take(), v]),
+                    None => {
+                        params.insert(k.to_owned(), v);
+                    }
+                }
             }
             other => return Err(format!("unknown option `{other}`")),
         }

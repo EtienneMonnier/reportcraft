@@ -6,8 +6,10 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod format;
+mod params;
 
 pub use format::{Format, LOCALES, LocaleStyle, MAX_DECIMALS, locale_or_default, locale_style};
+pub use params::{MAX_VALUES, ParamType, ParamValue, Parameter, resolve as resolve_parameters};
 
 use reportcraft_core::{Column, Error, FieldType, Result, limits};
 use serde::{Deserialize, Serialize};
@@ -66,15 +68,6 @@ impl Default for PageSetup {
     fn default() -> Self {
         Self { width_mm: 210.0, height_mm: 297.0, margin_mm: 15.0 }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Parameter {
-    pub name: String,
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -238,6 +231,9 @@ impl Report {
         if p.width_mm - 2.0 * p.margin_mm <= 0.0 || body <= 0.0 {
             return Err(Error::Invalid("margins leave no room on the page".into()));
         }
+        if let Some(problem) = self.parameters.iter().flat_map(Parameter::declaration_problems).next() {
+            return Err(Error::Invalid(problem));
+        }
         if self.groups.len() > limits::MAX_GROUPS {
             return Err(Error::TooLarge(format!("more than {} groups", limits::MAX_GROUPS)));
         }
@@ -291,11 +287,11 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    fn error(location: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn error(location: impl Into<String>, message: impl Into<String>) -> Self {
         Self { severity: Severity::Error, location: location.into(), message: message.into() }
     }
 
-    fn warning(location: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn warning(location: impl Into<String>, message: impl Into<String>) -> Self {
         Self { severity: Severity::Warning, location: location.into(), message: message.into() }
     }
 }

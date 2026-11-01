@@ -26,7 +26,12 @@ pub fn write(value: &Value, format: Option<&Format>, locale: &LocaleStyle) -> St
             None => value.to_string(),
         },
         Format::Date { pattern } => match value {
-            Value::Text(t) => date(t, pattern.as_deref().unwrap_or(locale.date_pattern)).unwrap_or_else(|| t.clone()),
+            Value::Text(t) => {
+                let pattern = pattern.as_deref().unwrap_or(locale.date_pattern);
+                // A date range parameter (`from..to`) writes both ends.
+                let range = t.split_once("..").and_then(|(a, b)| Some(format!("{} – {}", date(a, pattern)?, date(b, pattern)?)));
+                range.or_else(|| date(t, pattern)).unwrap_or_else(|| t.clone())
+            }
             other => other.to_string(),
         },
     }
@@ -133,6 +138,7 @@ mod tests {
         assert_eq!(d("2026-10-01 14:05:00.123+02", Some("%H:%M"), "en"), "14:05");
         assert_eq!(d("2026-10-01T14:05:00Z", None, "en"), "2026-10-01");
         assert_eq!(d("not a date", None, "en"), "not a date");
+        assert_eq!(d("2026-10-01..2026-10-31", None, "fr"), "01/10/2026 – 31/10/2026");
         assert_eq!(d("2026-10-01", Some("%Q"), "en"), "2026-10-01", "a bad pattern leaves the text");
     }
 

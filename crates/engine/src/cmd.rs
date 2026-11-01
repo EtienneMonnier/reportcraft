@@ -78,6 +78,7 @@ static COMMANDS: &[CommandSpec] = &[
         params: r#"{"limit"?: integer (default 20, at most 1000)}"#,
         run: data_preview,
     },
+    CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", run: report_parameters },
     CommandSpec {
         id: "report.validate",
         label: "Check report",
@@ -89,7 +90,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.render",
         label: "Render",
         menu: "Report",
-        params: r#"{"format"?: "html" | "json" (default "html"), "params"?: {name: string}}"#,
+        params: r#"{"format"?: "html" | "json" (default "html"), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}}"#,
         run: report_render,
     },
 ];
@@ -275,14 +276,48 @@ fn report_validate(s: &mut Session, params: &Json) -> EngineResult<Json> {
     }))
 }
 
+fn report_parameters(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    serde_json::to_value(&s.report.parameters).map(|p| json!({"parameters": p})).map_err(|e| EngineError::Internal(e.to_string()))
+}
+
+/// The `params` object of a command as supplied values: a string, number or boolean is one value,
+/// an array several, `null` none.
+fn supplied_values(params: &Json) -> std::collections::BTreeMap<String, Vec<String>> {
+    let one = |v: &Json| match v {
+        Json::Null => None,
+        Json::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    };
+    params
+        .get("params")
+        .and_then(Json::as_object)
+        .map(|map| {
+            map.iter()
+                .map(|(k, v)| {
+                    let values = match v {
+                        Json::Array(items) => items.iter().take(reportcraft_model::MAX_VALUES + 1).filter_map(one).collect(),
+                        other => one(other).into_iter().collect(),
+                    };
+                    (k.clone(), values)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The report's parameters resolved for one run, or the problems as a parameter error.
+pub(crate) fn resolve_parameters(
+    s: &Session,
+    command: &str,
+    params: &Json,
+) -> EngineResult<std::collections::BTreeMap<String, reportcraft_model::ParamValue>> {
+    reportcraft_model::resolve_parameters(&s.report.parameters, &supplied_values(params))
+        .map_err(|problems| bad(command, problems.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("; ")))
+}
+
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
-    let mut values = Params::new();
-    if let Some(map) = params.get("params").and_then(Json::as_object) {
-        for (k, v) in map {
-            let text = v.as_str().map_or_else(|| v.to_string(), str::to_owned);
-            values.insert(k.clone(), text);
-        }
-    }
+    let resolved = resolve_parameters(s, "report.render", params)?;
+    let values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
     let doc = layout(&s.report, &s.rows, &values)?;
     match params.get("format").and_then(Json::as_str).unwrap_or("html") {
         "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc)})),

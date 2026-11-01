@@ -102,3 +102,16 @@ names are English for now (follow-up under R2.1).
 
 The sample's amounts now have two decimals and grouping; the golden snapshots changed only in
 those texts (reviewed), and a French reference report was added.
+
+## Typed parameters, resolved once per run (R1.8)
+
+A parameter declares a `type` (text, integer, number, boolean, date, date_range), optional
+`choices`, `multiple` and `required`. Older files, with only a name, label and default, read as
+text parameters. Supplied values arrive as text (a JSON number or boolean is accepted and
+converted; an array gives several values), are parsed by type, compared with the choices as
+parsed values (`010` equals `10`), and resolved with the defaults once, before rendering; any
+problem stops the render with every message. A multiple parameter's default lists values
+separated by `;`. Values for undeclared names still pass through as text, as before, and
+`report.validate` warns about them. Resolved values keep their type for the query binding of
+R1.5; the report shows their canonical text through the element's format (dates ISO, ranges
+`from..to`, lists joined by `, `).

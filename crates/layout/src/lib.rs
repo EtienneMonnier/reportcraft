@@ -240,12 +240,14 @@ impl<'a> Writer<'a> {
                 }
                 None => String::new(),
             },
-            Content::Parameter { name } => self
-                .params
-                .get(name)
-                .cloned()
-                .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()))
-                .unwrap_or_default(),
+            Content::Parameter { name } => {
+                let raw = self
+                    .params
+                    .get(name)
+                    .cloned()
+                    .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()));
+                raw.map(|r| format::write(&Value::Text(r), format, &self.locale)).unwrap_or_default()
+            }
             Content::PageNumber => String::new(),
         }
     }
