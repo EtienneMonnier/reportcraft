@@ -1,6 +1,7 @@
 //! The command registry. A command is an id, a label, its menu path, a parameter description
 //! and `run`. Ids follow the menus (`file.open`, `data.loadCsv`, `report.render`) plus primitives.
 
+use reportcraft_core::RowSet;
 use reportcraft_data::{CsvSource, DataSource};
 use reportcraft_layout::{Params, layout, to_html};
 use reportcraft_model::Report;
@@ -78,6 +79,14 @@ static COMMANDS: &[CommandSpec] = &[
         params: r#"{"limit"?: integer (default 20, at most 1000)}"#,
         run: data_preview,
     },
+    CommandSpec {
+        id: "data.queryLog",
+        label: "Query log",
+        menu: "Data",
+        params: r#"{"limit"?: integer (newest entries, default 50, at most 200)}"#,
+        run: data_query_log,
+    },
+    CommandSpec { id: "data.clearQueryLog", label: "Clear query log", menu: "Data", params: "{}", run: data_clear_query_log },
     CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", run: report_parameters },
     CommandSpec {
         id: "report.validate",
@@ -113,7 +122,8 @@ fn str_param<'a>(command: &str, params: &'a Json, name: &str) -> EngineResult<&'
 
 fn file_new(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let title = params.get("title").and_then(Json::as_str).unwrap_or("Untitled report");
-    *s = Session { report: Report::new(title), rows: Default::default() };
+    s.report = Report::new(title);
+    s.rows = Default::default();
     Ok(json!({"title": title}))
 }
 
@@ -148,8 +158,9 @@ fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Sqlite)?;
+    let logged = Logged::new(CMD, "sqlite", path.to_owned(), &bound);
     let source = reportcraft_sqlite::SqliteSource::new(path, bound.sql).with_binds(bound.values).with_timeout(timeout);
-    s.rows = source.read(limit)?;
+    s.rows = logged.finish(&mut s.query_log, source.read(limit))?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
 }
 
@@ -202,6 +213,44 @@ fn bound_query(s: &Session, command: &str, query: &str, params: &Json, dialect: 
     Ok(reportcraft_data::bind(query, &resolved, &declared, dialect)?)
 }
 
+/// A query being run, recorded in the log when it ends.
+#[cfg(not(target_arch = "wasm32"))]
+struct Logged {
+    entry: crate::QueryLogEntry,
+    started: std::time::Instant,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Logged {
+    fn new(command: &str, source: &str, target: String, bound: &reportcraft_data::Bound) -> Self {
+        let entry = crate::QueryLogEntry {
+            at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            command: command.to_owned(),
+            source: source.to_owned(),
+            target,
+            sql: bound.sql.clone(),
+            values: bound.values.iter().map(reportcraft_data::BindValue::as_text).collect(),
+            duration_ms: 0,
+            rows: None,
+            error: None,
+        };
+        // Native only (this type doesn't exist in the web build, which has no clock).
+        #[allow(clippy::disallowed_methods)]
+        let started = std::time::Instant::now();
+        Self { entry, started }
+    }
+
+    fn finish(mut self, log: &mut crate::QueryLog, result: reportcraft_core::Result<RowSet>) -> reportcraft_core::Result<RowSet> {
+        self.entry.duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match &result {
+            Ok(rows) => self.entry.rows = Some(rows.rows.len()),
+            Err(e) => self.entry.error = Some(e.to_string()),
+        }
+        log.push(self.entry);
+        result
+    }
+}
+
 /// Optional row limit and time limit shared by the database loaders.
 #[cfg(not(target_arch = "wasm32"))]
 fn limits_of(params: &Json) -> (Option<usize>, std::time::Duration) {
@@ -217,7 +266,9 @@ fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Postgres)?;
-    s.rows = reportcraft_postgres::PostgresSource::new(connection, bound.sql).with_binds(bound.values).with_timeout(timeout).read(limit)?;
+    let source = reportcraft_postgres::PostgresSource::new(connection, bound.sql.clone()).with_binds(bound.values.clone()).with_timeout(timeout);
+    let logged = Logged::new(CMD, "postgres", source.target(), &bound);
+    s.rows = logged.finish(&mut s.query_log, source.read(limit))?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
 }
 
@@ -269,6 +320,19 @@ fn data_preview(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let limit = usize::try_from(limit).unwrap_or(1_000);
     let rows: Vec<_> = s.rows.rows.iter().take(limit).collect();
     Ok(json!({"columns": s.rows.columns, "rows": rows, "total": s.rows.rows.len()}))
+}
+
+fn data_query_log(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    let limit = params.get("limit").and_then(Json::as_u64).unwrap_or(50);
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX).min(crate::query_log::MAX_ENTRIES);
+    let entries: Vec<_> = s.query_log.last(limit).collect();
+    Ok(json!({"entries": entries, "kept": s.query_log.len(), "dropped": s.query_log.dropped()}))
+}
+
+fn data_clear_query_log(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    let cleared = s.query_log.len();
+    s.query_log.clear();
+    Ok(json!({"cleared": cleared}))
 }
 
 fn report_validate(s: &mut Session, params: &Json) -> EngineResult<Json> {

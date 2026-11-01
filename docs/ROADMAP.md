@@ -25,7 +25,9 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
 - [x] R1.5 Report parameters passed to queries as bound parameters (never string-spliced) (#5)
-- [ ] R1.6 Query log (what ran, when, how many rows)
+- [x] R1.6 Query log (what ran, when, how many rows) (#6)
+  - [ ] Show the log in the designer's data panel (R3)
+  - [ ] Keep the log across runs (a file next to the settings) once named connections land (R1.3)
 - [x] R1.7 Schema discovery: tables, views, columns, types, keys and relationships, with data preview (§2 FR-DATA-002) (#26)
   - [x] PostgreSQL schema discovery with R1.2 (same `SchemaSource` trait)
 - [x] R1.8 Typed parameters: number, boolean, date, date range, single and multiple choice, with defaults, allowed values, validation and dependent parameters (§7) (#27)

@@ -36,7 +36,11 @@
   formats (a date range writes both ends).
 - Parameters in queries, bound and never spliced: `:name`, `:range.from` / `:range.to`, `IN (:list)`
   (`data.loadSqlite` / `data.loadPostgres` take `params`; the CLI's `--param` reaches the query).
-- CLI and MCP server reaching every command. 67 tests (plus 8 live PostgreSQL tests run on demand), including 10 golden rendering snapshots; `cargo xtask ci` green.
+- Query log: every SQLite and PostgreSQL query the session ran, with its start time, target
+  (file, or `user@host:port/database`, never the password), SQL as sent, bound values, duration and
+  row count or error; the newest 200 are kept (`data.queryLog`, `data.clearQueryLog`,
+  `--query-log` in `render` and `validate`, printed to stderr even when the query fails).
+- CLI and MCP server reaching every command. 69 tests (plus 8 live PostgreSQL tests run on demand), including 10 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).

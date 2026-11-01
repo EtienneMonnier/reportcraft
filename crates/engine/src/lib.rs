@@ -5,6 +5,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod cmd;
+pub mod query_log;
 pub mod sample;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -14,6 +15,7 @@ use reportcraft_model::Report;
 use serde_json::Value as Json;
 
 pub use cmd::{CommandSpec, commands, find_command};
+pub use query_log::{QueryLog, QueryLogEntry};
 
 /// What a command can fail with: the core error, plus the engine's own cases.
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
@@ -30,16 +32,18 @@ pub enum EngineError {
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
-/// The open report and the rows it reads.
+/// The open report, the rows it reads and the queries run so far.
 #[derive(Debug, Clone)]
 pub struct Session {
     pub report: Report,
     pub rows: RowSet,
+    /// Kept when another report is opened: it belongs to the session, not the report.
+    pub query_log: QueryLog,
 }
 
 impl Default for Session {
     fn default() -> Self {
-        Self { report: Report::new("Untitled report"), rows: RowSet::default() }
+        Self { report: Report::new("Untitled report"), rows: RowSet::default(), query_log: QueryLog::default() }
     }
 }
 
@@ -123,6 +127,23 @@ mod tests {
         let refused = s.execute("data.loadSqlite", &json!({"path": path, "query": "DELETE FROM r"}));
         assert!(refused.is_err());
         assert_eq!(s.rows.rows.len(), 2, "a refused command leaves the loaded rows as they were");
+
+        let log = s.execute("data.queryLog", &json!({})).unwrap();
+        let entries = log["entries"].as_array().unwrap();
+        // Queries refused before running (missing parameter, undeclared name) never reach the database.
+        assert_eq!(entries.len(), 4, "{log}");
+        assert_eq!(entries[0]["rows"], json!(2));
+        assert_eq!(entries[0]["source"], json!("sqlite"));
+        assert_eq!(entries[0]["target"], json!(path));
+        assert_eq!(entries[1]["values"], json!(["3"]), "bound values, in order");
+        assert!(entries[1]["sql"].as_str().unwrap().contains("?1"), "the SQL as sent");
+        assert!(entries[3]["error"].is_string() && entries[3].get("rows").is_none(), "a failed query is logged with its error");
+        assert!(entries[3]["at"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(s.execute("data.queryLog", &json!({"limit": 1})).unwrap()["entries"].as_array().map(Vec::len), Some(1));
+        s.execute("file.new", &json!({})).unwrap();
+        assert_eq!(s.query_log.len(), 4, "the log belongs to the session, not the report");
+        assert_eq!(s.execute("data.clearQueryLog", &json!({})).unwrap()["cleared"], json!(4));
+        assert!(s.query_log.is_empty());
     }
 
     #[test]

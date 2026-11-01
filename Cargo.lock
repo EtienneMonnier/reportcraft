@@ -605,6 +605,7 @@ dependencies = [
 name = "reportcraft-engine"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "log",
  "reportcraft-core",
  "reportcraft-data",
