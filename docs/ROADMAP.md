@@ -16,7 +16,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R0.5 Engine commands, CLI (`commands`, `render`, `run`, `sample`, `mcp`), MCP server
 
 ## R1 — Data connections (owner: open)
-- [ ] R1.1 SQLite source (read-only), with a query and typed columns
+- [ ] R1.1 SQLite source (read-only), with a query and typed columns — claimed: Claude (for EtienneMonnier), branch feature/r1.1-sqlite-source
 - [ ] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases
 - [ ] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
