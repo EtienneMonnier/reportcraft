@@ -267,6 +267,41 @@ pub enum Content {
     Parameter { name: String },
     /// "Page N of M".
     PageNumber,
+    /// A straight line from the element's top-left corner to its bottom-right corner: give it
+    /// no height for a horizontal rule, no width for a vertical one.
+    Line {
+        #[serde(default = "thin")]
+        thickness_mm: f64,
+        #[serde(default = "black")]
+        color: String,
+    },
+    /// A rectangle over the element's box: a border, a fill, or both.
+    Rect {
+        #[serde(default = "thin")]
+        border_mm: f64,
+        #[serde(default = "black")]
+        border_color: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<String>,
+    },
+}
+
+fn thin() -> f64 {
+    0.3
+}
+
+fn black() -> String {
+    "#000000".to_owned()
+}
+
+/// Thickest line or border accepted.
+pub const MAX_LINE_MM: f64 = 50.0;
+
+/// Whether a colour is `#rgb` or `#rrggbb` (the only forms accepted, so a colour can never carry
+/// anything else into an output).
+pub fn color_is_valid(color: &str) -> bool {
+    let hex = color.strip_prefix('#').unwrap_or("");
+    (hex.len() == 3 || hex.len() == 6) && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +402,16 @@ impl Report {
                 return Err(Error::Invalid(format!("{name}: band is taller than the room between page header and footer")));
             }
             for el in &band.elements {
+                let shape_ok = match &el.content {
+                    Content::Line { thickness_mm, color } => (0.0..=MAX_LINE_MM).contains(thickness_mm) && color_is_valid(color),
+                    Content::Rect { border_mm, border_color, fill } => {
+                        (0.0..=MAX_LINE_MM).contains(border_mm) && color_is_valid(border_color) && fill.as_deref().is_none_or(color_is_valid)
+                    }
+                    _ => true,
+                };
+                if !shape_ok {
+                    return Err(Error::Invalid(format!("{name}: line width must be 0 to {MAX_LINE_MM} mm and colours #rgb or #rrggbb")));
+                }
                 if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
                     return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
                 }
@@ -617,6 +662,27 @@ mod tests {
         r.page.columns = 4;
         r.page.column_gap_mm = 100.0;
         assert!(r.validate().is_err(), "the gap leaves no room");
+    }
+
+    #[test]
+    fn colours_and_line_widths_are_checked() {
+        assert!(color_is_valid("#abc") && color_is_valid("#A1B2C3"));
+        for bad in ["abc", "#ab", "#abcd", "#12345g", "red", "#123456\"", ""] {
+            assert!(!color_is_valid(bad), "{bad}");
+        }
+        let el =
+            |content: Content| Element { x_mm: 0.0, y_mm: 0.0, width_mm: 10.0, height_mm: 0.0, style: TextStyle::default(), content, format: None };
+        let mut r = Report::new("t");
+        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Line { thickness_mm: 0.3, color: "#000".into() })] };
+        assert!(r.validate().is_ok());
+        r.detail.elements = vec![el(Content::Line { thickness_mm: 0.3, color: "black".into() })];
+        assert!(r.validate().is_err());
+        r.detail.elements = vec![el(Content::Rect { border_mm: f64::NAN, border_color: "#000".into(), fill: None })];
+        assert!(r.validate().is_err());
+        r.detail.elements = vec![el(Content::Rect { border_mm: 0.2, border_color: "#000".into(), fill: Some("url(x)".into()) })];
+        assert!(r.validate().is_err());
+        let read: Content = serde_json::from_str(r#"{"kind":"line"}"#).unwrap();
+        assert_eq!(read, Content::Line { thickness_mm: 0.3, color: "#000000".into() });
     }
 
     #[test]

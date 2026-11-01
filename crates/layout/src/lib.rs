@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 pub use format::write as format_value;
 pub use html::to_html;
+pub use reportcraft_model::color_is_valid;
 
 /// A laid-out report.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,6 +39,25 @@ pub struct Item {
     pub height_mm: f64,
     pub style: TextStyle,
     pub text: String,
+    /// A line or rectangle over the item's box instead of text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<Shape>,
+}
+
+/// A drawn shape. Colours are validated `#rgb`/`#rrggbb` strings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Shape {
+    /// From the box's top-left corner to its bottom-right corner.
+    Line {
+        thickness_mm: f64,
+        color: String,
+    },
+    Rect {
+        border_mm: f64,
+        border_color: String,
+        fill: Option<String>,
+    },
 }
 
 /// Parameter values for one render, by parameter name.
@@ -326,7 +346,15 @@ impl<'a> Writer<'a> {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
             }
             let text = self.eval(&el.content, el.format.as_ref(), scope);
+            let shape = match &el.content {
+                Content::Line { thickness_mm, color } => Some(Shape::Line { thickness_mm: *thickness_mm, color: color.clone() }),
+                Content::Rect { border_mm, border_color, fill } => {
+                    Some(Shape::Rect { border_mm: *border_mm, border_color: border_color.clone(), fill: fill.clone() })
+                }
+                _ => None,
+            };
             self.page.items.push(Item {
+                shape,
                 x_mm: left + el.x_mm,
                 y_mm: self.y + el.y_mm,
                 width_mm: el.width_mm,
@@ -362,7 +390,7 @@ impl<'a> Writer<'a> {
                     .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()));
                 raw.map(|r| format::write(&Value::Text(r), format, &self.locale)).unwrap_or_default()
             }
-            Content::PageNumber => String::new(),
+            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } => String::new(),
         }
     }
 

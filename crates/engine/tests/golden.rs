@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use reportcraft_core::{Column, FieldType, RowSet, Value};
 use reportcraft_engine::sample;
-use reportcraft_layout::{Document, Params, layout};
+use reportcraft_layout::{Document, Params, Shape, layout};
 use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Format, Group, Report, SortKey, TextStyle};
 
 /// The snapshot text of a document: one header line per page, one line per item.
@@ -19,6 +19,16 @@ fn snapshot(doc: &Document) -> String {
     for (i, page) in doc.pages.iter().enumerate() {
         let _ = writeln!(out, "page {} ({} items)", i + 1, page.items.len());
         for it in &page.items {
+            if let Some(shape) = &it.shape {
+                let what = match shape {
+                    Shape::Line { thickness_mm, color } => format!("line {thickness_mm:.2}mm {color}"),
+                    Shape::Rect { border_mm, border_color, fill } => {
+                        format!("rect {border_mm:.2}mm {border_color} fill {}", fill.as_deref().unwrap_or("none"))
+                    }
+                };
+                let _ = writeln!(out, "  {:>7.2} {:>7.2} {:>6.2}x{:<5.2} {what}", it.x_mm, it.y_mm, it.width_mm, it.height_mm);
+                continue;
+            }
             let align = match it.style.align {
                 Align::Left => "L",
                 Align::Center => "C",
@@ -291,4 +301,56 @@ fn landscape_columns() {
     r.page_footer = Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, plain)] };
     r.report_footer = Band { height_mm: 6.0, elements: vec![el(0.0, 190.0, agg(AggregateFn::Sum, "days"), bold)] };
     check("landscape_columns", &r, &rentals(70), &Params::new());
+}
+
+/// Lines and rectangles: a rule under the page header, a shaded box behind each group header, a
+/// framed total, a vertical rule between columns of figures.
+#[test]
+fn lines_and_boxes() {
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let shape = |x: f64, y: f64, w: f64, h: f64, content: Content| Element {
+        x_mm: x,
+        y_mm: y,
+        width_mm: w,
+        height_mm: h,
+        style: plain,
+        content,
+        format: None,
+    };
+    let line = |color: &str| Content::Line { thickness_mm: 0.3, color: color.into() };
+    let mut r = Report::new("Shapes");
+    r.page_header = Band {
+        height_mm: 8.0,
+        elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold), shape(0.0, 7.0, 180.0, 0.0, line("#333"))],
+    };
+    r.groups = vec![Group {
+        field: "branch".into(),
+        keep_together: false,
+        repeat_header: false,
+        page_break_before: false,
+        header: Band {
+            height_mm: 7.0,
+            elements: vec![
+                shape(0.0, 0.5, 180.0, 6.0, Content::Rect { border_mm: 0.0, border_color: "#000".into(), fill: Some("#eeeeee".into()) }),
+                el(2.0, 80.0, field("branch"), bold),
+            ],
+        },
+        footer: Band {
+            height_mm: 8.0,
+            elements: vec![
+                shape(120.0, 0.5, 60.0, 6.5, Content::Rect { border_mm: 0.4, border_color: "#1f4e79".into(), fill: None }),
+                el(122.0, 56.0, agg(AggregateFn::Sum, "amount"), TextStyle { align: Align::Right, ..bold }),
+            ],
+        },
+    }];
+    r.detail = Band {
+        height_mm: 5.0,
+        elements: vec![
+            el(4.0, 80.0, field("item"), plain),
+            shape(118.0, 0.0, 0.0, 5.0, line("#999999")),
+            el(122.0, 56.0, field("amount"), TextStyle { align: Align::Right, ..plain }),
+        ],
+    };
+    check("lines_and_boxes", &r, &rentals(6), &Params::new());
 }
