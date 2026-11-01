@@ -22,7 +22,10 @@
 - Formats on fields and totals: number (decimals, grouping), currency (symbol before or after),
   percent, date (locale pattern or `strftime` pattern; ISO, SQL and RFC 3339 inputs), following the
   report's `locale` (`en`, `en-US`, `en-GB`, `fr`, `fr-CH`, `de`, `de-CH`, `es`, `it`, `nl`, `pt`).
-- CLI and MCP server reaching every command. 49 tests (plus 7 live PostgreSQL tests run on demand), including 6 golden rendering snapshots; `cargo xtask ci` green.
+- Typed parameters: text, integer, number, boolean, date, date range; allowed values, several
+  values, required, defaults; checked before rendering, listed by `report.parameters`, shown with
+  formats (a date range writes both ends).
+- CLI and MCP server reaching every command. 53 tests (plus 7 live PostgreSQL tests run on demand), including 6 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).

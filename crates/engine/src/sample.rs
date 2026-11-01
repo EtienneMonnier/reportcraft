@@ -44,7 +44,7 @@ fn rentals() -> Report {
     let sum = |f: &str| Content::Aggregate { function: AggregateFn::Sum, field: f.into() };
 
     let mut r = Report::new("Rentals by branch");
-    r.parameters.push(Parameter { name: "period".into(), label: "Period".into(), default: Some("October 2026".into()) });
+    r.parameters.push(Parameter::text("period", "Period", Some("October 2026".into())));
     r.sort.push(SortKey { field: "amount".into(), descending: true });
     r.report_header = Band {
         height_mm: 14.0,

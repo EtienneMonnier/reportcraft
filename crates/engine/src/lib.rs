@@ -127,6 +127,25 @@ mod tests {
     }
 
     #[test]
+    fn render_checks_typed_parameters() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        s.report.parameters.push(reportcraft_model::Parameter {
+            kind: reportcraft_model::ParamType::Integer,
+            required: true,
+            ..reportcraft_model::Parameter::text("min_days", "Minimum days", None)
+        });
+        let listed = s.execute("report.parameters", &json!({})).unwrap();
+        assert_eq!(listed["parameters"][1]["type"], json!("integer"));
+        let missing = s.execute("report.render", &json!({}));
+        assert!(matches!(missing, Err(EngineError::BadParams { .. })));
+        let wrong = s.execute("report.render", &json!({"params": {"min_days": "three"}})).unwrap_err().to_string();
+        assert!(wrong.contains("`three` is not a whole number"), "{wrong}");
+        assert!(s.execute("report.render", &json!({"params": {"min_days": 3}})).is_ok(), "a JSON number is accepted");
+        assert!(s.execute("report.render", &json!({"params": {"min_days": [3, 4]}})).is_err(), "one value only");
+    }
+
+    #[test]
     fn sample_renders_to_html() {
         let mut s = Session::default();
         s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();

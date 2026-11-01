@@ -207,6 +207,7 @@ fn formats_in_french() {
         elements: vec![
             fmt(el(75.0, 35.0, agg(AggregateFn::Sum, "amount"), right), eur.clone()),
             fmt(el(112.0, 25.0, agg(AggregateFn::Count, "amount"), right), eur),
+            fmt(el(0.0, 70.0, Content::Parameter { name: "period".into() }, plain), Format::Date { pattern: None }),
         ],
     };
     let col = |name: &str, t| Column { name: name.into(), field_type: t };
@@ -223,5 +224,6 @@ fn formats_in_french() {
             vec![Value::Null, Value::Null, Value::Null, Value::Null],
         ],
     };
-    check("formats_in_french", &r, &rows, &Params::new());
+    let params = Params::from([("period".to_owned(), "2026-10-01..2026-10-31".to_owned())]);
+    check("formats_in_french", &r, &rows, &params);
 }
