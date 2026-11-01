@@ -115,3 +115,18 @@ separated by `;`. Values for undeclared names still pass through as text, as bef
 `report.validate` warns about them. Resolved values keep their type for the query binding of
 R1.5; the report shows their canonical text through the element's format (dates ISO, ranges
 `from..to`, lists joined by `, `).
+
+## Report parameters in queries: `:name`, bound (R1.5)
+
+Queries name report parameters as `:name`, a date range as `:name.from` / `:name.to`, and a list
+parameter expands in place into one placeholder per value (`IN (:branches)`), the same in every
+database. `reportcraft_data::bind` scans the SQL, skipping string literals (including `E'…'`
+with backslashes), quoted identifiers, `--` and nested `/* */` comments, dollar-quoted strings
+and `::` casts, and writes only placeholders into the text: `?1`… for SQLite (bound natively),
+`(($1::text)::bigint)`… for PostgreSQL, where every value travels as text and is cast to the
+parameter's type, so the server never has to guess a type and `numeric` stays exact. A name the
+report doesn't declare is an error, so a typo never silently becomes NULL; a declared parameter
+without a value binds NULL. Parameters are resolved only when the query uses them. Both
+connectors check that the number of placeholders matches the number of values. PostgreSQL
+accepts bound values in `DECLARE … CURSOR` through the extended protocol, so results are still
+read in batches.

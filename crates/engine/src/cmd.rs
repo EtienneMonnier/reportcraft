@@ -33,7 +33,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadSqlite",
         label: "Load SQLite data",
         menu: "Data",
-        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT), "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
+        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
         run: data_load_sqlite,
     },
     CommandSpec {
@@ -54,7 +54,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadPostgres",
         label: "Load PostgreSQL data",
         menu: "Data",
-        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT), "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
+        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
         run: data_load_postgres,
     },
     CommandSpec {
@@ -147,7 +147,8 @@ fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let path = str_param(CMD, params, "path")?;
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
-    let source = reportcraft_sqlite::SqliteSource::new(path, query).with_timeout(timeout);
+    let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Sqlite)?;
+    let source = reportcraft_sqlite::SqliteSource::new(path, bound.sql).with_binds(bound.values).with_timeout(timeout);
     s.rows = source.read(limit)?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
 }
@@ -188,6 +189,19 @@ fn preview(source: &dyn reportcraft_data::SchemaSource, command: &str, params: &
     Ok(json!({"columns": rows.columns, "rows": rows.rows}))
 }
 
+/// The query with the report's parameters bound. Parameters are resolved only when the query
+/// uses them, so a report with a required parameter can still load data that doesn't need it.
+#[cfg(not(target_arch = "wasm32"))]
+fn bound_query(s: &Session, command: &str, query: &str, params: &Json, dialect: reportcraft_data::Dialect) -> EngineResult<reportcraft_data::Bound> {
+    let declared: Vec<&str> = s.report.parameters.iter().map(|p| p.name.as_str()).collect();
+    let probe = reportcraft_data::bind(query, &std::collections::BTreeMap::new(), &declared, dialect)?;
+    if probe.values.is_empty() {
+        return Ok(probe);
+    }
+    let resolved = resolve_parameters(s, command, params)?;
+    Ok(reportcraft_data::bind(query, &resolved, &declared, dialect)?)
+}
+
 /// Optional row limit and time limit shared by the database loaders.
 #[cfg(not(target_arch = "wasm32"))]
 fn limits_of(params: &Json) -> (Option<usize>, std::time::Duration) {
@@ -202,7 +216,8 @@ fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let connection = str_param(CMD, params, "connection")?;
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
-    s.rows = reportcraft_postgres::PostgresSource::new(connection, query).with_timeout(timeout).read(limit)?;
+    let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Postgres)?;
+    s.rows = reportcraft_postgres::PostgresSource::new(connection, bound.sql).with_binds(bound.values).with_timeout(timeout).read(limit)?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
 }
 

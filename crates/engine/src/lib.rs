@@ -107,6 +107,19 @@ mod tests {
         let preview = s.execute("data.previewSqlite", &json!({"path": path, "table": "r", "limit": 1})).unwrap();
         assert_eq!(preview["rows"].as_array().map(Vec::len), Some(1));
         assert!(s.execute("data.describeSqlite", &json!({"path": path, "table": "missing"})).is_err());
+        s.report.parameters.push(reportcraft_model::Parameter {
+            kind: reportcraft_model::ParamType::Integer,
+            required: true,
+            ..reportcraft_model::Parameter::text("min_days", "", None)
+        });
+        let q = "SELECT * FROM r WHERE days >= :min_days";
+        let bound = s.execute("data.loadSqlite", &json!({"path": path, "query": q, "params": {"min_days": 3}})).unwrap();
+        assert_eq!(bound["rows"], json!(1), "only the 5-day rental");
+        let missing = s.execute("data.loadSqlite", &json!({"path": path, "query": q}));
+        assert!(matches!(missing, Err(EngineError::BadParams { .. })), "a required parameter the query uses");
+        let typo = s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT * FROM r WHERE days >= :min_dayz"}));
+        assert!(typo.unwrap_err().to_string().contains("doesn't declare"));
+        s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT * FROM r"})).unwrap();
         let refused = s.execute("data.loadSqlite", &json!({"path": path, "query": "DELETE FROM r"}));
         assert!(refused.is_err());
         assert_eq!(s.rows.rows.len(), 2, "a refused command leaves the loaded rows as they were");

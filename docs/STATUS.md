@@ -25,7 +25,9 @@
 - Typed parameters: text, integer, number, boolean, date, date range; allowed values, several
   values, required, defaults; checked before rendering, listed by `report.parameters`, shown with
   formats (a date range writes both ends).
-- CLI and MCP server reaching every command. 53 tests (plus 7 live PostgreSQL tests run on demand), including 6 golden rendering snapshots; `cargo xtask ci` green.
+- Parameters in queries, bound and never spliced: `:name`, `:range.from` / `:range.to`, `IN (:list)`
+  (`data.loadSqlite` / `data.loadPostgres` take `params`; the CLI's `--param` reaches the query).
+- CLI and MCP server reaching every command. 60 tests (plus 8 live PostgreSQL tests run on demand), including 6 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).

@@ -12,5 +12,9 @@ reportcraft-core.workspace = true
 reportcraft-data.workspace = true
 postgres.workspace = true
 
+[dev-dependencies]
+reportcraft-model.workspace = true
+chrono.workspace = true
+
 [lints]
 workspace = true

@@ -9,8 +9,10 @@ use std::time::Duration;
 
 use postgres::{Client, NoTls};
 use reportcraft_core::{Error, FieldType, Value};
-use reportcraft_data::{DataSource, SchemaSource, TableKind};
+use reportcraft_data::{DataSource, Dialect, SchemaSource, TableKind, bind};
+use reportcraft_model::ParamValue;
 use reportcraft_postgres::PostgresSource;
+use std::collections::BTreeMap;
 
 fn conninfo() -> Option<String> {
     let c = std::env::var("REPORTCRAFT_TEST_POSTGRES").ok().filter(|s| !s.is_empty());
@@ -167,4 +169,35 @@ fn previews_listed_tables_only() {
     assert_eq!(rs.rows.len(), 5);
     assert!(matches!(src.preview("rc_live.rental; DROP TABLE rc_live.rental", 5), Err(Error::NotFound(_))));
     assert_eq!(src.preview("rc_live.rental", 10).unwrap().rows.len(), 3);
+}
+
+#[test]
+fn binds_typed_parameters() {
+    let Some(c) = conninfo() else { return };
+    setup(&c);
+    let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+    let values = BTreeMap::from([
+        ("branches".to_owned(), ParamValue::List(vec![ParamValue::Text("LYO".into()), ParamValue::Text("ANN".into())])),
+        ("min".to_owned(), ParamValue::Integer(4)),
+        ("amount".to_owned(), ParamValue::Number(500.25)),
+        ("period".to_owned(), ParamValue::DateRange(d("2026-10-01"), d("2026-10-02"))),
+        ("paid".to_owned(), ParamValue::Boolean(true)),
+    ]);
+    let declared = ["branches", "min", "amount", "period", "paid", "nothing"];
+    let sql = "SELECT id FROM rc_live.rental WHERE branch_code IN (:branches) AND days >= :min AND amount > :amount
+               AND started BETWEEN :period.from AND :period.to AND paid = :paid AND (:nothing IS NULL) ORDER BY id";
+    let b = bind(sql, &values, &declared, Dialect::Postgres).unwrap();
+    let rs = PostgresSource::new(&c, b.sql).with_binds(b.values).read(None).unwrap();
+    assert_eq!(rs.rows, vec![vec![Value::Int(1)]], "smallint, numeric, date, boolean and a list compared with typed values");
+    let evil = bind(
+        "SELECT count(*) FROM rc_live.rental WHERE branch_code = :b",
+        &BTreeMap::from([("b".to_owned(), ParamValue::Text("x' OR '1'='1".into()))]),
+        &["b"],
+        Dialect::Postgres,
+    )
+    .unwrap();
+    let n = PostgresSource::new(&c, evil.sql).with_binds(evil.values).read(None).unwrap();
+    assert_eq!(n.rows[0][0], Value::Int(0));
+    let short = PostgresSource::new(&c, "SELECT $1::int").read(None).unwrap_err();
+    assert!(short.to_string().contains("1 placeholder(s) but 0"), "{short}");
 }

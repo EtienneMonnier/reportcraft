@@ -9,6 +9,8 @@ repository.workspace = true
 
 [dependencies]
 reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+chrono.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 

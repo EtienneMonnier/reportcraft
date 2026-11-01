@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value, limits};
-use reportcraft_data::{ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
+use reportcraft_data::{BindValue, ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
 use rusqlite::limits::Limit;
-use rusqlite::types::ValueRef;
+use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OpenFlags};
 
 /// How long a query may run by default.
@@ -27,12 +27,19 @@ const PROGRESS_STEPS: i32 = 10_000;
 pub struct SqliteSource {
     path: PathBuf,
     query: String,
+    binds: Vec<BindValue>,
     timeout: Duration,
 }
 
 impl SqliteSource {
     pub fn new(path: impl Into<PathBuf>, query: impl Into<String>) -> Self {
-        Self { path: path.into(), query: query.into(), timeout: DEFAULT_TIMEOUT }
+        Self { path: path.into(), query: query.into(), binds: Vec::new(), timeout: DEFAULT_TIMEOUT }
+    }
+
+    /// Values for the query's `?1`, `?2`… placeholders (see `reportcraft_data::bind`).
+    pub fn with_binds(mut self, binds: Vec<BindValue>) -> Self {
+        self.binds = binds;
+        self
     }
 
     /// Stops the query once it has run this long.
@@ -111,12 +118,12 @@ impl DataSource for SqliteSource {
             return Err(Error::TooLarge("query text longer than 1 MiB".into()));
         }
         let max_rows = limit.unwrap_or(limits::MAX_ROWS).min(limits::MAX_ROWS);
-        run(&self.open()?, &self.query, max_rows)
+        run(&self.open()?, &self.query, &self.binds, max_rows)
     }
 }
 
 /// Runs one read-only statement and collects its rows.
-fn run(conn: &Connection, sql: &str, max_rows: usize) -> Result<RowSet> {
+fn run(conn: &Connection, sql: &str, binds: &[BindValue], max_rows: usize) -> Result<RowSet> {
     let mut stmt = conn.prepare(sql).map_err(|e| query_error(&e))?;
     if !stmt.readonly() {
         return Err(Error::Invalid("only queries that read data are allowed (SELECT, WITH …)".into()));
@@ -131,7 +138,22 @@ fn run(conn: &Connection, sql: &str, max_rows: usize) -> Result<RowSet> {
     let declared: Vec<Option<FieldType>> = stmt.columns().map(|c| c.decl_type().and_then(declared_type)).collect();
 
     let mut rows = Vec::new();
-    let mut cursor = stmt.query([]).map_err(|e| query_error(&e))?;
+    if stmt.parameter_count() != binds.len() {
+        return Err(Error::Invalid(format!(
+            "the query has {} placeholder(s) but {} value(s): name report parameters as `:name`",
+            stmt.parameter_count(),
+            binds.len()
+        )));
+    }
+    let values = binds.iter().map(|b| match b {
+        BindValue::Null => SqlValue::Null,
+        BindValue::Text(t) => SqlValue::Text(t.clone()),
+        BindValue::Integer(i) => SqlValue::Integer(*i),
+        BindValue::Number(n) => SqlValue::Real(*n),
+        BindValue::Boolean(b) => SqlValue::Integer(i64::from(*b)),
+        BindValue::Date(_) => SqlValue::Text(b.as_text().unwrap_or_default()),
+    });
+    let mut cursor = stmt.query(rusqlite::params_from_iter(values)).map_err(|e| query_error(&e))?;
     while rows.len() < max_rows {
         let Some(row) = cursor.next().map_err(|e| query_error(&e))? else { break };
         let mut values = Vec::with_capacity(names.len());
@@ -190,7 +212,7 @@ impl SchemaSource for SqliteSource {
         let schema = self.schema()?;
         let found = schema.table(table).ok_or_else(|| Error::NotFound(format!("table or view `{table}`")))?;
         let limit = limit.min(limits::MAX_ROWS);
-        run(&self.open()?, &format!("SELECT * FROM {} LIMIT {limit}", quote_identifier(&found.name)), limit)
+        run(&self.open()?, &format!("SELECT * FROM {} LIMIT {limit}", quote_identifier(&found.name)), &[], limit)
     }
 }
 
@@ -390,6 +412,19 @@ mod tests {
         assert_eq!(rs.rows.len(), 2);
         assert_eq!(src.preview("rental", 10).unwrap().rows.len(), 3, "rental is still there");
         assert!(matches!(src.preview("nope", 5), Err(Error::NotFound(_))));
+    }
+
+    #[test]
+    fn binds_values_and_counts_placeholders() {
+        let path = sample_db("binds");
+        let q = "SELECT item FROM rental WHERE branch = ?1 AND days >= ?2 AND paid = ?3 ORDER BY id";
+        let src = SqliteSource::new(&path, q).with_binds(vec![BindValue::Text("Lyon".into()), BindValue::Integer(10), BindValue::Boolean(true)]);
+        let rs = src.read(None).unwrap();
+        assert_eq!(rs.rows, vec![vec![Value::Text("Scaffold tower".into())]]);
+        let evil = SqliteSource::new(&path, "SELECT count(*) FROM rental WHERE branch = ?1").with_binds(vec![BindValue::Text("x' OR 1=1 --".into())]);
+        assert_eq!(evil.read(None).unwrap().rows[0][0], Value::Int(0), "a value is a value, never SQL");
+        let missing = SqliteSource::new(&path, "SELECT * FROM rental WHERE days > ?").read(None).unwrap_err();
+        assert!(missing.to_string().contains("1 placeholder(s) but 0"), "{missing}");
     }
 
     #[test]
