@@ -44,7 +44,7 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R2.12 Labels: detail repeated across a grid of labels per page (§18.5)
 - [x] R2.13 Golden rendering tests: reference reports whose page count and geometry are checked on every change (§13, §15) (#34)
   - [ ] Add a golden PDF check once PDF export lands (R2.6): page count and text positions read back from the file
-- [ ] R2.14 `report.validate` command: structured diagnostics for a definition without rendering it (§11, §15)
+- [ ] R2.14 `report.validate` command: structured diagnostics for a definition without rendering it (§11, §15) — claimed: Claude (for EtienneMonnier), branch feature/r2.14-validate
 
 ## R3 — Designer (owner: maintainers)
 - [ ] R3.1 `ui-egui` crate (L6) on craft-ui and the suite's egui fork; banded canvas with live preview
