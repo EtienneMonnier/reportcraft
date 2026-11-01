@@ -37,3 +37,15 @@ type of the values returned. Blobs are shown as `<binary, N bytes>` until images
 
 Open: `data.loadSqlite` takes a path, so an MCP agent can open any database file the user's
 account can read. Named connections (R1.3) will replace the path, as specification §11 requires.
+
+## Schema discovery is a trait of its own (R1.7)
+
+`SchemaSource` (tables and views with columns, keys and foreign keys, plus a table preview) is
+separate from `DataSource`: a CSV file has rows but no schema, and a database has a schema
+before any query is written. Each connector implements what it has; PostgreSQL will implement
+both. SQLite reads `sqlite_schema` and the table-valued `pragma_table_info` and
+`pragma_foreign_key_list` functions, so discovery runs on the same read-only, time-limited
+connection as queries. A foreign key that names no target column is resolved to the target's
+primary key. Nullability follows SQLite exactly: a primary-key column accepts NULL unless it says
+NOT NULL, except a single `INTEGER PRIMARY KEY` (the rowid). Previews only accept a name that
+the schema lists, and quote it, so a table name can never inject SQL.

@@ -99,6 +99,14 @@ mod tests {
         assert_eq!(loaded["rows"], json!(2));
         let html = s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().to_owned();
         assert!(html.contains("Chambery") && html.contains("174"), "branch and its total are shown");
+        let schema = s.execute("data.describeSqlite", &json!({"path": path})).unwrap();
+        assert_eq!(schema["tables"][0]["name"], json!("r"));
+        assert_eq!(schema["tables"][0]["columns"][2]["field_type"], json!("integer"));
+        let table = s.execute("data.describeSqlite", &json!({"path": path, "table": "R"})).unwrap();
+        assert_eq!(table["columns"].as_array().map(Vec::len), Some(4));
+        let preview = s.execute("data.previewSqlite", &json!({"path": path, "table": "r", "limit": 1})).unwrap();
+        assert_eq!(preview["rows"].as_array().map(Vec::len), Some(1));
+        assert!(s.execute("data.describeSqlite", &json!({"path": path, "table": "missing"})).is_err());
         let refused = s.execute("data.loadSqlite", &json!({"path": path, "query": "DELETE FROM r"}));
         assert!(refused.is_err());
         assert_eq!(s.rows.rows.len(), 2, "a refused command leaves the loaded rows as they were");

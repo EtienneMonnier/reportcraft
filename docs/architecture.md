@@ -13,8 +13,8 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 |---|---|---|
 | L0 | `core` | `Value`, `FieldType`, `Column`, `RowSet`, the shared `Error`, input caps (`limits`) |
 | L1 | `model` | The report definition (`*.rcr.json`, `format_version`): page setup, parameters, sort, groups, bands, elements |
-| L2 | `data` | `DataSource` trait; `MemorySource`, `CsvSource` (wasm-safe) |
-| L3 | `sqlite` | Read-only SQLite source (native only; implements `DataSource`) |
+| L2 | `data` | `DataSource` and `SchemaSource` traits, schema types; `MemorySource`, `CsvSource` (wasm-safe) |
+| L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `layout` | Banded layout to `Document` (pages of positioned text); HTML writer |
 | L5 | `engine` | `Session`, the command registry (`cmd.rs`), built-in samples |
 | L6 | `mcp` | MCP server over stdio (hand-written JSON-RPC), one tool per command |
