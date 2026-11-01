@@ -17,5 +17,12 @@ serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
 
+# Native-only sources (the engine itself stays buildable for wasm without them).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reportcraft-sqlite.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
+
 [lints]
 workspace = true
