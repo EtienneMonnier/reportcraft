@@ -69,6 +69,11 @@ pub enum Shape {
     },
 }
 
+/// The render value holding when the data was read (RFC 3339), for `Content::RefreshedAt`.
+pub const REFRESHED_AT: &str = "@refreshed_at";
+/// The render value holding when the report was rendered (RFC 3339), for `Content::PrintedAt`.
+pub const PRINTED_AT: &str = "@printed_at";
+
 /// Height of the text under a linear barcode.
 const BARCODE_TEXT_MM: f64 = 3.5;
 
@@ -514,6 +519,14 @@ impl<'a> Writer<'a> {
                     .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()));
                 raw.map(|r| format::write(&Value::Text(r), format, &self.locale)).unwrap_or_default()
             }
+            Content::RefreshedAt | Content::PrintedAt => {
+                let key = if matches!(content, Content::RefreshedAt) { REFRESHED_AT } else { PRINTED_AT };
+                let default = reportcraft_model::Format::Date { pattern: Some(format!("{} %H:%M", self.locale.date_pattern)) };
+                self.params
+                    .get(key)
+                    .map(|t| format::write(&Value::Text(t.clone()), Some(format.unwrap_or(&default)), &self.locale))
+                    .unwrap_or_default()
+            }
             Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } => String::new(),
         }
     }
@@ -628,6 +641,19 @@ mod tests {
         assert!(doc.pages.iter().all(|p| !p.items.is_empty()), "no blank page");
         let first_texts: Vec<&str> = doc.pages.iter().filter_map(|p| p.items.first().map(|i| i.text.as_str())).collect();
         assert_eq!(first_texts, ["Lyon", "Lyon", "Lyon", "Lyon", "Paris", "Paris"]);
+    }
+
+    #[test]
+    fn refresh_and_print_times_follow_the_locale() {
+        let mut report = Report::new("r");
+        report.locale = "fr".into();
+        report.report_header = Band { height_mm: 6.0, elements: vec![el(Content::RefreshedAt), el(Content::PrintedAt)] };
+        let mut params = Params::new();
+        params.insert(REFRESHED_AT.into(), "2026-10-01T14:05:09+02:00".into());
+        let doc = layout(&report, &rows(), &params).unwrap();
+        let t = texts(&doc);
+        assert!(t.contains(&"01/10/2026 14:05".to_owned()), "{t:?}");
+        assert!(!t.iter().any(|x| x.contains("2026-")), "no printing time given: nothing shown");
     }
 
     #[test]

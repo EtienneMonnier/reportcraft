@@ -287,6 +287,11 @@ pub enum Content {
     Parameter { name: String },
     /// "Page N of M".
     PageNumber,
+    /// When the report's data was read (from the database, or from the cache), with a date
+    /// format or the locale's date and time.
+    RefreshedAt,
+    /// When the report was rendered.
+    PrintedAt,
     /// A straight line from the element's top-left corner to its bottom-right corner: give it
     /// no height for a horizontal rule, no width for a vertical one.
     Line {

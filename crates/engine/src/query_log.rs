@@ -34,6 +34,9 @@ pub struct QueryLogEntry {
     pub rows: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Served from the query cache: the database wasn't queried.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub from_cache: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -51,6 +54,7 @@ impl QueryLog {
         }
         match &entry.error {
             Some(e) => log::warn!("{} on {} failed after {} ms: {e}", entry.source, entry.target, entry.duration_ms),
+            None if entry.from_cache => log::info!("{} on {}: {} rows from the cache", entry.source, entry.target, entry.rows.unwrap_or(0)),
             None => log::info!("{} on {}: {} rows in {} ms", entry.source, entry.target, entry.rows.unwrap_or(0), entry.duration_ms),
         }
         if self.entries.len() == MAX_ENTRIES {
@@ -98,6 +102,7 @@ mod tests {
             duration_ms: 0,
             rows: Some(n),
             error: None,
+            from_cache: false,
         }
     }
 

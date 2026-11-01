@@ -201,3 +201,14 @@ A value that can't be encoded (a letter in an EAN-13, an emoji in Code 128) is p
 so a wrong label is visible rather than blank. Tests decode the output with zxing-cpp outside the
 repository; inside, the encoders are checked against the standards' worked examples and
 capacities.
+
+## The query cache is opt-in, per load, for the session (R1.10)
+
+A load reuses cached rows only when it says how old they may be (`cacheSeconds`); otherwise it
+reads the database, as before. The key is everything that shapes the result: source kind, target
+(the file, or `user@host:port/database`), the SQL as sent, the bound values, the row and memory
+limits. The cache lives in the session (at most 8 results, 1 GiB), so it helps the designer, the
+MCP server and the future control channel, not a one-shot CLI run; a disk cache waits for a
+settings location (R1.3). Rows are held in an `Arc`, shared by the cache and the session, which
+also stops `Session::execute` from copying the loaded rows before every command. Every load says
+when its rows were read (`refreshedAt`, local time), and a report can print it.

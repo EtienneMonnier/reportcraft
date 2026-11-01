@@ -34,7 +34,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadSqlite",
         label: "Load SQLite data",
         menu: "Data",
-        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384)}"#,
+        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400)}"#,
         run: data_load_sqlite,
     },
     CommandSpec {
@@ -55,7 +55,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.loadPostgres",
         label: "Load PostgreSQL data",
         menu: "Data",
-        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384)}"#,
+        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400)}"#,
         run: data_load_postgres,
     },
     CommandSpec {
@@ -87,6 +87,7 @@ static COMMANDS: &[CommandSpec] = &[
         run: data_query_log,
     },
     CommandSpec { id: "data.clearQueryLog", label: "Clear query log", menu: "Data", params: "{}", run: data_clear_query_log },
+    CommandSpec { id: "data.clearCache", label: "Clear query cache", menu: "Data", params: "{}", run: data_clear_cache },
     CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", run: report_parameters },
     CommandSpec {
         id: "report.validate",
@@ -124,13 +125,14 @@ fn file_new(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let title = params.get("title").and_then(Json::as_str).unwrap_or("Untitled report");
     s.report = Report::new(title);
     s.rows = Default::default();
+    s.refreshed_at = None;
     Ok(json!({"title": title}))
 }
 
 fn file_open_sample(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let name = params.get("name").and_then(Json::as_str).unwrap_or("rentals");
     let (report, csv) = sample::by_name(name).ok_or_else(|| bad("file.openSample", format!("no sample named `{name}`")))?;
-    s.rows = CsvSource::new(csv).read(None)?;
+    set_rows(s, CsvSource::new(csv).read(None)?);
     s.report = report;
     Ok(json!({"title": s.report.title, "rows": s.rows.rows.len()}))
 }
@@ -147,8 +149,25 @@ fn report_get(s: &mut Session, _: &Json) -> EngineResult<Json> {
 }
 
 fn data_load_csv(s: &mut Session, params: &Json) -> EngineResult<Json> {
-    s.rows = CsvSource::new(str_param("data.loadCsv", params, "csv")?).read(None)?;
+    set_rows(s, CsvSource::new(str_param("data.loadCsv", params, "csv")?).read(None)?);
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+}
+
+/// Hands newly read rows to the report, noting when they were read.
+fn set_rows(s: &mut Session, rows: RowSet) {
+    s.rows = std::sync::Arc::new(rows);
+    s.refreshed_at = now_local();
+}
+
+/// The time now, RFC 3339 with the local offset; `None` in the web build (no clock).
+#[cfg(not(target_arch = "wasm32"))]
+fn now_local() -> Option<String> {
+    Some(chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn now_local() -> Option<String> {
+    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -158,14 +177,54 @@ fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Sqlite)?;
-    let logged = Logged::new(CMD, "sqlite", path.to_owned(), &bound);
-    let source = reportcraft_sqlite::SqliteSource::new(path, bound.sql)
-        .with_binds(bound.values)
+    let source = reportcraft_sqlite::SqliteSource::new(path, bound.sql.clone())
+        .with_binds(bound.values.clone())
         .with_timeout(timeout)
         .with_cancel(s.cancel().clone())
         .with_max_bytes(max_bytes_of(params));
-    s.rows = logged.finish(&mut s.query_log, source.read(limit))?;
-    Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+    load_from_database(s, Query { command: CMD, source: "sqlite", target: path.to_owned(), bound: &bound, limit }, params, || source.read(limit))
+}
+
+/// A database query about to run, as the log and the cache know it.
+#[cfg(not(target_arch = "wasm32"))]
+struct Query<'a> {
+    command: &'a str,
+    source: &'a str,
+    target: String,
+    bound: &'a reportcraft_data::Bound,
+    limit: Option<usize>,
+}
+
+/// Runs `read` (or takes its rows from the cache when `cacheSeconds` allows), logs it and hands
+/// the rows to the report.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_from_database(s: &mut Session, q: Query<'_>, params: &Json, read: impl FnOnce() -> reportcraft_core::Result<RowSet>) -> EngineResult<Json> {
+    let max_age = params.get("cacheSeconds").and_then(Json::as_u64).unwrap_or(0).min(86_400);
+    let key = format!("{}\n{}\n{}\n{:?}\n{:?}\n{}", q.source, q.target, q.bound.sql, q.bound.values, q.limit, max_bytes_of(params));
+    let mut logged = Logged::new(q.command, q.source, q.target, q.bound);
+    if max_age > 0
+        && let Some(hit) = s.cache.get(&key, std::time::Duration::from_secs(max_age))
+    {
+        logged.entry.from_cache = true;
+        logged.entry.rows = Some(hit.rows.rows.len());
+        s.query_log.push(logged.entry);
+        s.rows = hit.rows;
+        s.refreshed_at = Some(hit.refreshed_at);
+        return Ok(loaded(s, true));
+    }
+    let rows = std::sync::Arc::new(logged.finish(&mut s.query_log, read())?);
+    s.refreshed_at = now_local();
+    if max_age > 0 {
+        s.cache.put(key, std::sync::Arc::clone(&rows), s.refreshed_at.clone().unwrap_or_default());
+    }
+    s.rows = rows;
+    Ok(loaded(s, false))
+}
+
+/// What a load command answers.
+#[cfg(not(target_arch = "wasm32"))]
+fn loaded(s: &Session, from_cache: bool) -> Json {
+    json!({"columns": s.rows.columns, "rows": s.rows.rows.len(), "refreshedAt": s.refreshed_at, "fromCache": from_cache})
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -237,6 +296,7 @@ impl Logged {
             duration_ms: 0,
             rows: None,
             error: None,
+            from_cache: false,
         };
         // Native only (this type doesn't exist in the web build, which has no clock).
         #[allow(clippy::disallowed_methods)]
@@ -285,9 +345,8 @@ fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
         .with_timeout(timeout)
         .with_cancel(s.cancel().clone())
         .with_max_bytes(max_bytes_of(params));
-    let logged = Logged::new(CMD, "postgres", source.target(), &bound);
-    s.rows = logged.finish(&mut s.query_log, source.read(limit))?;
-    Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+    let target = source.target();
+    load_from_database(s, Query { command: CMD, source: "postgres", target, bound: &bound, limit }, params, || source.read(limit))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -345,6 +404,12 @@ fn data_query_log(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let limit = usize::try_from(limit).unwrap_or(usize::MAX).min(crate::query_log::MAX_ENTRIES);
     let entries: Vec<_> = s.query_log.last(limit).collect();
     Ok(json!({"entries": entries, "kept": s.query_log.len(), "dropped": s.query_log.dropped()}))
+}
+
+fn data_clear_cache(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    let cleared = s.cache.len();
+    s.cache.clear();
+    Ok(json!({"cleared": cleared}))
 }
 
 fn data_clear_query_log(s: &mut Session, _: &Json) -> EngineResult<Json> {
@@ -426,10 +491,17 @@ fn render_limit(s: &Session, _: &Json) -> reportcraft_core::Cancel {
 
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let resolved = resolve_parameters(s, "report.render", params)?;
-    let values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
+    let mut values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
+    // Parameter names are letters, digits and `_`, so these can't clash with one.
+    if let Some(at) = &s.refreshed_at {
+        values.insert(reportcraft_layout::REFRESHED_AT.to_owned(), at.clone());
+    }
+    if let Some(now) = now_local() {
+        values.insert(reportcraft_layout::PRINTED_AT.to_owned(), now);
+    }
     let doc = layout_with_cancel(&s.report, &s.rows, &values, &render_limit(s, params))?;
     match params.get("format").and_then(Json::as_str).unwrap_or("html") {
-        "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc)})),
+        "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc), "refreshedAt": s.refreshed_at})),
         "json" => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),
         other => Err(bad("report.render", format!("unknown format `{other}` (html or json)"))),
     }

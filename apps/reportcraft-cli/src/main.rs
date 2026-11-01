@@ -165,6 +165,7 @@ fn query_log_text(log: &Json) -> String {
     for e in log["entries"].as_array().into_iter().flatten() {
         let text = |k: &str| e[k].as_str().unwrap_or("").to_owned();
         let outcome = match e["rows"].as_u64() {
+            Some(n) if e["fromCache"] == json!(true) => format!("{n} row(s) from the cache"),
             Some(n) => format!("{n} row(s)"),
             None => format!("failed: {}", text("error")),
         };

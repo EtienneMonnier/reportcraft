@@ -4,16 +4,21 @@
 //! channel all call `Session::execute(id, params)`. Programmatic calls never open dialogs.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+// The web build reads no database, so it never fills the cache.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+mod cache;
 mod cmd;
 pub mod query_log;
 pub mod sample;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 use reportcraft_core::{Cancel, Error, RowSet};
 use reportcraft_model::Report;
 use serde_json::Value as Json;
 
+pub use cache::QueryCache;
 pub use cmd::{CommandSpec, commands, find_command};
 pub use query_log::{QueryLog, QueryLogEntry};
 
@@ -36,7 +41,12 @@ pub type EngineResult<T> = Result<T, EngineError>;
 #[derive(Debug, Clone)]
 pub struct Session {
     pub report: Report,
-    pub rows: RowSet,
+    /// Shared, so copying the session (before each command, for the cache) doesn't copy rows.
+    pub rows: Arc<RowSet>,
+    /// When the rows were read (RFC 3339, local time); `None` in the web build.
+    pub refreshed_at: Option<String>,
+    /// Results kept for loads that ask for them (`cacheSeconds`).
+    pub cache: QueryCache,
     /// Kept when another report is opened: it belongs to the session, not the report.
     pub query_log: QueryLog,
     /// Raised through `cancel_handle` to stop the running command.
@@ -45,7 +55,14 @@ pub struct Session {
 
 impl Default for Session {
     fn default() -> Self {
-        Self { report: Report::new("Untitled report"), rows: RowSet::default(), query_log: QueryLog::default(), cancel: Cancel::default() }
+        Self {
+            report: Report::new("Untitled report"),
+            rows: Arc::default(),
+            refreshed_at: None,
+            cache: QueryCache::default(),
+            query_log: QueryLog::default(),
+            cancel: Cancel::default(),
+        }
     }
 }
 
@@ -189,6 +206,36 @@ mod tests {
         assert_eq!(next["rows"], json!(1), "the request ended with the command it stopped");
         let tight = s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT printf('%.2000000c', 'x')", "maxMegabytes": 1}));
         assert!(tight.unwrap_err().to_string().contains("1 MiB"));
+    }
+
+    #[test]
+    fn loads_reuse_cached_rows_only_when_asked() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-engine-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("x.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch("CREATE TABLE t (a INT); INSERT INTO t VALUES (1);").unwrap();
+        let path = db.to_string_lossy();
+        let mut s = Session::default();
+        let load = |s: &mut Session, cache: u64| {
+            s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT * FROM t", "cacheSeconds": cache})).unwrap()
+        };
+        let first = load(&mut s, 60);
+        assert_eq!((first["rows"].clone(), first["fromCache"].clone()), (json!(1), json!(false)));
+        assert!(first["refreshedAt"].is_string());
+        conn.execute_batch("INSERT INTO t VALUES (2);").unwrap();
+        let again = load(&mut s, 60);
+        assert_eq!((again["rows"].clone(), again["fromCache"].clone()), (json!(1), json!(true)), "the cached rows, not the new one");
+        assert_eq!(again["refreshedAt"], first["refreshedAt"], "and when they were read");
+        let log = s.execute("data.queryLog", &json!({})).unwrap();
+        assert_eq!(log["entries"][1]["fromCache"], json!(true));
+        assert_eq!(log["entries"][0].get("fromCache"), None);
+        assert_eq!(load(&mut s, 0)["rows"], json!(2), "no cacheSeconds: the database is read");
+        let html = s.execute("report.render", &json!({}));
+        assert!(html.unwrap()["refreshedAt"].is_string());
+        assert_eq!(s.execute("data.clearCache", &json!({})).unwrap()["cleared"], json!(1));
+        assert_eq!(load(&mut s, 60)["fromCache"], json!(false));
     }
 
     #[test]
