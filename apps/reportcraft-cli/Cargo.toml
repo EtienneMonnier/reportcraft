@@ -1,0 +1,22 @@
+[package]
+name = "reportcraft-cli"
+description = "ReportCraft command-line interface (L7)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+reportcraft-engine.workspace = true
+reportcraft-mcp.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reportcraft-cli"
+path = "src/main.rs"

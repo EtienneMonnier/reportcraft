@@ -1,0 +1,21 @@
+[package]
+name = "reportcraft-engine"
+description = "Session and command registry; every user-visible action is a command (L5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+reportcraft-data.workspace = true
+reportcraft-layout.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

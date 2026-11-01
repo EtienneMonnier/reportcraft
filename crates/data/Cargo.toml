@@ -1,0 +1,15 @@
+[package]
+name = "reportcraft-data"
+description = "Data sources behind one trait: in-memory and CSV first, SQL drivers next (L2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

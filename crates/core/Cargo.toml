@@ -1,0 +1,15 @@
+[package]
+name = "reportcraft-core"
+description = "Values, field types and errors shared by every ReportCraft crate (L0)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "reportcraft-layout"
+description = "Toolkit-free banded layout: a report and its rows to pages of drawing primitives (L3)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "reportcraft-mcp"
+description = "MCP server over stdio, reaching every engine command (L6)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-engine.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

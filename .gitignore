@@ -1,0 +1,7 @@
+*~
+plan/
+log/
+/target
+.DS_Store
+/.claude/
+.idea/

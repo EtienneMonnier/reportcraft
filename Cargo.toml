@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/EtienneMonnier/reportcraft"
+
+[workspace.dependencies]
+# internal
+reportcraft-core = { path = "crates/core" }
+reportcraft-model = { path = "crates/model" }
+reportcraft-data = { path = "crates/data" }
+reportcraft-layout = { path = "crates/layout" }
+reportcraft-engine = { path = "crates/engine" }
+reportcraft-mcp = { path = "crates/mcp" }
+
+# foundation (same versions as the sibling apps)
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+log = "0.4"
+# All date/time conversion goes through chrono (AGENTS.md).
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = 0
