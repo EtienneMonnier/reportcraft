@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use reportcraft_core::{Column, FieldType, RowSet, Value};
 use reportcraft_engine::sample;
 use reportcraft_layout::{Document, Params, layout};
-use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Group, Report, SortKey, TextStyle};
+use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Format, Group, Report, SortKey, TextStyle};
 
 /// The snapshot text of a document: one header line per page, one line per item.
 fn snapshot(doc: &Document) -> String {
@@ -65,7 +65,7 @@ fn check(name: &str, report: &Report, rows: &RowSet, params: &Params) {
 }
 
 fn el(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content }
+    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None }
 }
 
 fn field(name: &str) -> Content {
@@ -180,4 +180,48 @@ fn bands_that_exactly_fill_the_page() {
     // 100 - 2 * 10 margin - 10 footer = 70 mm of body: seven 10 mm rows per page.
     r.detail = Band { height_mm: 10.0, elements: vec![el(0.0, 60.0, field("item"), TextStyle::default())] };
     check("bands_that_exactly_fill_the_page", &r, &rentals(14), &Params::new());
+}
+
+/// Locale-aware formats: French separators, euros after the amount, percentages, dates in the
+/// locale's pattern and in an explicit one, and values a format doesn't fit.
+#[test]
+fn formats_in_french() {
+    let plain = TextStyle::default();
+    let right = TextStyle { align: Align::Right, ..plain };
+    let fmt = |el: Element, f: Format| Element { format: Some(f), ..el };
+    let eur = Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true };
+    let mut r = Report::new("Formats");
+    r.locale = "fr".into();
+    r.detail = Band {
+        height_mm: 6.0,
+        elements: vec![
+            fmt(el(0.0, 30.0, field("started"), plain), Format::Date { pattern: None }),
+            fmt(el(32.0, 40.0, field("started"), plain), Format::Date { pattern: Some("%d/%m/%y %H:%M".into()) }),
+            fmt(el(75.0, 35.0, field("amount"), right), eur.clone()),
+            fmt(el(112.0, 25.0, field("ratio"), right), Format::Percent { decimals: 1 }),
+            fmt(el(140.0, 30.0, field("note"), plain), Format::Number { decimals: 2, grouping: true }),
+        ],
+    };
+    r.report_footer = Band {
+        height_mm: 6.0,
+        elements: vec![
+            fmt(el(75.0, 35.0, agg(AggregateFn::Sum, "amount"), right), eur.clone()),
+            fmt(el(112.0, 25.0, agg(AggregateFn::Count, "amount"), right), eur),
+        ],
+    };
+    let col = |name: &str, t| Column { name: name.into(), field_type: t };
+    let rows = RowSet {
+        columns: vec![
+            col("started", FieldType::Text),
+            col("amount", FieldType::Number),
+            col("ratio", FieldType::Number),
+            col("note", FieldType::Text),
+        ],
+        rows: vec![
+            vec![Value::Text("2026-10-01".into()), Value::Number(1234567.891), Value::Number(0.125), Value::Text("n/a".into())],
+            vec![Value::Text("2026-10-03 14:05:00+02".into()), Value::Number(-0.004), Value::Number(1.0), Value::Text("42".into())],
+            vec![Value::Null, Value::Null, Value::Null, Value::Null],
+        ],
+    };
+    check("formats_in_french", &r, &rows, &Params::new());
 }

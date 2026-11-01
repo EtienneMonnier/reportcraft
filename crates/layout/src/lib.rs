@@ -2,6 +2,7 @@
 //! toolkit-free. Writers (HTML here; PDF next, through craft-libs' craft-pdf) read `Document`.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod format;
 mod html;
 
 use std::cmp::Ordering;
@@ -11,6 +12,7 @@ use reportcraft_core::{Error, Result, RowSet, Value, limits};
 use reportcraft_model::{AggregateFn, Band, Content, Report, TextStyle};
 use serde::{Deserialize, Serialize};
 
+pub use format::write as format_value;
 pub use html::to_html;
 
 /// A laid-out report.
@@ -126,6 +128,7 @@ struct Writer<'a> {
     report: &'a Report,
     rows: &'a RowSet,
     params: &'a Params,
+    locale: reportcraft_model::LocaleStyle,
     pages: Vec<Page>,
     page: Page,
     y: f64,
@@ -135,7 +138,8 @@ struct Writer<'a> {
 
 impl<'a> Writer<'a> {
     fn new(report: &'a Report, rows: &'a RowSet, params: &'a Params) -> Self {
-        Self { report, rows, params, pages: Vec::new(), page: Page::default(), y: 0.0, page_number_items: Vec::new() }
+        let locale = reportcraft_model::locale_or_default(&report.locale);
+        Self { report, rows, params, locale, pages: Vec::new(), page: Page::default(), y: 0.0, page_number_items: Vec::new() }
     }
 
     fn body_bottom(&self) -> f64 {
@@ -207,7 +211,7 @@ impl<'a> Writer<'a> {
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
             }
-            let text = self.eval(&el.content, scope);
+            let text = self.eval(&el.content, el.format.as_ref(), scope);
             self.page.items.push(Item {
                 x_mm: left + el.x_mm,
                 y_mm: self.y + el.y_mm,
@@ -219,16 +223,21 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn eval(&self, content: &Content, scope: Scope<'_>) -> String {
+    fn eval(&self, content: &Content, format: Option<&reportcraft_model::Format>, scope: Scope<'_>) -> String {
         let column = |field: &str| self.rows.column_index(field);
         match content {
             Content::Text { text } => text.clone(),
             Content::Field { field } => match (column(field), scope.current) {
-                (Some(c), Some(r)) => self.rows.value(row_of(self.rows, r), c).to_string(),
+                (Some(c), Some(r)) => format::write(self.rows.value(row_of(self.rows, r), c), format, &self.locale),
                 _ => String::new(),
             },
             Content::Aggregate { function, field } => match column(field) {
-                Some(c) => aggregate(*function, scope.rows.iter().map(|&r| self.rows.value(row_of(self.rows, r), c))).to_string(),
+                Some(c) => {
+                    let total = aggregate(*function, scope.rows.iter().map(|&r| self.rows.value(row_of(self.rows, r), c)));
+                    // A count is a count: a currency or date format on the field doesn't apply to it.
+                    let format = if *function == AggregateFn::Count { None } else { format };
+                    format::write(&total, format, &self.locale)
+                }
                 None => String::new(),
             },
             Content::Parameter { name } => self
@@ -278,7 +287,7 @@ mod tests {
     use reportcraft_model::{Element, Group};
 
     fn el(content: Content) -> Element {
-        Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content }
+        Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content, format: None }
     }
 
     fn rows() -> RowSet {

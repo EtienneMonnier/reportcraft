@@ -83,3 +83,22 @@ scratch database named by `REPORTCRAFT_TEST_POSTGRES` and are skipped without it
 The engine has one set of commands per database kind (`data.loadSqlite`, `data.loadPostgres`…)
 sharing the describe/preview/limit helpers. When named connections land (R1.3), they should
 collapse into kind-independent commands taking a connection name.
+
+## Formats: per element, locales as a typed table (R2.1)
+
+An element may carry a `format` (`number`, `currency`, `percent`, `date`); the report carries a
+`locale` tag. Both fields are optional with defaults (`None`, `en`), so files written before them
+still read the same and the format version stays 1. Locales are a table of conventions (decimal
+and grouping separators, the space before `%` or a trailing currency symbol, the date pattern),
+matched by full tag then language; an unknown tag writes as `en` and `report.validate` warns.
+French uses a narrow no-break space to group thousands and a no-break space before units.
+
+Values a format doesn't fit are written as they are (text in a number format, a number in a
+date format), never dropped or zeroed; `-0.004` at two decimals is `0.00`, not `-0.00`. A count
+ignores a currency or date format on its field. Date patterns are `strftime`-style through
+chrono and are checked before use (an unknown directive is a validation error, never a panic);
+dates are read from ISO 8601, SQL (`2026-10-01 14:05:00+02`) and RFC 3339 text. Day and month
+names are English for now (follow-up under R2.1).
+
+The sample's amounts now have two decimals and grouping; the golden snapshots changed only in
+those texts (reviewed), and a French reference report was added.

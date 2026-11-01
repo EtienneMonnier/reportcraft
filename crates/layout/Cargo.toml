@@ -11,6 +11,7 @@ repository.workspace = true
 reportcraft-core.workspace = true
 reportcraft-model.workspace = true
 serde.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true
