@@ -14,6 +14,7 @@ repository = "https://github.com/EtienneMonnier/reportcraft"
 reportcraft-core = { path = "crates/core" }
 reportcraft-model = { path = "crates/model" }
 reportcraft-data = { path = "crates/data" }
+reportcraft-sqlite = { path = "crates/sqlite" }
 reportcraft-layout = { path = "crates/layout" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
@@ -23,6 +24,10 @@ thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
+# SQLite source (native only: the bundled C library does not build for wasm). `limits` caps
+# ATTACH, `hooks` gives the progress handler that enforces the time limit, `column_decltype` the
+# declared column types.
+rusqlite = { version = "0.41", features = ["bundled", "limits", "hooks", "column_decltype"] }
 # All date/time conversion goes through chrono (AGENTS.md).
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 

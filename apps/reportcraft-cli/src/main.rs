@@ -11,7 +11,7 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv] [--format html|json] [--param NAME=VALUE]... [--out FILE]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL] [--format html|json] [--param NAME=VALUE]... [--out FILE]
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
   mcp                                       MCP server on stdio
@@ -80,6 +80,7 @@ fn read(path: &str) -> Result<String, String> {
 fn render(args: &[String]) -> Result<(), String> {
     let mut s = Session::default();
     let (mut format, mut out, mut params) = ("html".to_owned(), None, serde_json::Map::new());
+    let (mut sqlite, mut query) = (None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -89,6 +90,8 @@ fn render(args: &[String]) -> Result<(), String> {
             "--data" => {
                 exec(&mut s, "data.loadCsv", json!({"csv": read(flag_value(&mut it, a)?)?}))?;
             }
+            "--sqlite" => sqlite = Some(flag_value(&mut it, a)?.to_owned()),
+            "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
             "--format" => format = flag_value(&mut it, a)?.to_owned(),
             "--out" => out = Some(flag_value(&mut it, a)?.to_owned()),
             "--param" => {
@@ -100,6 +103,13 @@ fn render(args: &[String]) -> Result<(), String> {
             }
             other => return Err(format!("unknown option `{other}`")),
         }
+    }
+    match (sqlite, query) {
+        (Some(path), Some(query)) => {
+            exec(&mut s, "data.loadSqlite", json!({"path": path, "query": query}))?;
+        }
+        (None, None) => {}
+        _ => return Err("`--sqlite` and `--query` go together".to_owned()),
     }
     let result = exec(&mut s, "report.render", json!({"format": format, "params": params}))?;
     let body = match result.get("html").and_then(Json::as_str) {

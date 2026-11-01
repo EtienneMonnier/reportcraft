@@ -80,6 +80,31 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_rows_feed_the_sample_report() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-engine-sqlite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("rentals.db");
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE r (branch TEXT, item TEXT, days INT, amount REAL);
+                 INSERT INTO r VALUES ('Chambery', 'Tile cutter', 2, 64.0), ('Chambery', 'Pallet truck', 5, 110.0);",
+            )
+            .unwrap();
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let path = db.to_string_lossy();
+        let loaded = s.execute("data.loadSqlite", &json!({"path": path, "query": "SELECT * FROM r"})).unwrap();
+        assert_eq!(loaded["rows"], json!(2));
+        let html = s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().to_owned();
+        assert!(html.contains("Chambery") && html.contains("174"), "branch and its total are shown");
+        let refused = s.execute("data.loadSqlite", &json!({"path": path, "query": "DELETE FROM r"}));
+        assert!(refused.is_err());
+        assert_eq!(s.rows.rows.len(), 2, "a refused command leaves the loaded rows as they were");
+    }
+
+    #[test]
     fn sample_renders_to_html() {
         let mut s = Session::default();
         s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();

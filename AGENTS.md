@@ -45,7 +45,7 @@ People trust ReportCraft with their numbers. **This outranks feature work.**
   channel reach all of them.
 - **Programmatic calls never open dialogs**: empty params run with defaults or return an error.
 - **Layering** is enforced by `cargo xtask layers`: `core` (L0) → `model` (L1) → `data` (L2) →
-  `layout` (L3) → `engine` (L5) → `mcp`/`ui-egui` (L6) → `apps/*` (L7). Nothing below L6 depends on
+  `layout`/`sqlite` (L3) → `engine` (L5) → `mcp`/`ui-egui` (L6) → `apps/*` (L7). Nothing below L6 depends on
   egui/eframe/winit/rfd. Register every new crate in `xtask/src/main.rs`.
 - **Extend through seams.** A new data source is a `DataSource` implementation; a new output is a
   writer over `layout::Document`. No new arm in a `match` over source kinds.
@@ -63,7 +63,7 @@ Before every commit: `cargo xtask ci` (fmt, clippy `-D warnings`, tests, layers)
 
 ## Git workflow
 - Never commit to `main`. Branch from an up-to-date `main`: `feature/`, `bugfix/`, `docs/`,
-  `test/`, `refactor/` or `chore/`, plus the roadmap id (`feature/r1.2-sqlite-source`).
+  `test/`, `refactor/` or `chore/`, plus the roadmap id (`feature/r1.1-sqlite-source`).
 - One roadmap item per PR, small and reviewable, no drive-by refactors. PRs are squash-merged, so
   **the PR title is the commit message**: plain English, present tense, what changed for the person
   or developer, with the issue number when there is one — for example

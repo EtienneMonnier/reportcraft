@@ -30,6 +30,13 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "report.get", label: "Report definition", menu: "Report", params: "{}", run: report_get },
     CommandSpec { id: "data.loadCsv", label: "Load CSV data", menu: "Data", params: r#"{"csv": string (header row first)}"#, run: data_load_csv },
     CommandSpec {
+        id: "data.loadSqlite",
+        label: "Load SQLite data",
+        menu: "Data",
+        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT), "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600)}"#,
+        run: data_load_sqlite,
+    },
+    CommandSpec {
         id: "data.preview",
         label: "Preview data",
         menu: "Data",
@@ -89,6 +96,23 @@ fn report_get(s: &mut Session, _: &Json) -> EngineResult<Json> {
 fn data_load_csv(s: &mut Session, params: &Json) -> EngineResult<Json> {
     s.rows = CsvSource::new(str_param("data.loadCsv", params, "csv")?).read(None)?;
     Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.loadSqlite";
+    let path = str_param(CMD, params, "path")?;
+    let query = str_param(CMD, params, "query")?;
+    let limit = params.get("limit").and_then(Json::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    let timeout = params.get("timeoutSeconds").and_then(Json::as_u64).unwrap_or(30).clamp(1, 3_600);
+    let source = reportcraft_sqlite::SqliteSource::new(path, query).with_timeout(std::time::Duration::from_secs(timeout));
+    s.rows = source.read(limit)?;
+    Ok(json!({"columns": s.rows.columns, "rows": s.rows.rows.len()}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_load_sqlite(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("SQLite is not available in the web build".into()).into())
 }
 
 fn data_preview(s: &mut Session, params: &Json) -> EngineResult<Json> {
