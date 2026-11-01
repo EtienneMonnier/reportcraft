@@ -46,7 +46,7 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Day and month names in the report's language (`%A`, `%B` are English today)
   - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
   - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
-- [ ] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — **decision**: syntax
+- [ ] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code)
 - [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
   - [ ] Keep a band with the next one (a group header never alone at the bottom of a page)
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
@@ -64,7 +64,7 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Fonts named in the report definition (family, italic), with the font choice in the designer (R3)
   - [ ] PDF in the browser build: fonts passed as bytes by the page
   - [ ] PDF/A for archiving (Krilla validators), document outline from groups, links
-- [ ] R2.7 XLSX and DOCX export — **decision**: reuse GridCraft/WordCraft writers or own minimal writers
+- [ ] R2.7 XLSX and DOCX export — decided: `rust_xlsxwriter` and `docx-rs` from crates.io (MIT/Apache-2.0); GridCraft and WordCraft writers are tied to their apps' models
 - [ ] R2.8 Printing through craft-libs `craft-print`
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
   - [x] Columns filled across then down (needed by labels, R2.12)
