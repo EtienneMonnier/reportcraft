@@ -1,0 +1,19 @@
+document "Exact fit" 210.00x100.00mm, 2 page(s)
+page 1 (8 items)
+    10.00   10.50  60.00x5.00  10.0pt L "Generator"
+    10.00   20.50  60.00x5.00  10.0pt L "Mini excavator"
+    10.00   30.50  60.00x5.00  10.0pt L "Scaffold tower"
+    10.00   40.50  60.00x5.00  10.0pt L "Scissor lift"
+    10.00   50.50  60.00x5.00  10.0pt L "Pressure washer"
+    10.00   60.50  60.00x5.00  10.0pt L "Generator"
+    10.00   70.50  60.00x5.00  10.0pt L "Mini excavator"
+    10.00   80.50  40.00x5.00  10.0pt L "1 / 2"
+page 2 (8 items)
+    10.00   10.50  60.00x5.00  10.0pt L "Scaffold tower"
+    10.00   20.50  60.00x5.00  10.0pt L "Scissor lift"
+    10.00   30.50  60.00x5.00  10.0pt L "Pressure washer"
+    10.00   40.50  60.00x5.00  10.0pt L "Generator"
+    10.00   50.50  60.00x5.00  10.0pt L "Mini excavator"
+    10.00   60.50  60.00x5.00  10.0pt L "Scaffold tower"
+    10.00   70.50  60.00x5.00  10.0pt L "Scissor lift"
+    10.00   80.50  40.00x5.00  10.0pt L "2 / 2"

@@ -41,7 +41,8 @@ Anything marked **decision** waits for a maintainer.
 - [ ] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2
 - [ ] R2.11 Barcodes and QR codes (§4 FR-PRINT-003)
 - [ ] R2.12 Labels: detail repeated across a grid of labels per page (§18.5)
-- [ ] R2.13 Golden rendering tests: reference reports whose page count and geometry are checked on every change (§13, §15) — claimed: Claude (for EtienneMonnier), branch test/r2.13-golden-rendering
+- [x] R2.13 Golden rendering tests: reference reports whose page count and geometry are checked on every change (§13, §15) (#34)
+  - [ ] Add a golden PDF check once PDF export lands (R2.6): page count and text positions read back from the file
 - [ ] R2.14 `report.validate` command: structured diagnostics for a definition without rendering it (§11, §15)
 
 ## R3 — Designer (owner: maintainers)

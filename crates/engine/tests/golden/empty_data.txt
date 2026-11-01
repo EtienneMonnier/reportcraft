@@ -1,0 +1,10 @@
+document "Rentals by branch" 210.00x297.00mm, 1 page(s)
+page 1 (8 items)
+    15.00   15.50 120.00x5.00  16.0ptBL "Rentals by branch"
+    15.00   23.00 120.00x5.00  10.0pt L "October 2026"
+    15.00   29.50  80.00x5.00  10.0ptBL "Item"
+   105.00   29.50  30.00x5.00  10.0ptBR "Days"
+   145.00   29.50  50.00x5.00  10.0ptBR "Amount"
+    15.00   36.50  80.00x5.00  10.0ptBL "Grand total"
+   145.00   36.50  50.00x5.00  10.0ptBR ""
+   145.00  276.50  50.00x5.00  10.0pt R "1 / 1"

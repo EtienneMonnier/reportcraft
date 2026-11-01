@@ -22,6 +22,7 @@ log.workspace = true
 reportcraft-sqlite.workspace = true
 
 [dev-dependencies]
+reportcraft-data.workspace = true
 rusqlite.workspace = true
 
 [lints]

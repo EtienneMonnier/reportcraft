@@ -61,6 +61,12 @@ People trust ReportCraft with their numbers. **This outranks feature work.**
 ## Quality gates
 Before every commit: `cargo xtask ci` (fmt, clippy `-D warnings`, tests, layers).
 
+**Golden rendering tests** (`crates/engine/tests/golden.rs`) compare reference reports with the
+snapshots in `crates/engine/tests/golden/`. A layout change that alters them fails the gate. If the
+change is intended, regenerate with `REPORTCRAFT_BLESS=1 cargo test -p reportcraft-engine --test golden`,
+**read the diff** and say in the PR why the rendering changed. Never bless a snapshot you haven't
+checked: it would turn a bug into the reference. New layout features add a reference report.
+
 ## Git workflow
 - Never commit to `main`. Branch from an up-to-date `main`: `feature/`, `bugfix/`, `docs/`,
   `test/`, `refactor/` or `chore/`, plus the roadmap id (`feature/r1.1-sqlite-source`).
