@@ -44,12 +44,17 @@
   (file, or `user@host:port/database`, never the password), SQL as sent, bound values, duration and
   row count or error; the newest 200 are kept (`data.queryLog`, `data.clearQueryLog`,
   `--query-log` in `render` and `validate`, printed to stderr even when the query fails).
+- Query cache: a load with `cacheSeconds` reuses the same query's rows (same source, SQL, values
+  and limits) read less than that long ago; at most 8 results and 1 GiB are kept, for the session
+  (`data.clearCache`). Loads and `report.render` answer `refreshedAt`; reports can show it
+  (`refreshed_at` content) and when they were rendered (`printed_at`), in the locale's date and time
+  or a date format. Loaded rows are shared, so a command no longer copies them.
 - Cancellation and limits: a running query or render stops on request (`Session::cancel_handle`;
   MCP `notifications/cancelled`), SQLite through its progress handler, PostgreSQL by a cancel sent
   to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
   (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
   `--max-memory`). A stopped command leaves the session as it was.
-- CLI and MCP server reaching every command. 88 tests (plus 8 live PostgreSQL tests run on demand), including 11 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 91 tests (plus 8 live PostgreSQL tests run on demand), including 11 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).

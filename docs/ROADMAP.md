@@ -37,7 +37,9 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Designer: a Stop button and progress while a query or render runs (R3)
   - [ ] MCP: progress notifications for long commands
   - [ ] CPU limit (one core per render today; revisit with a server profile)
-- [ ] R1.10 Optional cache of query results, with the refresh time shown (§2 FR-DATA-004, §5)
+- [x] R1.10 Optional cache of query results, with the refresh time shown (§2 FR-DATA-004, §5) (#29)
+  - [ ] Keep the cache across runs (on disk, next to the settings) once named connections land (R1.3)
+  - [ ] Warn about stale data in the designer and dashboards (§5), with a per-report refresh policy
 
 ## R2 — Paginated reports (owner: open)
 - [x] R2.1 Number, date and currency formats on fields (shared rules with GridCraft's numfmt where possible) (#7)
