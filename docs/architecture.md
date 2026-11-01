@@ -12,6 +12,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | Layer | Crate | Job |
 |---|---|---|
 | L0 | `core` | `Value`, `FieldType`, `Column`, `RowSet`, the shared `Error`, input caps (`limits`) |
+| L0 | `barcode` | Code 128, EAN-13 and QR code encoders (module grids), written from the public standards |
 | L1 | `model` | The report definition (`*.rcr.json`, `format_version`): page setup, parameters, sort, groups, bands, elements |
 | L2 | `data` | `DataSource` and `SchemaSource` traits, schema types; `MemorySource`, `CsvSource` (wasm-safe) |
 | L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |

@@ -12,6 +12,7 @@ repository = "https://github.com/EtienneMonnier/reportcraft"
 [workspace.dependencies]
 # internal
 reportcraft-core = { path = "crates/core" }
+reportcraft-barcode = { path = "crates/barcode" }
 reportcraft-model = { path = "crates/model" }
 reportcraft-data = { path = "crates/data" }
 reportcraft-sqlite = { path = "crates/sqlite" }

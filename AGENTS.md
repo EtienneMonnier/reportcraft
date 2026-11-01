@@ -44,7 +44,7 @@ People trust ReportCraft with their numbers. **This outranks feature work.**
   (`file.new`, `data.loadCsv`, `report.render`). The CLI, MCP server and the future UI and control
   channel reach all of them.
 - **Programmatic calls never open dialogs**: empty params run with defaults or return an error.
-- **Layering** is enforced by `cargo xtask layers`: `core` (L0) → `model` (L1) → `data` (L2) →
+- **Layering** is enforced by `cargo xtask layers`: `core`/`barcode` (L0) → `model` (L1) → `data` (L2) →
   `layout`/`sqlite` (L3) → `engine` (L5) → `mcp`/`ui-egui` (L6) → `apps/*` (L7). Nothing below L6 depends on
   egui/eframe/winit/rfd. Register every new crate in `xtask/src/main.rs`.
 - **Extend through seams.** A new data source is a `DataSource` implementation; a new output is a

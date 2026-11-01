@@ -11,6 +11,7 @@ mod params;
 pub use format::{Format, LOCALES, LocaleStyle, MAX_DECIMALS, locale_or_default, locale_style};
 pub use params::{MAX_VALUES, ParamType, ParamValue, Parameter, resolve as resolve_parameters};
 
+pub use reportcraft_barcode::{EcLevel, Symbology};
 use reportcraft_core::{Column, Error, FieldType, Result, limits};
 use serde::{Deserialize, Serialize};
 
@@ -303,6 +304,25 @@ pub enum Content {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fill: Option<String>,
     },
+    /// A barcode or QR code over the element's box, encoding a field of the current row or a
+    /// fixed text. A value the symbology can't hold is written as text instead.
+    Barcode {
+        symbology: Symbology,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        /// The value printed under a linear barcode.
+        #[serde(default = "yes")]
+        show_text: bool,
+        /// QR codes only.
+        #[serde(default)]
+        ec_level: EcLevel,
+    },
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn thin() -> f64 {
@@ -431,6 +451,15 @@ impl Report {
                 if !shape_ok {
                     return Err(Error::Invalid(format!("{name}: line width must be 0 to {MAX_LINE_MM} mm and colours #rgb or #rrggbb")));
                 }
+                if let Content::Barcode { symbology, field, text, ec_level, .. } = &el.content {
+                    match (field, text) {
+                        (Some(_), None) => {}
+                        (None, Some(t)) => {
+                            reportcraft_barcode::encode(*symbology, t, *ec_level).map_err(|e| Error::Invalid(format!("{name}: barcode: {e}")))?;
+                        }
+                        _ => return Err(Error::Invalid(format!("{name}: a barcode encodes either a `field` or a fixed `text`"))),
+                    }
+                }
                 if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
                     return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
                 }
@@ -526,7 +555,10 @@ impl Report {
                     Content::Field { field } | Content::Aggregate { field, .. } if column(field) == Some(None) => {
                         out.push(Diagnostic::error(&at, unknown(field)));
                     }
-                    Content::Field { .. } | Content::Aggregate { .. } if repeating => {
+                    Content::Barcode { field: Some(field), .. } if column(field) == Some(None) => {
+                        out.push(Diagnostic::error(&at, unknown(field)));
+                    }
+                    Content::Field { .. } | Content::Aggregate { .. } | Content::Barcode { field: Some(_), .. } if repeating => {
                         out.push(Diagnostic::warning(&at, "page headers and footers have no current row: this shows nothing"));
                     }
                     Content::Aggregate { function: AggregateFn::Sum | AggregateFn::Avg | AggregateFn::Min | AggregateFn::Max, field } => {
@@ -715,5 +747,33 @@ mod tests {
         let mut r = Report::new("x");
         r.detail.height_mm = 1_000.0;
         assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn barcodes_need_one_encodable_value() {
+        let read: Content = serde_json::from_str(r#"{"kind":"barcode","symbology":"qr","field":"url"}"#).unwrap();
+        assert_eq!(read, Content::Barcode { symbology: Symbology::Qr, field: Some("url".into()), text: None, show_text: true, ec_level: EcLevel::M });
+        let with = |content: Content| {
+            let mut r = Report::new("x");
+            r.detail = Band {
+                height_mm: 20.0,
+                elements: vec![Element { x_mm: 0.0, y_mm: 0.0, width_mm: 60.0, height_mm: 15.0, style: TextStyle::default(), content, format: None }],
+            };
+            r
+        };
+        let fixed = |text: &str| Content::Barcode {
+            symbology: Symbology::Ean13,
+            field: None,
+            text: Some(text.into()),
+            show_text: true,
+            ec_level: EcLevel::M,
+        };
+        assert!(with(fixed("400638133393")).validate().is_ok());
+        assert!(with(fixed("4006381333932")).validate().unwrap_err().to_string().contains("check digit"));
+        let neither = Content::Barcode { symbology: Symbology::Qr, field: None, text: None, show_text: true, ec_level: EcLevel::M };
+        assert!(with(neither).validate().is_err());
+        let columns = [Column { name: "asset".into(), field_type: FieldType::Text }];
+        let unknown = with(read).check(Some(&columns));
+        assert!(unknown.iter().any(|d| d.message.contains("unknown field `url`")), "{unknown:?}");
     }
 }

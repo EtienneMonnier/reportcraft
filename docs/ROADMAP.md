@@ -59,7 +59,10 @@ Anything marked **decision** waits for a maintainer.
   - [x] Columns filled across then down (needed by labels, R2.12)
   - [ ] Different first page (no page header on page one, other margins)
 - [ ] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2
-- [ ] R2.11 Barcodes and QR codes (§4 FR-PRINT-003)
+- [x] R2.11 Barcodes and QR codes (§4 FR-PRINT-003) (#32)
+  - [ ] More symbologies on demand: Code 39, EAN-8, UPC-A, GS1-128 (FNC1), DataMatrix
+  - [ ] QR numeric and alphanumeric modes (smaller symbols for digits and capitals)
+  - [ ] Warn when modules come out narrower than a printer can render (about 0.25 mm)
 - [x] R2.12 Labels: detail repeated across a grid of labels per page (§18.5) (#33)
   - [ ] Start printing at a given label (to reuse a partly used sheet)
 - [x] R2.13 Golden rendering tests: reference reports whose page count and geometry are checked on every change (§13, §15) (#34)

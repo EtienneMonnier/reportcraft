@@ -188,3 +188,16 @@ command it was meant for. The MCP server reads messages on a separate thread so 
 the server skip it without a reply, as the protocol allows. Memory is limited by an estimate of
 the rows' size (enum plus text), cheap to keep up to date and close enough to stop a runaway
 query long before the process runs out of memory.
+
+## Barcodes: own encoders, module grids in the document (R2.11)
+
+The encoders (`reportcraft-barcode`, L0, no dependencies) are written from the public standards
+rather than pulled in: they are small, have no unsafe code or transitive dependencies, and the
+model can check a fixed value when a report is validated. An encoder returns a grid of modules;
+the layout puts it in the document as a `barcode` shape with its quiet zone, and each writer draws
+it at the box's size (HTML: one SVG path in module units on a white ground). Linear codes stretch
+to the box width and print their text below; QR codes are square, as large as the box allows.
+A value that can't be encoded (a letter in an EAN-13, an emoji in Code 128) is printed as text,
+so a wrong label is visible rather than blank. Tests decode the output with zxing-cpp outside the
+repository; inside, the encoders are checked against the standards' worked examples and
+capacities.
