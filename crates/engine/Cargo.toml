@@ -23,6 +23,7 @@ chrono.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reportcraft-sqlite.workspace = true
 reportcraft-postgres.workspace = true
+reportcraft-office.workspace = true
 
 [dev-dependencies]
 reportcraft-data.workspace = true

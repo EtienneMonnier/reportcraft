@@ -20,6 +20,7 @@ reportcraft-sqlite = { path = "crates/sqlite" }
 reportcraft-postgres = { path = "crates/postgres" }
 reportcraft-layout = { path = "crates/layout" }
 reportcraft-pdf = { path = "crates/pdf" }
+reportcraft-office = { path = "crates/office" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
 
@@ -37,6 +38,10 @@ postgres = "0.19"
 # PDF writing: the suite's shared writer, pinned to the craft-libs revision GridCraft uses. It
 # needs the patched Krilla below (a compile-time marker rejects the crates.io one).
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
+# Office export (decided: crates.io writers, MIT/Apache-2.0; GridCraft and WordCraft writers are
+# tied to their apps' models). No image support: barcodes are written as text for now.
+rust_xlsxwriter = { version = "0.102", default-features = false, features = ["chrono"] }
+docx-rs = { version = "0.4.22", default-features = false }
 # All date/time conversion goes through chrono (AGENTS.md).
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 

@@ -146,12 +146,22 @@ mod tests {
     #[test]
     fn escapes_text() {
         let doc = Document {
+            margin_mm: 0.0,
             title: "<t>".into(),
             width_mm: 10.0,
             height_mm: 10.0,
             pages: vec![Page {
                 items: vec![
-                    Item { x_mm: 0.0, y_mm: 0.0, width_mm: 1.0, height_mm: 1.0, style: TextStyle::default(), text: "a<b&\"".into(), shape: None },
+                    Item {
+                        x_mm: 0.0,
+                        y_mm: 0.0,
+                        width_mm: 1.0,
+                        height_mm: 1.0,
+                        style: TextStyle::default(),
+                        text: "a<b&\"".into(),
+                        shape: None,
+                        cell: None,
+                    },
                     Item {
                         x_mm: 0.0,
                         y_mm: 0.0,
@@ -160,6 +170,7 @@ mod tests {
                         style: TextStyle::default(),
                         text: String::new(),
                         shape: Some(Shape::Line { thickness_mm: 0.3, color: "red\"/><script>".into() }),
+                        cell: None,
                     },
                     Item {
                         x_mm: 1.0,
@@ -169,6 +180,7 @@ mod tests {
                         style: TextStyle::default(),
                         text: String::new(),
                         shape: Some(Shape::Rect { border_mm: 0.5, border_color: "#123".into(), fill: Some("#abcdef".into()) }),
+                        cell: None,
                     },
                 ],
             }],

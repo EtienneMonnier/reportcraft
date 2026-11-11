@@ -114,7 +114,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.render",
         label: "Render",
         menu: "Report",
-        params: r#"{"format"?: "html" | "pdf" | "json" (default "html"; pdf comes back base64-encoded, fonts from REPORTCRAFT_FONT/REPORTCRAFT_FONT_BOLD, CRAFT_FONTS_DIR or the system), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}, "timeoutSeconds"?: integer (default 120, at most 3600)}"#,
+        params: r#"{"format"?: "html" | "pdf" | "xlsx" | "docx" | "json" (default "html"; pdf, xlsx and docx come back base64-encoded as pdfBase64, xlsxBase64, docxBase64; xlsx is one continuous sheet with numbers and dates typed, docx keeps the pages; fonts from REPORTCRAFT_FONT/REPORTCRAFT_FONT_BOLD, CRAFT_FONTS_DIR or the system), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}, "timeoutSeconds"?: integer (default 120, at most 3600)}"#,
         run: report_render,
     },
 ];
@@ -589,6 +589,28 @@ fn render_pdf(_: &Session, _: &reportcraft_layout::Document, _: &reportcraft_cor
     Err(bad("report.render", "PDF export needs font files, not available in the browser build yet"))
 }
 
+/// The laid-out document as XLSX or DOCX, base64-encoded (`xlsxBase64`, `docxBase64`), with
+/// what the file couldn't hold.
+#[cfg(not(target_arch = "wasm32"))]
+fn render_office(s: &Session, doc: &reportcraft_layout::Document, format: &str, cancel: &reportcraft_core::Cancel) -> EngineResult<Json> {
+    let out = if format == "xlsx" { reportcraft_office::to_xlsx(doc, cancel)? } else { reportcraft_office::to_docx(doc, cancel)? };
+    let mut result = json!({
+        "pages": doc.pages.len(),
+        "bytes": out.bytes.len(),
+        "warnings": out.warnings,
+        "refreshedAt": s.refreshed_at,
+    });
+    if let Some(map) = result.as_object_mut() {
+        map.insert(format!("{format}Base64"), json!(crate::base64::encode(&out.bytes)));
+    }
+    Ok(result)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render_office(_: &Session, _: &reportcraft_layout::Document, format: &str, _: &reportcraft_core::Cancel) -> EngineResult<Json> {
+    Err(bad("report.render", format!("{format} export is not available in the browser build yet")))
+}
+
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let resolved = resolve_parameters(s, "report.render", params)?;
     let mut values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
@@ -599,11 +621,20 @@ fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
     if let Some(now) = now_local() {
         values.insert(reportcraft_layout::PRINTED_AT.to_owned(), now);
     }
-    let doc = reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?;
-    match params.get("format").and_then(Json::as_str).unwrap_or("html") {
+    let format = params.get("format").and_then(Json::as_str).unwrap_or("html");
+    if !["html", "pdf", "json", "xlsx", "docx"].contains(&format) {
+        return Err(bad("report.render", format!("unknown format `{format}` (html, pdf, xlsx, docx or json)")));
+    }
+    // A spreadsheet isn't paginated: one continuous sheet, the page header once at the top.
+    let doc = if format == "xlsx" {
+        reportcraft_layout::render_continuous(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?
+    } else {
+        reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?
+    };
+    match format {
         "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc), "refreshedAt": s.refreshed_at})),
         "pdf" => render_pdf(s, &doc, &render_limit(s, params)),
-        "json" => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),
-        other => Err(bad("report.render", format!("unknown format `{other}` (html, pdf or json)"))),
+        "xlsx" | "docx" => render_office(s, &doc, format, &render_limit(s, params)),
+        _ => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),
     }
 }

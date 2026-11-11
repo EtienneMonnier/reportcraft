@@ -11,7 +11,7 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|pdf|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
+  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|pdf|xlsx|docx|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
   validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
                                             errors and warnings, checked against the data when given
   (--sub NAME=FILE.csv and --sub-query NAME=SQL load a dataset for subreports; --sub-query runs on
@@ -227,13 +227,14 @@ fn render(args: &[String]) -> Result<(), String> {
     for w in result.get("warnings").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str) {
         eprintln!("warning: {w}");
     }
-    let body = match (result.get("html").and_then(Json::as_str), result.get("pdfBase64").and_then(Json::as_str)) {
+    let file = ["pdf", "xlsx", "docx"].into_iter().find_map(|f| result.get(format!("{f}Base64")).and_then(Json::as_str).map(|b| (f, b)));
+    let body = match (result.get("html").and_then(Json::as_str), file) {
         (Some(html), _) => html.as_bytes().to_vec(),
-        (_, Some(pdf)) => {
+        (_, Some((kind, encoded))) => {
             if out.is_none() && std::io::stdout().is_terminal() {
-                return Err("a PDF isn't printed to a terminal: add `--out FILE.pdf`".to_owned());
+                return Err(format!("a {} file isn't printed to a terminal: add `--out FILE.{kind}`", kind.to_uppercase()));
             }
-            reportcraft_engine::base64::decode(pdf).ok_or("the engine returned a damaged PDF")?
+            reportcraft_engine::base64::decode(encoded).ok_or_else(|| format!("the engine returned a damaged {} file", kind.to_uppercase()))?
         }
         _ => serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?.into_bytes(),
     };

@@ -69,7 +69,12 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Fonts named in the report definition (family, italic), with the font choice in the designer (R3)
   - [ ] PDF in the browser build: fonts passed as bytes by the page
   - [ ] PDF/A for archiving (Krilla validators), document outline from groups, links
-- [ ] R2.7 XLSX and DOCX export — decided: `rust_xlsxwriter` and `docx-rs` from crates.io (MIT/Apache-2.0); GridCraft and WordCraft writers are tied to their apps' models
+- [x] R2.7 XLSX and DOCX export — decided: `rust_xlsxwriter` and `docx-rs` from crates.io (MIT/Apache-2.0); GridCraft and WordCraft writers are tied to their apps' models (#13)
+  - [ ] Lines and boxes in DOCX (paragraph borders or drawing shapes) and cell borders in XLSX
+  - [ ] Barcodes as images in both formats (needs a PNG or SVG rendering of the module grid)
+  - [ ] A "data only" XLSX: detail rows as a table with a header row (no group or report bands), for further analysis
+  - [ ] One sheet per group, or per subreport, as an option
+  - [ ] XLSX and DOCX in the browser build (the writers build for wasm; the clock-free path needs checking)
 - [ ] R2.8 Printing through craft-libs `craft-print`
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
   - [x] Columns filled across then down (needed by labels, R2.12)

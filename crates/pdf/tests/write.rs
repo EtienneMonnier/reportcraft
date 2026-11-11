@@ -19,11 +19,20 @@ fn fonts() -> Option<Fonts> {
 }
 
 fn text(x: f64, y: f64, text: &str, align: Align, bold: bool) -> Item {
-    Item { x_mm: x, y_mm: y, width_mm: 60.0, height_mm: 5.0, style: TextStyle { size_pt: 10.0, bold, align }, text: text.into(), shape: None }
+    Item {
+        x_mm: x,
+        y_mm: y,
+        width_mm: 60.0,
+        height_mm: 5.0,
+        style: TextStyle { size_pt: 10.0, bold, align },
+        text: text.into(),
+        shape: None,
+        cell: None,
+    }
 }
 
 fn shape(shape: Shape) -> Item {
-    Item { x_mm: 10.0, y_mm: 50.0, width_mm: 40.0, height_mm: 10.0, style: TextStyle::default(), text: String::new(), shape: Some(shape) }
+    Item { x_mm: 10.0, y_mm: 50.0, width_mm: 40.0, height_mm: 10.0, style: TextStyle::default(), text: String::new(), shape: Some(shape), cell: None }
 }
 
 fn doc(pages: usize) -> Document {
@@ -39,7 +48,7 @@ fn doc(pages: usize) -> Document {
             shape(Shape::Barcode { columns: 3, rows: 1, quiet: 1, modules: "10".into() }),
         ],
     };
-    Document { title: "Test".into(), width_mm: 210.0, height_mm: 297.0, pages: vec![page; pages] }
+    Document { title: "Test".into(), width_mm: 210.0, height_mm: 297.0, margin_mm: 15.0, pages: vec![page; pages] }
 }
 
 #[test]

@@ -23,6 +23,14 @@
   `REPORTCRAFT_FONT_BOLD`, a craft-fonts checkout (`CRAFT_FONTS_DIR`, Inter) or the system
   (Liberation Sans, DejaVu Sans, Noto Sans, Arial); characters the font lacks are reported as
   warnings. The same document gives the same file (no clock in the PDF).
+- XLSX and DOCX output (`"format": "xlsx" | "docx"`, `--format xlsx|docx --out FILE`), written with
+  `rust_xlsxwriter` and `docx-rs`. XLSX: one continuous sheet (the page header once, no page
+  footer, no page breaks), a row per line of the report and a column per left edge, numbers,
+  booleans and dates kept typed with Excel number formats from the element formats (`#,##0.00 "€"`,
+  `0.0%`, `dd/mm/yyyy`), bold, size and alignment kept. DOCX: the report's pages and margins, a
+  paragraph per line at its height and a tab stop per item (left, right or centred as the item is
+  aligned), so the text stays editable. Both open in GridCraft and WordCraft; the same report gives
+  the same file. Lines, boxes and barcodes are left out with a warning.
 - Lines (horizontal, vertical, diagonal) and rectangles (border, fill) in any band, drawn as SVG in
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
@@ -82,8 +90,8 @@
   their own values (a date plus days, a date minus a date). `report.validate` reports syntax
   errors with their position, unknown fields, argument counts, undeclared parameters and cycles;
   `report.evaluateFormula` tries a formula on the loaded rows.
-- CLI and MCP server reaching every command. 126 tests (plus 8 live PostgreSQL tests run on demand), including 13 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 133 tests (plus 8 live PostgreSQL tests run on demand), including 13 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No ODBC source yet, no XLSX/DOCX export, no printing, no designer UI (see `ROADMAP.md`).
+- No ODBC source yet, no printing, no designer UI (see `ROADMAP.md`).
 - Not yet built or tested on Windows, macOS, BSD or wasm.

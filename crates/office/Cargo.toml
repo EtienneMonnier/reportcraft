@@ -1,0 +1,22 @@
+[package]
+name = "reportcraft-office"
+description = "ReportCraft XLSX and DOCX writers: laid-out reports to spreadsheets and Word documents (L4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+reportcraft-layout.workspace = true
+chrono.workspace = true
+rust_xlsxwriter.workspace = true
+docx-rs.workspace = true
+
+[dev-dependencies]
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true
