@@ -20,6 +20,7 @@
 mod eval;
 mod func;
 mod parse;
+mod text;
 mod value;
 
 #[cfg(test)]
@@ -28,6 +29,7 @@ mod tests;
 pub use eval::{Env, evaluate};
 pub use func::Func;
 pub use parse::{Expr, ParseError, parse};
+pub use text::Locale;
 pub use value::{ExprError, Val, significant};
 
 /// Longest formula accepted, in bytes.

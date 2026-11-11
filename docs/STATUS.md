@@ -94,7 +94,7 @@
   fields of every row, usable in elements, groups, sort, totals, links and other formulas (in
   dependency order; a circle is an error); `formula` elements compute over the current row and the
   rows their band summarises (`[amount] / SUM([amount])` is a share of the group in the detail
-  band). Operators `+ - * / ^ % &` and comparisons with Excel's precedence; 60 functions: logical
+  band). Operators `+ - * / ^ % &` and comparisons with Excel's precedence; 61 functions: logical
   (`IF`, `IFS`, `SWITCH`, `AND`, `OR`, `NOT`, `IFERROR`, `IS…`), maths (`ROUND`, `ROUNDUP`,
   `ROUNDDOWN`, `INT`, `MOD`, `POWER`, `SQRT`, `ABS`, `SIGN`), aggregates (`SUM`, `AVERAGE`, `COUNT`,
   `COUNTA`, `MIN`, `MAX`, `SUMIF`, `COUNTIF`, `AVERAGEIF` with `">10"`, `"<>"`, `"Ly*"` criteria),
@@ -102,7 +102,10 @@
   `EDATE`, `EOMONTH`, `DATEDIF`, `DAYS`, `WEEKDAY`, `ISOWEEKNUM`, `TODAY`/`NOW` from the render's
   clock…) and `PARAM("name")` (typed; `PARAM("period.from")` for a range's ends). Blanks, errors
   (`#DIV/0!`, `#VALUE!`, `#NAME?`, `#NUM!`, `#N/A`) and `IFERROR` behave as in Excel; dates are
-  their own values (a date plus days, a date minus a date). `report.validate` reports syntax
+  their own values (a date plus days, a date minus a date). Numbers written into text follow the
+  report's locale (`"Average " & 10.8` is `Average 10,8` in French), and `TEXT(value, "#,##0.00 €")`
+  or `TEXT(date, "dddd d mmmm")` takes Excel format codes, written with `.` and `,` as in English
+  Excel and shown with the locale's separators and day and month names. `report.validate` reports syntax
   errors with their position, unknown fields, argument counts, undeclared parameters and cycles;
   `report.evaluateFormula` tries a formula on the loaded rows.
 - Conditions (formulas): `visible_if` on bands (a hidden band takes no room) and on elements (their
@@ -114,7 +117,7 @@
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
   edits the session, or acts outside the application).
-- CLI and MCP server reaching every command. 145 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 149 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).

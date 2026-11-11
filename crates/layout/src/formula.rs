@@ -65,6 +65,12 @@ pub(crate) fn param(report: &Report, params: &Params, name: &str) -> Val {
     }
 }
 
+/// How the report's formulas write numbers and dates as text.
+pub(crate) fn locale_of(report: &Report) -> reportcraft_expr::Locale {
+    let style = reportcraft_model::locale_or_default(&report.locale);
+    reportcraft_expr::Locale { decimal: style.decimal, group: style.group, names: style.names }
+}
+
 /// When the report is rendered, from the render values.
 pub(crate) fn now(params: &Params) -> Option<NaiveDateTime> {
     params.get(PRINTED_AT).and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.naive_local())
@@ -77,6 +83,7 @@ struct RowEnv<'a> {
     row: &'a [Value],
     params: &'a Params,
     now: Option<NaiveDateTime>,
+    locale: reportcraft_expr::Locale,
 }
 
 impl Env for RowEnv<'_> {
@@ -94,6 +101,10 @@ impl Env for RowEnv<'_> {
 
     fn now(&self) -> Option<NaiveDateTime> {
         self.now
+    }
+
+    fn locale(&self) -> reportcraft_expr::Locale {
+        self.locale
     }
 }
 
@@ -119,6 +130,7 @@ pub(crate) fn with_formulas(report: &Report, rows: &RowSet, params: &Params, can
         rows: Vec::with_capacity(rows.rows.len()),
     };
     let now = now(params);
+    let locale = locale_of(report);
     for (n, row) in rows.rows.iter().enumerate() {
         if n % CANCEL_EVERY == 0 {
             cancel.check("the render")?;
@@ -128,7 +140,7 @@ pub(crate) fn with_formulas(report: &Report, rows: &RowSet, params: &Params, can
         values.resize(out.columns.len(), Value::Null);
         for &i in &order {
             let v = match exprs.get(i) {
-                Some(e) => evaluate(e, &RowEnv { report, rows: &out, row: &values, params, now }),
+                Some(e) => evaluate(e, &RowEnv { report, rows: &out, row: &values, params, now, locale }),
                 None => Val::Blank,
             };
             if let Some(slot) = values.get_mut(base + i) {
@@ -172,6 +184,7 @@ pub(crate) struct BandEnv<'a> {
     pub params: &'a Params,
     pub now: Option<NaiveDateTime>,
     pub memo: &'a Memo,
+    pub locale: reportcraft_expr::Locale,
 }
 
 impl Env for BandEnv<'_> {
@@ -194,6 +207,10 @@ impl Env for BandEnv<'_> {
 
     fn now(&self) -> Option<NaiveDateTime> {
         self.now
+    }
+
+    fn locale(&self) -> reportcraft_expr::Locale {
+        self.locale
     }
 
     fn memo(&self, key: usize, compute: &mut dyn FnMut() -> Val) -> Val {

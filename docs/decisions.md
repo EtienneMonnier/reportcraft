@@ -379,3 +379,14 @@ writes English, as it writes `en` numbers. The names are what the locale data sa
 in French or Italian, for instance. Excel exports keep their own codes (`dddd`, `mmmm`), which
 Excel shows in the reader's language.
 
+## Formulas write text in the report's language; format codes stay English (R2.2)
+
+When a formula turns a number into text (`&`, `CONCAT`, `LEFT`…), it uses the report's decimal
+separator, as Excel's General format does in a French workbook; `VALUE` reads either separator.
+`TEXT(value, code)` takes an Excel format code. Codes are written as in English Excel (`.` for
+decimals, `,` for thousands) whatever the report's language, so a report is portable and the
+code means the same everywhere; the result uses the locale's separators and day and month names.
+The evaluator gets these from the caller (`Env::locale`), like everything else it reads, so the
+expression crate stays free of the report model. A code it doesn't support gives `#VALUE!`
+rather than a guess.
+
