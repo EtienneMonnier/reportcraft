@@ -440,3 +440,17 @@ craft-ui's controls and craft-menu come next, with editing (R3.2); starting with
 this first step independent of craft-libs' UI revision, which is newer in GridCraft than ours.
 `--screenshot` lets agents and CI look at the window without a screen grabber.
 
+## Designer edits are engine commands, applied when an edit is finished (R3.2)
+
+Editing a report adds five commands, so the CLI and MCP agents can do what the designer does:
+`report.addElement`, `report.setElement` (with `move_to` another band), `report.removeElement`,
+`report.setBand` and `report.setProperties`. Bands are named as diagnostics name them (`detail`,
+`groups[0].header`). Each command edits a copy of the report and keeps it only if it still
+validates, so a refused edit (an element past the page, a formula that doesn't parse) leaves the
+report as it was and the status line says why. The canvas doesn't edit anything itself: it reports
+events (select, move, resize, drop) that the designer turns into commands. A drag is measured
+from where the button was pressed, so the element follows the pointer, and lands on a 0.5 mm
+grid. The properties panel edits a working copy and sends one command when an edit is finished
+(focus left, a drag stopped, a choice made), not one per frame, so the preview renders once per
+edit. Undo (R3.4) will record these commands.
+

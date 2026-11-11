@@ -162,6 +162,46 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "data.clearCache", label: "Clear query cache", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_cache },
     CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", access: Access::Read, run: report_parameters },
     CommandSpec {
+        id: "report.setProperties",
+        label: "Report properties",
+        menu: "Report",
+        params: r#"{"title"?: string, "locale"?: string (en, en-US, fr, de-CH…), "page"?: {"paper"?: "A4" | "A3" | "A5" | "Letter" | "Legal", "orientation"?: "portrait" | "landscape", "margin_mm"?: number, "columns"?: integer, "column_gap_mm"?: number, "width_mm"?: number, "height_mm"?: number}}"#,
+        access: Access::Edit,
+        run: report_set_properties,
+    },
+    CommandSpec {
+        id: "report.setBand",
+        label: "Band properties",
+        menu: "Report",
+        params: r#"{"band": string (report_header, page_header, groups[N].header, detail, groups[N].footer, page_footer, report_footer), "height_mm"?: number, "visible_if"?: string or null, "page_break_before_if"?: string or null, "keep_with_next"?: boolean}"#,
+        access: Access::Edit,
+        run: report_set_band,
+    },
+    CommandSpec {
+        id: "report.addElement",
+        label: "Add element",
+        menu: "Insert",
+        params: r#"{"band": string, "element": {"x_mm", "y_mm", "width_mm", "height_mm": number, "content": {"kind": "text" | "field" | "formula" | "aggregate" | "parameter" | "line" | "rect" | "barcode" | …}, "style"?: {…}, "format"?: {…}}} (answers its index)"#,
+        access: Access::Edit,
+        run: report_add_element,
+    },
+    CommandSpec {
+        id: "report.setElement",
+        label: "Element properties",
+        menu: "Report",
+        params: r#"{"band": string, "index": integer, "element": {…} (replaces it), "move_to"?: string (another band; it goes last there)}"#,
+        access: Access::Edit,
+        run: report_set_element,
+    },
+    CommandSpec {
+        id: "report.removeElement",
+        label: "Delete element",
+        menu: "Edit",
+        params: r#"{"band": string, "index": integer}"#,
+        access: Access::Edit,
+        run: report_remove_element,
+    },
+    CommandSpec {
         id: "report.validate",
         label: "Check report",
         menu: "Report",
@@ -744,6 +784,118 @@ fn report_evaluate_formula(s: &mut Session, params: &Json) -> EngineResult<Json>
     let limit = usize::try_from(limit).unwrap_or(1_000);
     let results = reportcraft_layout::evaluate_formula(&s.report, &s.rows, &values, expression, limit)?;
     Ok(json!({"values": results, "rows": s.rows.rows.len()}))
+}
+
+/// Applies `f` to a copy of the report and keeps it only if it is still a valid report.
+fn edit_report(s: &mut Session, command: &str, f: impl FnOnce(&mut Report) -> EngineResult<Json>) -> EngineResult<Json> {
+    let mut report = s.report.clone();
+    let out = f(&mut report)?;
+    report.validate().map_err(|e| bad(command, e.to_string()))?;
+    s.report = report;
+    Ok(out)
+}
+
+fn band_param<'a>(report: &'a mut Report, command: &str, params: &Json) -> EngineResult<&'a mut reportcraft_model::Band> {
+    let name = str_param(command, params, "band")?;
+    let names: Vec<String> = report.bands().into_iter().map(|(n, _)| n).collect();
+    report.band_mut(name).ok_or_else(|| bad(command, format!("no band `{name}` (bands: {})", names.join(", "))))
+}
+
+fn element_param(command: &str, params: &Json) -> EngineResult<reportcraft_model::Element> {
+    let value = params.get("element").cloned().ok_or_else(|| bad(command, "`element` is required"))?;
+    serde_json::from_value(value).map_err(|e| bad(command, format!("element: {e}")))
+}
+
+fn index_param(command: &str, params: &Json, len: usize) -> EngineResult<usize> {
+    let index = params.get("index").and_then(Json::as_u64).ok_or_else(|| bad(command, "`index` (integer) is required"))?;
+    usize::try_from(index).ok().filter(|i| *i < len).ok_or_else(|| bad(command, format!("no element {index} (the band has {len})")))
+}
+
+fn report_set_properties(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.setProperties";
+    edit_report(s, CMD, |r| {
+        if let Some(t) = params.get("title").and_then(Json::as_str) {
+            r.title = t.to_owned();
+        }
+        if let Some(l) = params.get("locale").and_then(Json::as_str) {
+            r.locale = l.to_owned();
+        }
+        if let Some(page) = params.get("page").and_then(Json::as_object) {
+            let mut current = serde_json::to_value(r.page).map_err(|e| EngineError::Internal(e.to_string()))?;
+            if let Some(map) = current.as_object_mut() {
+                for (k, v) in page {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+            r.page = serde_json::from_value(current).map_err(|e| bad(CMD, format!("page: {e}")))?;
+        }
+        Ok(json!({"title": r.title, "locale": r.locale}))
+    })
+}
+
+fn report_set_band(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.setBand";
+    edit_report(s, CMD, |r| {
+        let band = band_param(r, CMD, params)?;
+        if let Some(h) = params.get("height_mm") {
+            band.height_mm = h.as_f64().ok_or_else(|| bad(CMD, "`height_mm` must be a number"))?;
+        }
+        let formula = |key: &str| params.get(key).map(|v| v.as_str().filter(|t| !t.trim().is_empty()).map(str::to_owned));
+        if let Some(v) = formula("visible_if") {
+            band.visible_if = v;
+        }
+        if let Some(v) = formula("page_break_before_if") {
+            band.page_break_before_if = v;
+        }
+        if let Some(k) = params.get("keep_with_next").and_then(Json::as_bool) {
+            band.keep_with_next = k;
+        }
+        Ok(json!({"height_mm": band.height_mm}))
+    })
+}
+
+fn report_add_element(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.addElement";
+    let element = element_param(CMD, params)?;
+    edit_report(s, CMD, |r| {
+        let band = band_param(r, CMD, params)?;
+        band.elements.push(element);
+        Ok(json!({"index": band.elements.len() - 1}))
+    })
+}
+
+fn report_set_element(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.setElement";
+    let element = element_param(CMD, params)?;
+    let target = params.get("move_to").and_then(Json::as_str).map(str::to_owned);
+    edit_report(s, CMD, |r| {
+        let band = band_param(r, CMD, params)?;
+        let index = index_param(CMD, params, band.elements.len())?;
+        match target {
+            None => {
+                if let Some(slot) = band.elements.get_mut(index) {
+                    *slot = element;
+                }
+                Ok(json!({"band": params["band"], "index": index}))
+            }
+            Some(other) => {
+                band.elements.remove(index);
+                let to = r.band_mut(&other).ok_or_else(|| bad(CMD, format!("no band `{other}`")))?;
+                to.elements.push(element);
+                Ok(json!({"band": other, "index": to.elements.len() - 1}))
+            }
+        }
+    })
+}
+
+fn report_remove_element(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.removeElement";
+    edit_report(s, CMD, |r| {
+        let band = band_param(r, CMD, params)?;
+        let index = index_param(CMD, params, band.elements.len())?;
+        band.elements.remove(index);
+        Ok(json!({"removed": index}))
+    })
 }
 
 fn report_parameters(s: &mut Session, _: &Json) -> EngineResult<Json> {

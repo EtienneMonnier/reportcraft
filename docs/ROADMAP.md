@@ -117,7 +117,11 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Parameters panel: ask for the report's parameters before the preview
   - [ ] Saving and opening connections from the designer (today: `reportcraft-cli connections save`)
   - [ ] Packaging: desktop entry, icon, RPM (as the suite's apps)
-- [ ] R3.2 Field list, drag-and-drop of fields into bands, property panel
+- [x] R3.2 Field list, drag-and-drop of fields into bands, property panel (#16)
+  - [ ] Groups, sort and named formulas edited in the designer (today in the report file or by command)
+  - [ ] Several elements selected at once; align, distribute, copy and paste
+  - [ ] Band height dragged on the canvas (today in the band's properties)
+  - [ ] Subreports, barcodes and parameters edited in the panel (today shown, edited in the file)
 - [ ] R3.3 Control channel (`--control PORT`, `reportcraft-cli send`) and offscreen snapshot, as in GridCraft
 - [ ] R3.4 Undo/redo for definition edits
 - [ ] R3.5 Interface translations through craft-i18n

@@ -123,14 +123,17 @@
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
   edits the session, or acts outside the application).
-- Designer (`cargo run -p reportcraft`, R3.1): opens the sample, a report file, CSV data or rows
-  from a saved connection; shows every band to scale with its elements (`[field]`, `SUM([amount])`,
-  `=formula`…) and the selected element's properties; previews the rendered pages live, again
-  after every change; saves the report and exports PDF, HTML, XLSX and DOCX. Editing comes with
-  R3.2. `--screenshot FILE.ppm` saves the window and quits.
-- CLI and MCP server reaching every command. 163 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+- Designer (`cargo run -p reportcraft`, R3.1, R3.2): opens the sample, a report file, CSV data or
+  rows from a saved connection; shows every band to scale with its elements (`[field]`,
+  `SUM([amount])`, `=formula`…); fields and parameters dragged from the field list onto a band,
+  elements moved (into another band too) and resized with the mouse on a 0.5 mm grid, deleted with
+  Delete, inserted from the Insert menu (text, field, formula, total, page number, line, box); the
+  properties panel edits the selected element (position, size, content, style, colours, format,
+  conditions), band (height, conditions, keep with next) or the report (title, language, paper,
+  orientation, margins); previews the rendered pages live after every change; saves the report and
+  exports PDF, HTML, XLSX and DOCX. `--screenshot FILE.ppm` saves the window and quits.
+- CLI and MCP server reaching every command. 168 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No ODBC source yet; the designer shows and previews reports but doesn't edit them yet (R3.2)
-  (see `ROADMAP.md`).
+- No ODBC source yet; no undo in the designer yet (R3.4) (see `ROADMAP.md`).
 - Not yet built or tested on Windows, macOS, BSD or wasm.
