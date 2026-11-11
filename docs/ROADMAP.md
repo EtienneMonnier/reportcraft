@@ -62,6 +62,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.4 Lines and boxes in bands (#10)
   - [ ] Images in bands: from a field (blob or path) or embedded in the report, with size limits and ATTRIBUTION rules
   - [x] Text colour and background on text elements, fixed or from a formula
+  - [ ] DOCX: fill an element's whole box with its background (run shading covers only the text today)
 - [x] R2.5 Sub-reports (#11)
   - [ ] Repeat a subreport's header on the pages it continues on
   - [ ] Expose a subreport's totals to the parent (§8 "results to the parent")
