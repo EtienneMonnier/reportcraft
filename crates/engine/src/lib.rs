@@ -351,6 +351,7 @@ mod tests {
             style: Default::default(),
             content: reportcraft_model::Content::Formula { expression: e.into() },
             format: None,
+            visible_if: None,
         };
         s.report.detail.elements.push(formula("[daily] & \" €/d\""));
         let html = s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().to_owned();

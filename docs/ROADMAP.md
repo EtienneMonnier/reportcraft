@@ -49,7 +49,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code) (#8)
   - [ ] `TEXT(value, format)` and numbers turned into text in the report's locale (`10,8` in French; `&` writes `10.8` today)
   - [ ] Totals in named formulas (a computed field that reads its group's sum), and running totals (`RUNNINGSUM`-style, page totals)
-  - [ ] Formulas on element properties: conditional colour, visibility and page breaks (with R2.10)
+  - [x] Formulas on element properties: visibility and page breaks (R2.10); conditional colour waits for text colour (R2.4)
   - [ ] `PAGENUMBER()` / `TOTALPAGES()` in formulas (needs a second pass, as "page N / M" does)
   - [ ] A formula editor in the designer with the function list, field names and live errors (R3)
 - [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
@@ -79,7 +79,11 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
   - [x] Columns filled across then down (needed by labels, R2.12)
   - [ ] Different first page (no page header on page one, other margins)
-- [ ] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2
+- [x] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2 (#31)
+  - [ ] Hide a band whose elements all come out blank (no formula needed)
+  - [ ] `keep_together` and the space estimate of a group that count only the bands that will show
+  - [ ] Conditional colour, bold and format on elements (with R2.4's text colour)
+  - [ ] Page break after a band, and "new page after N rows"
 - [x] R2.11 Barcodes and QR codes (§4 FR-PRINT-003) (#32)
   - [ ] More symbologies on demand: Code 39, EAN-8, UPC-A, GS1-128 (FNC1), DataMatrix
   - [ ] QR numeric and alphanumeric modes (smaller symbols for digits and capitals)

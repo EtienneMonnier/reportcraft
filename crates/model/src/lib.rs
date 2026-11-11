@@ -242,6 +242,15 @@ pub struct Band {
     pub height_mm: f64,
     #[serde(default)]
     pub elements: Vec<Element>,
+    /// A formula: the band is printed only when it is TRUE (or a non-zero number), and takes no
+    /// room otherwise. FALSE, 0 and a blank hide it; an error never hides it. Read with the
+    /// band's current row and rows, as formula elements are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_if: Option<String>,
+    /// A formula: when TRUE (or a non-zero number), the band starts a new page (unless the page
+    /// has nothing on it yet). An error or a blank never breaks the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_break_before_if: Option<String>,
 }
 
 impl Band {
@@ -262,6 +271,10 @@ pub struct Element {
     /// How the value is written; `None` writes it plainly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<Format>,
+    /// A formula: the element is drawn only when it is TRUE (or a non-zero number); FALSE, 0 and
+    /// a blank hide it, an error never does. Its room in the band stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_if: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -490,6 +503,11 @@ impl Report {
         }
         let fixed = self.page_header.height_mm + self.page_footer.height_mm;
         for (name, band) in self.bands() {
+            for (what, c) in [("visible_if", &band.visible_if), ("page_break_before_if", &band.page_break_before_if)] {
+                if let Some(c) = c {
+                    reportcraft_expr::parse(c).map_err(|e| Error::Invalid(format!("{name}: {what} `{c}`: {e}")))?;
+                }
+            }
             if !finite_pos(band.height_mm) {
                 return Err(Error::Invalid(format!("{name}: height must be finite and not negative")));
             }
@@ -545,6 +563,9 @@ impl Report {
                 }
                 if let Content::Formula { expression } = &el.content {
                     reportcraft_expr::parse(expression).map_err(|e| Error::Invalid(format!("{name}: formula `{expression}`: {e}")))?;
+                }
+                if let Some(c) = &el.visible_if {
+                    reportcraft_expr::parse(c).map_err(|e| Error::Invalid(format!("{name}: element visible_if `{c}`: {e}")))?;
                 }
                 if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
                     return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
@@ -710,6 +731,7 @@ impl Report {
             let repeating = band_name == "page_header" || band_name == "page_footer";
             let spans_page = repeating || band_name.starts_with("report_");
             let (width, edge) = if spans_page || self.page.columns <= 1 { (full_width, "the right margin") } else { (column_width, "its column") };
+            out.extend(self.check_conditions(&band_name, band, columns, repeating));
             for (i, el) in band.elements.iter().enumerate() {
                 elements += 1;
                 let at = format!("{band_name}.elements[{i}]");
@@ -767,6 +789,30 @@ impl Report {
             out.push(Diagnostic::warning("report", "the report has no elements: every page is blank"));
         }
         out.extend(self.check_subreports(columns, datasets));
+        out
+    }
+
+    /// A band's `visible_if` and `page_break_before_if`, and its elements' `visible_if`.
+    fn check_conditions(&self, band_name: &str, band: &Band, columns: Option<&[Column]>, repeating: bool) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        if let Some(c) = &band.visible_if {
+            out.extend(self.check_formula(&format!("{band_name}.visible_if"), c, columns, repeating));
+        }
+        match &band.page_break_before_if {
+            Some(_) if repeating => {
+                out.push(Diagnostic::warning(
+                    format!("{band_name}.page_break_before_if"),
+                    "page headers and footers never break the page: this is ignored",
+                ));
+            }
+            Some(c) => out.extend(self.check_formula(&format!("{band_name}.page_break_before_if"), c, columns, false)),
+            None => {}
+        }
+        for (i, el) in band.elements.iter().enumerate() {
+            if let Some(c) = &el.visible_if {
+                out.extend(self.check_formula(&format!("{band_name}.elements[{i}].visible_if"), c, columns, repeating));
+            }
+        }
         out
     }
 
@@ -846,7 +892,10 @@ mod tests {
                 style: TextStyle::default(),
                 content: Content::Field { field: "name".into() },
                 format: Some(Format::Number { decimals: 2, grouping: true }),
+                visible_if: None,
             }],
+            page_break_before_if: None,
+            visible_if: None,
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
@@ -864,6 +913,7 @@ mod tests {
             style: TextStyle::default(),
             content,
             format: None,
+            visible_if: None,
         };
         let mut r = Report::new("t");
         r.groups.push(Group {
@@ -875,7 +925,12 @@ mod tests {
             footer: Band::default(),
         });
         r.sort.push(SortKey { field: "amount".into(), descending: false });
-        r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 20.0, Content::Field { field: "branch".into() })] };
+        r.page_header = Band {
+            height_mm: 6.0,
+            elements: vec![el(0.0, 20.0, Content::Field { field: "branch".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+        };
         r.detail = Band {
             height_mm: 4.0,
             elements: vec![
@@ -883,6 +938,8 @@ mod tests {
                 el(170.0, 20.0, Content::Aggregate { function: AggregateFn::Sum, field: "branch".into() }),
                 el(0.0, 10.0, Content::Parameter { name: "period".into() }),
             ],
+            page_break_before_if: None,
+            visible_if: None,
         };
         let found = r.check(Some(&columns));
         let at = |loc: &str, sev| found.iter().any(|d| d.location == loc && d.severity == sev);
@@ -908,11 +965,16 @@ mod tests {
             style: TextStyle::default(),
             content,
             format: Some(format),
+            visible_if: None,
         };
         let mut r = Report::new("t");
         r.locale = "xx-YY".into();
-        r.detail =
-            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "name".into() }, Format::Number { decimals: 2, grouping: true })] };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Field { field: "name".into() }, Format::Number { decimals: 2, grouping: true })],
+            page_break_before_if: None,
+            visible_if: None,
+        };
         let columns = [Column { name: "name".into(), field_type: FieldType::Text }];
         let found = r.check(Some(&columns));
         assert!(found.iter().any(|d| d.location == "locale" && d.severity == Severity::Warning));
@@ -950,10 +1012,23 @@ mod tests {
         for bad in ["abc", "#ab", "#abcd", "#12345g", "red", "#123456\"", ""] {
             assert!(!color_is_valid(bad), "{bad}");
         }
-        let el =
-            |content: Content| Element { x_mm: 0.0, y_mm: 0.0, width_mm: 10.0, height_mm: 0.0, style: TextStyle::default(), content, format: None };
+        let el = |content: Content| Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 10.0,
+            height_mm: 0.0,
+            style: TextStyle::default(),
+            content,
+            format: None,
+            visible_if: None,
+        };
         let mut r = Report::new("t");
-        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Line { thickness_mm: 0.3, color: "#000".into() })] };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Line { thickness_mm: 0.3, color: "#000".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+        };
         assert!(r.validate().is_ok());
         r.detail.elements = vec![el(Content::Line { thickness_mm: 0.3, color: "black".into() })];
         assert!(r.validate().is_err());
@@ -984,7 +1059,18 @@ mod tests {
             let mut c = Report::new("child");
             c.detail = Band {
                 height_mm: 5.0,
-                elements: vec![Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content, format: None }],
+                elements: vec![Element {
+                    x_mm: 0.0,
+                    y_mm: 0.0,
+                    width_mm: 50.0,
+                    height_mm: 5.0,
+                    style: TextStyle::default(),
+                    content,
+                    format: None,
+                    visible_if: None,
+                }],
+                page_break_before_if: None,
+                visible_if: None,
             };
             c
         };
@@ -998,8 +1084,9 @@ mod tests {
                 style: TextStyle::default(),
                 format: None,
                 content: Content::Subreport { report: Box::new(sub), dataset: "lines".into(), links, hide_when_empty: true },
+                visible_if: None,
             };
-            let b = Band { height_mm: 10.0, elements: vec![el] };
+            let b = Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None };
             if band == "page_header" {
                 r.page_header = b
             } else {
@@ -1061,9 +1148,15 @@ mod tests {
             style: TextStyle::default(),
             content: Content::Formula { expression: expression.into() },
             format: None,
+            visible_if: None,
         };
-        r.detail = Band { height_mm: 5.0, elements: vec![el("[net] / SUM([gross]) & PARAM(\"who\")"), el("[qty] + [nope]"), el("1 +")] };
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el("[price]")] };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el("[net] / SUM([gross]) & PARAM(\"who\")"), el("[qty] + [nope]"), el("1 +")],
+            page_break_before_if: None,
+            visible_if: None,
+        };
+        r.page_footer = Band { height_mm: 5.0, elements: vec![el("[price]")], page_break_before_if: None, visible_if: None };
         assert!(r.validate().unwrap_err().to_string().contains("detail: formula `1 +`"));
         let columns = [Column { name: "price".into(), field_type: FieldType::Number }, Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
@@ -1080,6 +1173,44 @@ mod tests {
     }
 
     #[test]
+    fn conditions_are_validated_and_checked() {
+        let text = Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 20.0,
+            height_mm: 4.0,
+            style: TextStyle::default(),
+            content: Content::Text { text: "x".into() },
+            format: None,
+            visible_if: Some("[qty] > 1".into()),
+        };
+        let mut r = Report::new("t");
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![text.clone()],
+            visible_if: Some("[nope] > 0".into()),
+            page_break_before_if: Some("[qty] = 0".into()),
+        };
+        r.page_footer =
+            Band { height_mm: 5.0, elements: Vec::new(), visible_if: Some("[qty] > 0".into()), page_break_before_if: Some("TRUE".into()) };
+        let columns = [Column { name: "qty".into(), field_type: FieldType::Integer }];
+        let found = r.check(Some(&columns));
+        let has = |loc: &str, sev, text: &str| found.iter().any(|d| d.location == loc && d.severity == sev && d.message.contains(text));
+        assert!(has("detail.visible_if", Severity::Error, "unknown field `nope`"), "{found:?}");
+        assert!(!found.iter().any(|d| d.location.starts_with("detail.page_break") || d.location.starts_with("detail.elements[0].visible_if")));
+        assert!(has("page_footer.visible_if", Severity::Warning, "no current row"));
+        assert!(has("page_footer.page_break_before_if", Severity::Warning, "ignored"));
+        r.detail.page_break_before_if = Some("[qty] >".into());
+        assert!(r.validate().unwrap_err().to_string().contains("detail: page_break_before_if `[qty] >`"));
+        r.detail.page_break_before_if = None;
+        r.detail.elements = vec![Element { visible_if: Some("IF(".into()), ..text }];
+        assert!(r.validate().unwrap_err().to_string().contains("element visible_if"));
+        let read: Band = serde_json::from_str(r#"{"height_mm": 5, "visible_if": "[qty] > 1"}"#).unwrap();
+        assert_eq!(read.visible_if.as_deref(), Some("[qty] > 1"));
+        assert!(!serde_json::to_string(&Band::default()).unwrap().contains("visible_if"), "absent when unset");
+    }
+
+    #[test]
     fn barcodes_need_one_encodable_value() {
         let read: Content = serde_json::from_str(r#"{"kind":"barcode","symbology":"qr","field":"url"}"#).unwrap();
         assert_eq!(read, Content::Barcode { symbology: Symbology::Qr, field: Some("url".into()), text: None, show_text: true, ec_level: EcLevel::M });
@@ -1087,7 +1218,18 @@ mod tests {
             let mut r = Report::new("x");
             r.detail = Band {
                 height_mm: 20.0,
-                elements: vec![Element { x_mm: 0.0, y_mm: 0.0, width_mm: 60.0, height_mm: 15.0, style: TextStyle::default(), content, format: None }],
+                elements: vec![Element {
+                    x_mm: 0.0,
+                    y_mm: 0.0,
+                    width_mm: 60.0,
+                    height_mm: 15.0,
+                    style: TextStyle::default(),
+                    content,
+                    format: None,
+                    visible_if: None,
+                }],
+                page_break_before_if: None,
+                visible_if: None,
             };
             r
         };
