@@ -50,7 +50,7 @@ keyring = "4.2"
 rust_xlsxwriter = { version = "0.102", default-features = false, features = ["chrono"] }
 docx-rs = { version = "0.4.22", default-features = false }
 # All date/time conversion goes through chrono (AGENTS.md).
-chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde", "unstable-locales"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

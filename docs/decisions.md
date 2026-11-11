@@ -369,3 +369,13 @@ command line. Whoever starts the server can widen it (`mcp --allow-paths --allow
 choice made by a person rather than by the agent. Inline data (`data.loadCsv` with the CSV text,
 `report.load` with JSON) stays allowed: it reaches nothing the agent didn't already have.
 
+## Day and month names come from chrono's locale data (R2.1)
+
+`%A`, `%B`, `%a`, `%b` and `%p` follow the report's language through chrono's `unstable-locales`
+feature (the `pure-rust-locales` tables, pure Rust and wasm-safe) rather than names of our own:
+one source of truth, maintained upstream, already used by the date code. Each entry of the
+locale table names its chrono locale (`fr` → `fr_FR`, `de-CH` → `de_CH`); an unknown locale
+writes English, as it writes `en` numbers. The names are what the locale data says, lower-case
+in French or Italian, for instance. Excel exports keep their own codes (`dddd`, `mmmm`), which
+Excel shows in the reader's language.
+

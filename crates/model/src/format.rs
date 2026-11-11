@@ -70,23 +70,25 @@ pub struct LocaleStyle {
     /// Between a number and `%` or a trailing currency symbol (empty when none).
     pub unit_space: &'static str,
     pub date_pattern: &'static str,
+    /// Day and month names (`%A`, `%B`, `%a`, `%b`) and AM/PM in this language.
+    pub names: chrono::Locale,
 }
 
 const NNBSP: char = '\u{202F}';
 
 /// Known locales. Matching takes the full tag first (`de-CH`), then its language (`de`).
 pub const LOCALES: &[LocaleStyle] = &[
-    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d" },
-    LocaleStyle { tag: "en-US", decimal: '.', group: ',', unit_space: "", date_pattern: "%m/%d/%Y" },
-    LocaleStyle { tag: "en-GB", decimal: '.', group: ',', unit_space: "", date_pattern: "%d/%m/%Y" },
-    LocaleStyle { tag: "fr", decimal: ',', group: NNBSP, unit_space: "\u{a0}", date_pattern: "%d/%m/%Y" },
-    LocaleStyle { tag: "fr-CH", decimal: '.', group: '\u{2019}', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y" },
-    LocaleStyle { tag: "de", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y" },
-    LocaleStyle { tag: "de-CH", decimal: '.', group: '\u{2019}', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y" },
-    LocaleStyle { tag: "es", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y" },
-    LocaleStyle { tag: "it", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y" },
-    LocaleStyle { tag: "nl", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d-%m-%Y" },
-    LocaleStyle { tag: "pt", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y" },
+    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d", names: chrono::Locale::en_US },
+    LocaleStyle { tag: "en-US", decimal: '.', group: ',', unit_space: "", date_pattern: "%m/%d/%Y", names: chrono::Locale::en_US },
+    LocaleStyle { tag: "en-GB", decimal: '.', group: ',', unit_space: "", date_pattern: "%d/%m/%Y", names: chrono::Locale::en_GB },
+    LocaleStyle { tag: "fr", decimal: ',', group: NNBSP, unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::fr_FR },
+    LocaleStyle { tag: "fr-CH", decimal: '.', group: '\u{2019}', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y", names: chrono::Locale::fr_CH },
+    LocaleStyle { tag: "de", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y", names: chrono::Locale::de_DE },
+    LocaleStyle { tag: "de-CH", decimal: '.', group: '\u{2019}', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y", names: chrono::Locale::de_CH },
+    LocaleStyle { tag: "es", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::es_ES },
+    LocaleStyle { tag: "it", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::it_IT },
+    LocaleStyle { tag: "nl", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d-%m-%Y", names: chrono::Locale::nl_NL },
+    LocaleStyle { tag: "pt", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::pt_PT },
 ];
 
 /// The style for a locale tag, if known (case-insensitive, `_` or `-`).
@@ -105,7 +107,8 @@ pub fn locale_or_default(tag: &str) -> LocaleStyle {
     locale_style(tag).unwrap_or(DEFAULT_LOCALE)
 }
 
-const DEFAULT_LOCALE: LocaleStyle = LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d" };
+const DEFAULT_LOCALE: LocaleStyle =
+    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d", names: chrono::Locale::en_US };
 
 #[cfg(test)]
 mod tests {
