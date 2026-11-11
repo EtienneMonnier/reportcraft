@@ -275,6 +275,13 @@ pub struct Element {
     /// a blank hide it, an error never does. Its room in the band stays.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_if: Option<String>,
+    /// A formula giving the text's colour for this row (`IF([amount] < 0, "#c00", "")`): a
+    /// `#rgb` or `#rrggbb` result replaces the style's colour; anything else keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_formula: Option<String>,
+    /// The same for the background.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_formula: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -285,6 +292,58 @@ pub struct TextStyle {
     pub bold: bool,
     #[serde(default)]
     pub align: Align,
+    /// The text's colour (black when unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+    /// Filled behind the element's box (none when unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Color>,
+}
+
+/// A colour, written `#rgb` or `#rrggbb` in report files and always `#rrggbb` when saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Color(pub u8, pub u8, pub u8);
+
+impl Color {
+    /// `#rgb` or `#rrggbb`; `None` for anything else.
+    pub fn parse(text: &str) -> Option<Color> {
+        if !color_is_valid(text) {
+            return None;
+        }
+        let hex = text.strip_prefix('#')?;
+        let digit = |i: usize| hex.get(i..=i).and_then(|d| u8::from_str_radix(d, 16).ok());
+        if hex.len() == 3 {
+            Some(Color(digit(0)? * 17, digit(1)? * 17, digit(2)? * 17))
+        } else {
+            let byte = |i: usize| hex.get(i..i + 2).and_then(|d| u8::from_str_radix(d, 16).ok());
+            Some(Color(byte(0)?, byte(2)?, byte(4)?))
+        }
+    }
+
+    /// `rrggbb`, without the `#` (DOCX, XLSX).
+    pub fn hex(self) -> String {
+        format!("{:02x}{:02x}{:02x}", self.0, self.1, self.2)
+    }
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#{}", self.hex())
+    }
+}
+
+impl TryFrom<String> for Color {
+    type Error = String;
+    fn try_from(text: String) -> std::result::Result<Self, Self::Error> {
+        Color::parse(&text).ok_or_else(|| format!("colour `{text}` must be #rgb or #rrggbb"))
+    }
+}
+
+impl From<Color> for String {
+    fn from(c: Color) -> String {
+        c.to_string()
+    }
 }
 
 fn default_size() -> f64 {
@@ -293,7 +352,7 @@ fn default_size() -> f64 {
 
 impl Default for TextStyle {
     fn default() -> Self {
-        Self { size_pt: default_size(), bold: false, align: Align::Left }
+        Self { size_pt: default_size(), bold: false, align: Align::Left, color: None, background: None }
     }
 }
 
@@ -564,8 +623,12 @@ impl Report {
                 if let Content::Formula { expression } = &el.content {
                     reportcraft_expr::parse(expression).map_err(|e| Error::Invalid(format!("{name}: formula `{expression}`: {e}")))?;
                 }
-                if let Some(c) = &el.visible_if {
-                    reportcraft_expr::parse(c).map_err(|e| Error::Invalid(format!("{name}: element visible_if `{c}`: {e}")))?;
+                for (what, c) in
+                    [("visible_if", &el.visible_if), ("color_formula", &el.color_formula), ("background_formula", &el.background_formula)]
+                {
+                    if let Some(c) = c {
+                        reportcraft_expr::parse(c).map_err(|e| Error::Invalid(format!("{name}: element {what} `{c}`: {e}")))?;
+                    }
                 }
                 if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
                     return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
@@ -809,8 +872,10 @@ impl Report {
             None => {}
         }
         for (i, el) in band.elements.iter().enumerate() {
-            if let Some(c) = &el.visible_if {
-                out.extend(self.check_formula(&format!("{band_name}.elements[{i}].visible_if"), c, columns, repeating));
+            for (what, c) in [("visible_if", &el.visible_if), ("color_formula", &el.color_formula), ("background_formula", &el.background_formula)] {
+                if let Some(c) = c {
+                    out.extend(self.check_formula(&format!("{band_name}.elements[{i}].{what}"), c, columns, repeating));
+                }
             }
         }
         out
@@ -893,6 +958,8 @@ mod tests {
                 content: Content::Field { field: "name".into() },
                 format: Some(Format::Number { decimals: 2, grouping: true }),
                 visible_if: None,
+                background_formula: None,
+                color_formula: None,
             }],
             page_break_before_if: None,
             visible_if: None,
@@ -914,6 +981,8 @@ mod tests {
             content,
             format: None,
             visible_if: None,
+            background_formula: None,
+            color_formula: None,
         };
         let mut r = Report::new("t");
         r.groups.push(Group {
@@ -966,6 +1035,8 @@ mod tests {
             content,
             format: Some(format),
             visible_if: None,
+            background_formula: None,
+            color_formula: None,
         };
         let mut r = Report::new("t");
         r.locale = "xx-YY".into();
@@ -1021,6 +1092,8 @@ mod tests {
             content,
             format: None,
             visible_if: None,
+            background_formula: None,
+            color_formula: None,
         };
         let mut r = Report::new("t");
         r.detail = Band {
@@ -1068,6 +1141,8 @@ mod tests {
                     content,
                     format: None,
                     visible_if: None,
+                    background_formula: None,
+                    color_formula: None,
                 }],
                 page_break_before_if: None,
                 visible_if: None,
@@ -1085,6 +1160,8 @@ mod tests {
                 format: None,
                 content: Content::Subreport { report: Box::new(sub), dataset: "lines".into(), links, hide_when_empty: true },
                 visible_if: None,
+                background_formula: None,
+                color_formula: None,
             };
             let b = Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None };
             if band == "page_header" {
@@ -1149,6 +1226,8 @@ mod tests {
             content: Content::Formula { expression: expression.into() },
             format: None,
             visible_if: None,
+            background_formula: None,
+            color_formula: None,
         };
         r.detail = Band {
             height_mm: 5.0,
@@ -1183,6 +1262,8 @@ mod tests {
             content: Content::Text { text: "x".into() },
             format: None,
             visible_if: Some("[qty] > 1".into()),
+            background_formula: None,
+            color_formula: None,
         };
         let mut r = Report::new("t");
         r.detail = Band {
@@ -1211,6 +1292,34 @@ mod tests {
     }
 
     #[test]
+    fn colours_read_short_and_long_forms_and_save_long() {
+        let style: TextStyle = serde_json::from_str(r##"{"color": "#c00", "background": "#FFEECC"}"##).unwrap();
+        assert_eq!(style.color, Some(Color(0xcc, 0, 0)));
+        assert_eq!(style.background, Some(Color(0xff, 0xee, 0xcc)));
+        assert_eq!(serde_json::to_string(&style.color).unwrap(), r##""#cc0000""##);
+        assert!(serde_json::from_str::<TextStyle>(r#"{"color": "red"}"#).is_err());
+        assert!(!serde_json::to_string(&TextStyle::default()).unwrap().contains("color"), "absent when unset");
+        let mut r = Report::new("t");
+        let el = Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 20.0,
+            height_mm: 4.0,
+            style: TextStyle::default(),
+            content: Content::Text { text: "x".into() },
+            format: None,
+            visible_if: None,
+            color_formula: Some("IF([amout] < 0, \"#c00\", \"\")".into()),
+            background_formula: Some("IF(".into()),
+        };
+        r.detail = Band { height_mm: 5.0, elements: vec![el.clone()], ..Band::default() };
+        assert!(r.validate().unwrap_err().to_string().contains("background_formula"));
+        r.detail.elements = vec![Element { background_formula: None, ..el }];
+        let columns = [Column { name: "amount".into(), field_type: FieldType::Number }];
+        assert!(r.check(Some(&columns)).iter().any(|d| d.location == "detail.elements[0].color_formula" && d.message.contains("amout")));
+    }
+
+    #[test]
     fn barcodes_need_one_encodable_value() {
         let read: Content = serde_json::from_str(r#"{"kind":"barcode","symbology":"qr","field":"url"}"#).unwrap();
         assert_eq!(read, Content::Barcode { symbology: Symbology::Qr, field: Some("url".into()), text: None, show_text: true, ec_level: EcLevel::M });
@@ -1227,6 +1336,8 @@ mod tests {
                     content,
                     format: None,
                     visible_if: None,
+                    background_formula: None,
+                    color_formula: None,
                 }],
                 page_break_before_if: None,
                 visible_if: None,

@@ -2,7 +2,9 @@
 //! with an exact height that puts it where the layout did, and a tab stop per item (left, right
 //! or centred, as the item is aligned). The result stays editable text in Word or WordCraft.
 
-use docx_rs::{AlignmentType, Docx, LineSpacing, LineSpacingType, PageMargin, Paragraph, Run, RunFonts, Tab, TabLeaderType, TabValueType};
+use docx_rs::{
+    AlignmentType, Docx, LineSpacing, LineSpacingType, PageMargin, Paragraph, Run, RunFonts, Shading, ShdType, Tab, TabLeaderType, TabValueType,
+};
 use reportcraft_core::{Cancel, Error, Result};
 use reportcraft_layout::{Document, Item};
 use reportcraft_model::Align;
@@ -118,6 +120,12 @@ fn line_paragraph(line: &[&Item], margin: f64, height_mm: f64) -> Paragraph {
         let mut run = Run::new().size((it.style.size_pt * 2.0).round().clamp(2.0, 3_276.0) as usize).add_text(it.text.replace(['\n', '\r'], " "));
         if it.style.bold {
             run = run.bold();
+        }
+        if let Some(c) = it.style.color {
+            run = run.color(c.hex());
+        }
+        if let Some(b) = it.style.background {
+            run = run.shading(Shading::new().shd_type(ShdType::Clear).color("auto").fill(b.hex()));
         }
         p = p.add_run(run);
     }

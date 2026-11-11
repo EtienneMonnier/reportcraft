@@ -45,6 +45,10 @@
   (`"1-3,5"`, `"8-"`). Nothing is sent without `"confirm": true`: otherwise the result shows the
   job it would send. CLI: `reportcraft-cli printers`, `reportcraft-cli print … [--printer NAME]
   [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]`.
+- Text colour and background on elements (`style.color`, `style.background`, `#rgb` or `#rrggbb`),
+  fixed or for each row from a formula (`color_formula`: `IF([amount] < 0, "#c00", "")`; a result
+  that isn't a colour keeps the style's), in HTML, PDF, DOCX and XLSX (in DOCX the background covers
+  the text only, not the whole box).
 - Lines (horizontal, vertical, diagonal) and rectangles (border, fill) in any band, drawn as SVG in
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
@@ -117,7 +121,7 @@
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
   edits the session, or acts outside the application).
-- CLI and MCP server reaching every command. 149 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 152 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).

@@ -210,6 +210,14 @@ fn mm(v: f64) -> f32 {
 }
 
 fn draw_text(surface: &mut Surface<'_>, it: &Item, faces: &Faces<'_>, warnings: &mut Warnings) {
+    // The background fills the whole box, text or not.
+    if let Some(b) = it.style.background
+        && let Some(path) = rect_path(mm(it.x_mm), mm(it.y_mm), mm(it.width_mm), mm(it.height_mm))
+    {
+        surface.set_fill(Some(fill(rgb::Color::new(b.0, b.1, b.2))));
+        surface.set_stroke(None);
+        surface.draw_path(&path);
+    }
     // Control characters (a line break in a value) print as spaces, as `white-space: nowrap` does.
     let text: String = it.text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     if text.trim().is_empty() || !(it.width_mm > 0.0 && it.height_mm > 0.0 && it.style.size_pt > 0.0) {
@@ -235,7 +243,7 @@ fn draw_text(surface: &mut Surface<'_>, it: &Item, faces: &Faces<'_>, warnings: 
     let baseline = it.y_mm * PT_PER_MM + (LINE_HEIGHT * size - content) / 2.0 + face.ascender * size;
     let Some(clip) = rect_path(mm(it.x_mm), mm(it.y_mm), mm(it.width_mm), mm(it.height_mm)) else { return };
     surface.push_clip_path(&clip, &FillRule::NonZero);
-    surface.set_fill(Some(Fill::default()));
+    surface.set_fill(Some(it.style.color.map_or_else(Fill::default, |c| fill(rgb::Color::new(c.0, c.1, c.2)))));
     surface.set_stroke(None);
     surface.draw_glyphs(Point::from_xy(x as f32, baseline as f32), &glyphs, face.pdf.clone(), &text, size as f32, false);
     surface.pop();

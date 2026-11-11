@@ -787,6 +787,7 @@ impl<'a> Writer<'a> {
                     .or_insert_with(|| reportcraft_expr::parse(expression).ok().map(Box::new));
             }
             let (text, cell) = self.eval(&el.content, el.format.as_ref(), scope);
+            let style = self.style_of(el, scope);
             let shape = match &el.content {
                 Content::Line { thickness_mm, color } => Some(Shape::Line { thickness_mm: *thickness_mm, color: color.clone() }),
                 Content::Rect { border_mm, border_color, fill } => {
@@ -800,7 +801,7 @@ impl<'a> Writer<'a> {
                 y_mm: self.y + el.y_mm,
                 width_mm: el.width_mm,
                 height_mm: el.height_mm,
-                style: el.style,
+                style,
                 text,
                 cell,
             });
@@ -907,8 +908,38 @@ impl<'a> Writer<'a> {
     /// Whether a condition formula holds for `scope`: `Some(true)` for TRUE or a non-zero
     /// number, `Some(false)` for FALSE, 0 or a blank, `None` for anything else (an error, text).
     fn holds(&mut self, condition: &String, scope: Scope<'_>) -> Option<bool> {
-        let key = std::ptr::from_ref(condition) as usize;
-        self.conditions.entry(key).or_insert_with(|| reportcraft_expr::parse(condition).ok().map(Box::new));
+        match self.value_of(condition, scope)? {
+            reportcraft_expr::Val::Bool(b) => Some(b),
+            reportcraft_expr::Val::Number(n) => Some(n != 0.0),
+            reportcraft_expr::Val::Blank => Some(false),
+            _ => None,
+        }
+    }
+
+    /// The style an element is drawn with: its own, with the colours its formulas give for
+    /// `scope` (a result that isn't a colour keeps the style's).
+    fn style_of(&mut self, el: &Element, scope: Scope<'_>) -> TextStyle {
+        let mut style = el.style;
+        let mut colour = |formula: &Option<String>| match formula {
+            Some(f) => match self.value_of(f, scope) {
+                Some(reportcraft_expr::Val::Text(t)) => reportcraft_model::Color::parse(t.trim()),
+                _ => None,
+            },
+            None => None,
+        };
+        if let Some(c) = colour(&el.color_formula) {
+            style.color = Some(c);
+        }
+        if let Some(c) = colour(&el.background_formula) {
+            style.background = Some(c);
+        }
+        style
+    }
+
+    /// A band formula's value for `scope` (`visible_if`, a colour formula…), parsed once.
+    fn value_of(&mut self, formula: &String, scope: Scope<'_>) -> Option<reportcraft_expr::Val> {
+        let key = std::ptr::from_ref(formula) as usize;
+        self.conditions.entry(key).or_insert_with(|| reportcraft_expr::parse(formula).ok().map(Box::new));
         let expr = self.conditions.get(&key)?.as_deref()?;
         let env = formula::BandEnv {
             report: self.report,
@@ -920,12 +951,7 @@ impl<'a> Writer<'a> {
             memo: &self.memo,
             locale: reportcraft_expr::Locale { decimal: self.locale.decimal, group: self.locale.group, names: self.locale.names },
         };
-        match reportcraft_expr::evaluate(expr, &env) {
-            reportcraft_expr::Val::Bool(b) => Some(b),
-            reportcraft_expr::Val::Number(n) => Some(n != 0.0),
-            reportcraft_expr::Val::Blank => Some(false),
-            _ => None,
-        }
+        Some(reportcraft_expr::evaluate(expr, &env))
     }
 
     /// A band is printed unless its `visible_if` says otherwise (an error shows it).
@@ -992,7 +1018,18 @@ mod tests {
     use reportcraft_model::{Element, Group};
 
     fn el(content: Content) -> Element {
-        Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content, format: None, visible_if: None }
+        Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 50.0,
+            height_mm: 5.0,
+            style: TextStyle::default(),
+            content,
+            format: None,
+            visible_if: None,
+            background_formula: None,
+            color_formula: None,
+        }
     }
 
     fn rows() -> RowSet {
@@ -1200,6 +1237,26 @@ mod tests {
         assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap()), ["Total : 1750", "1\u{202f}750,00 €", "mercredi 11 novembre", "25"]);
         r.locale = "en".into();
         assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap())[1], "1,750.00 €");
+    }
+
+    #[test]
+    fn colour_formulas_colour_each_row() {
+        let mut r = Report::new("t");
+        let red = reportcraft_model::Color(0xcc, 0, 0);
+        let style = TextStyle { background: Some(reportcraft_model::Color(0xee, 0xee, 0xee)), ..TextStyle::default() };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![Element {
+                style,
+                color_formula: Some("IF([amount] < 5, \"#c00\", \"not a colour\")".into()),
+                ..el(Content::Field { field: "amount".into() })
+            }],
+            ..Band::default()
+        };
+        let doc = layout(&r, &rows(), &Params::new()).unwrap();
+        let colours: Vec<_> = doc.pages.iter().flat_map(|p| &p.items).map(|i| (i.text.clone(), i.style.color, i.style.background)).collect();
+        let grey = style.background;
+        assert_eq!(colours, [("10".into(), None, grey), ("5".into(), None, grey), ("2.5".into(), Some(red), grey)]);
     }
 
     #[test]

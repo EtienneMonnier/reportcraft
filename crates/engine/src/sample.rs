@@ -24,7 +24,18 @@ Annecy,Scaffold tower,9,405.00
 ";
 
 fn text(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None, visible_if: None }
+    Element {
+        x_mm: x,
+        y_mm: 0.5,
+        width_mm: w,
+        height_mm: 5.0,
+        style,
+        content,
+        format: None,
+        visible_if: None,
+        background_formula: None,
+        color_formula: None,
+    }
 }
 
 /// Amounts: two decimals, grouped thousands.

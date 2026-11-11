@@ -39,7 +39,7 @@ pub fn to_html(doc: &Document) -> String {
                 it.width_mm,
                 it.height_mm,
                 it.style.size_pt,
-                if it.style.bold { ";font-weight:bold" } else { "" },
+                colours(it),
                 escape(&it.text),
             );
         }
@@ -135,6 +135,21 @@ fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// The item's colour and background as CSS (colours are validated: `#rrggbb` only).
+fn colours(it: &crate::Item) -> String {
+    let mut css = String::new();
+    if it.style.bold {
+        css.push_str(";font-weight:bold");
+    }
+    if let Some(c) = it.style.color {
+        css.push_str(&format!(";color:{c}"));
+    }
+    if let Some(b) = it.style.background {
+        css.push_str(&format!(";background:{b}"));
+    }
+    css
 }
 
 #[cfg(test)]

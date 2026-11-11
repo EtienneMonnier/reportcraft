@@ -89,6 +89,13 @@ fn write_cell(sheet: &mut Worksheet, row: u32, col: u16, items: &[&Item]) -> std
     if first.style.bold {
         format = format.set_bold();
     }
+    let rgb = |c: reportcraft_model::Color| rust_xlsxwriter::Color::RGB((u32::from(c.0) << 16) | (u32::from(c.1) << 8) | u32::from(c.2));
+    if let Some(c) = first.style.color {
+        format = format.set_font_color(rgb(c));
+    }
+    if let Some(b) = first.style.background {
+        format = format.set_background_color(rgb(b));
+    }
     format = match first.style.align {
         Align::Left => format,
         Align::Center => format.set_align(FormatAlign::Center),
