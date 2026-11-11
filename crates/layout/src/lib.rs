@@ -194,7 +194,7 @@ pub fn evaluate_formula(report: &Report, rows: &RowSet, params: &Params, express
     let memo = formula::Memo::default();
     let now = formula::now(params);
     let at = |current: Option<usize>| {
-        let env = formula::BandEnv { report, rows, current, summary: &all, params, now, memo: &memo };
+        let env = formula::BandEnv { report, rows, current, summary: &all, params, now, memo: &memo, locale: formula::locale_of(report) };
         formula::to_value(reportcraft_expr::evaluate(&expr, &env))
     };
     if all.is_empty() {
@@ -891,6 +891,7 @@ impl<'a> Writer<'a> {
                     params: self.params,
                     now: self.now,
                     memo: &self.memo,
+                    locale: reportcraft_expr::Locale { decimal: self.locale.decimal, group: self.locale.group, names: self.locale.names },
                 };
                 self.typed(formula::to_value(reportcraft_expr::evaluate(expr, &env)), format)
             }
@@ -917,6 +918,7 @@ impl<'a> Writer<'a> {
             params: self.params,
             now: self.now,
             memo: &self.memo,
+            locale: reportcraft_expr::Locale { decimal: self.locale.decimal, group: self.locale.group, names: self.locale.names },
         };
         match reportcraft_expr::evaluate(expr, &env) {
             reportcraft_expr::Val::Bool(b) => Some(b),
@@ -1178,6 +1180,26 @@ mod tests {
         params.insert("period".into(), "2026-10-01..2026-10-31".into());
         params.insert(PRINTED_AT.into(), "2026-11-11T09:30:00+01:00".into());
         assert_eq!(texts(&layout(&r, &rows(), &params).unwrap()), ["2", "30", "41", "31/10/2026", "#DIV/0!"]);
+    }
+
+    #[test]
+    fn formulas_write_numbers_and_dates_in_the_report_language() {
+        let mut r = Report::new("t");
+        r.locale = "fr".into();
+        let f = |e: &str| el(Content::Formula { expression: e.into() });
+        r.report_footer = Band {
+            height_mm: 6.0,
+            elements: vec![
+                f("\"Total : \" & SUM([amount]) * 100"),
+                f("TEXT(SUM([amount]) * 100, \"#,##0.00 €\")"),
+                f("TEXT(DATE(2026,11,11), \"dddd d mmmm\")"),
+                f("VALUE(\"12,5\") * 2"),
+            ],
+            ..Band::default()
+        };
+        assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap()), ["Total : 1750", "1\u{202f}750,00 €", "mercredi 11 novembre", "25"]);
+        r.locale = "en".into();
+        assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap())[1], "1,750.00 €");
     }
 
     #[test]

@@ -51,7 +51,7 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
   - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
 - [x] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code) (#8)
-  - [ ] `TEXT(value, format)` and numbers turned into text in the report's locale (`10,8` in French; `&` writes `10.8` today)
+  - [x] `TEXT(value, format)` and numbers turned into text in the report's locale (`10,8` in French)
   - [ ] Totals in named formulas (a computed field that reads its group's sum), and running totals (`RUNNINGSUM`-style, page totals)
   - [x] Formulas on element properties: visibility and page breaks (R2.10); conditional colour waits for text colour (R2.4)
   - [ ] `PAGENUMBER()` / `TOTALPAGES()` in formulas (needs a second pass, as "page N / M" does)

@@ -51,6 +51,7 @@ pub enum Func {
     Rept,
     Exact,
     Value,
+    Text,
     // Dates
     Today,
     Now,
@@ -118,6 +119,7 @@ const CATALOGUE: &[(&str, Func, usize, usize)] = &[
     ("REPT", Func::Rept, 2, 2),
     ("EXACT", Func::Exact, 2, 2),
     ("VALUE", Func::Value, 1, 1),
+    ("TEXT", Func::Text, 2, 2),
     ("TODAY", Func::Today, 0, 0),
     ("NOW", Func::Now, 0, 0),
     ("DATE", Func::Date, 3, 3),

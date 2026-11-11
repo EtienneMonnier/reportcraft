@@ -7,7 +7,7 @@ use chrono::{Datelike, Months, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, T
 
 use crate::parse::{Expr, Op};
 use crate::value::{ExprError, R, Val, compare, parse_datetime, parse_number, significant};
-use crate::{Func, MAX_TEXT};
+use crate::{Func, Locale, MAX_TEXT};
 
 /// What a formula can read. The caller decides what "the current row" and "the rows being
 /// summarised" are (a detail row and its group, a group footer and its rows…).
@@ -22,6 +22,11 @@ pub trait Env {
     fn param(&self, name: &str) -> Val;
     /// When the report is being rendered; `None` gives `#N/A` for `TODAY()` and `NOW()`.
     fn now(&self) -> Option<NaiveDateTime>;
+    /// How numbers become text (`&`, `CONCAT`, `TEXT`) and which language day and month names
+    /// are in. English by default.
+    fn locale(&self) -> Locale {
+        Locale::default()
+    }
     /// Remembers the result of an aggregate that doesn't depend on the current row, keyed by the
     /// call's identity, for the rows being summarised. The default doesn't remember.
     fn memo(&self, key: usize, compute: &mut dyn FnMut() -> Val) -> Val {
@@ -41,7 +46,7 @@ pub fn evaluate(expr: &Expr, env: &dyn Env) -> Val {
         Expr::Range(_) => Val::Error(ExprError::Value),
         Expr::Neg(a) => wrap(evaluate(a, env).to_number().map(|n| Val::number(-n))),
         Expr::Percent(a) => wrap(evaluate(a, env).to_number().map(|n| Val::number(n / 100.0))),
-        Expr::Binary(op, a, b) => binary(*op, evaluate(a, env), evaluate(b, env)),
+        Expr::Binary(op, a, b) => binary(*op, evaluate(a, env), evaluate(b, env), &env.locale()),
         Expr::Call { func, args, row_independent } => {
             if *row_independent && is_aggregate(*func) {
                 let key = std::ptr::from_ref(expr) as usize;
@@ -65,11 +70,11 @@ fn text(s: String) -> R<Val> {
     if s.len() > MAX_TEXT { Err(ExprError::Value) } else { Ok(Val::Text(s)) }
 }
 
-fn binary(op: Op, a: Val, b: Val) -> Val {
-    wrap(binary_r(op, &a, &b))
+fn binary(op: Op, a: Val, b: Val, locale: &Locale) -> Val {
+    wrap(binary_r(op, &a, &b, locale))
 }
 
-fn binary_r(op: Op, a: &Val, b: &Val) -> R<Val> {
+fn binary_r(op: Op, a: &Val, b: &Val, locale: &Locale) -> R<Val> {
     a.err()?;
     b.err()?;
     let cmp = |want: fn(Ordering) -> bool| compare(a, b).map(|o| Val::Bool(want(o)));
@@ -87,7 +92,7 @@ fn binary_r(op: Op, a: &Val, b: &Val) -> R<Val> {
             if x == 0.0 && y <= 0.0 { Err(if y == 0.0 { ExprError::Num } else { ExprError::Div0 }) } else { Ok(Val::number(x.powf(y))) }
         }
         Op::Concat => {
-            let (x, y) = (a.to_text()?, b.to_text()?);
+            let (x, y) = (locale.text(a)?, locale.text(b)?);
             if x.len().saturating_add(y.len()) > MAX_TEXT {
                 return Err(ExprError::Value);
             }
@@ -155,9 +160,10 @@ fn call(func: Func, args: &[Expr], env: &dyn Env) -> Val {
         | Func::Search
         | Func::Rept
         | Func::Exact
-        | Func::Value => {
+        | Func::Value
+        | Func::Text => {
             let values: Vec<Val> = (0..args.len()).map(arg).collect();
-            text_function(func, &values)
+            text_function(func, &values, &env.locale())
         }
         Func::Today => env.now().map(|n| Val::Date(n.date())).ok_or(ExprError::Na),
         Func::Now => env.now().map(Val::DateTime).ok_or(ExprError::Na),
@@ -187,7 +193,7 @@ fn call(func: Func, args: &[Expr], env: &dyn Env) -> Val {
 fn concat(args: &[Expr], env: &dyn Env) -> R<Val> {
     let mut out = String::new();
     for a in args {
-        out.push_str(&evaluate(a, env).to_text()?);
+        out.push_str(&env.locale().text(&evaluate(a, env))?);
         if out.len() > MAX_TEXT {
             return Err(ExprError::Value);
         }
@@ -274,7 +280,7 @@ fn maths(func: Func, a: &Val, b: &Val) -> R<Val> {
             let y = b.to_number()?;
             if y == 0.0 { Err(ExprError::Div0) } else { Ok(Val::number(x - y * (x / y).floor())) }
         }
-        Func::Power => binary_r(Op::Pow, &Val::Number(x), b),
+        Func::Power => binary_r(Op::Pow, &Val::Number(x), b, &Locale::default()),
         Func::Sqrt => {
             if x < 0.0 {
                 Err(ExprError::Num)
@@ -511,9 +517,12 @@ fn count(v: &Val) -> R<usize> {
     if n < 0.0 { Err(ExprError::Value) } else { Ok(n.min(MAX_TEXT as f64) as usize) }
 }
 
-fn text_function(func: Func, a: &[Val]) -> R<Val> {
+fn text_function(func: Func, a: &[Val], locale: &Locale) -> R<Val> {
     let val = |i: usize| a.get(i).cloned().unwrap_or(Val::Blank);
-    let s = val(0).to_text()?;
+    if func == Func::Text {
+        return crate::text::text(&val(0), &val(1).to_text()?, locale);
+    }
+    let s = locale.text(&val(0))?;
     let chars = || s.chars();
     match func {
         Func::Len => Ok(Val::Number(chars().count() as f64)),
@@ -564,7 +573,7 @@ fn text_function(func: Func, a: &[Val]) -> R<Val> {
         Func::Value => match val(0) {
             Val::Number(n) => Ok(Val::Number(n)),
             Val::Blank => Ok(Val::Number(0.0)),
-            _ => parse_number(&s).map(Val::Number).ok_or(ExprError::Value),
+            _ => locale.parse_number(&s).map(Val::Number).ok_or(ExprError::Value),
         },
         _ => Err(ExprError::Value),
     }
