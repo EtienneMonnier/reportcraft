@@ -142,6 +142,51 @@ impl Designer {
         }
     }
 
+    /// A request from the control channel: an engine command run as an agent would (saved
+    /// connections only, no confirmed external action), or `ui.state`. The window shows the
+    /// result as if the person had done it.
+    pub fn control(&mut self, method: &str, params: &Json) -> Result<Json, String> {
+        if method == "ui.state" {
+            return Ok(self.state());
+        }
+        if find_command(method).is_none() {
+            return Err(format!("unknown method `{method}` (an engine command id, ui.state, ui.screenshot or app.quit)"));
+        }
+        let person = self.session.policy;
+        self.session.policy = reportcraft_engine::Policy::AGENT;
+        let result = self.session.execute(method, params);
+        self.session.policy = person;
+        match result {
+            Ok(v) => {
+                if find_command(method).is_some_and(|c| c.access == Access::Edit) {
+                    self.revision += 1;
+                }
+                self.status = format!("{method} (control channel)");
+                Ok(v)
+            }
+            Err(e) => {
+                self.status = e.to_string();
+                Err(e.to_string())
+            }
+        }
+    }
+
+    /// What the window shows: the file, the data, the selection, the status, the history.
+    pub fn state(&self) -> Json {
+        let (undo, redo) = self.session.history();
+        json!({
+            "title": self.session.report.title,
+            "path": self.path.as_ref().map(|p| p.display().to_string()),
+            "data": self.data,
+            "status": self.status,
+            "selected": self.selected.as_ref().map(|(b, i)| json!({"band": b, "index": i})),
+            "selectedBand": self.selected_band,
+            "zoom": self.zoom,
+            "undo": undo,
+            "redo": redo,
+        })
+    }
+
     /// Opens the built-in sample with its data.
     pub fn open_sample(&mut self, name: &str) {
         if let Some(r) = self.run("file.openSample", json!({"name": name})) {
@@ -378,7 +423,8 @@ impl Designer {
             ui.separator();
             ui.label(if self.data.is_empty() { "no data" } else { &self.data });
             ui.separator();
-            ui.label(&self.status);
+            // Shortened to the window's width (hover shows it all), so it never squeezes the panels.
+            ui.add(egui::Label::new(&self.status).truncate());
         });
     }
 

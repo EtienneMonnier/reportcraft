@@ -9,6 +9,8 @@
 pub mod base64;
 mod cache;
 mod cmd;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod control;
 pub mod query_log;
 pub mod sample;
 

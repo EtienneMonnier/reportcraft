@@ -122,7 +122,9 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Several elements selected at once; align, distribute, copy and paste
   - [ ] Band height dragged on the canvas (today in the band's properties)
   - [ ] Subreports, barcodes and parameters edited in the panel (today shown, edited in the file)
-- [ ] R3.3 Control channel (`--control PORT`, `reportcraft-cli send`) and offscreen snapshot, as in GridCraft
+- [x] R3.3 Control channel (`--control PORT`, `reportcraft-cli send`) and offscreen snapshot, as in GridCraft (#17)
+  - [ ] An MCP server connected to the running window (`reportcraft-cli mcp --connect PORT`), as GridCraft's
+  - [ ] Snapshots without a window (an offscreen renderer for CI)
 - [x] R3.4 Undo/redo for definition edits (#18)
   - [ ] Name each step in the menu ("Undo move element")
   - [ ] Keep the history with the file (today it lasts for the session)
