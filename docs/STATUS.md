@@ -63,7 +63,8 @@
   headers/footers), checked against the loaded data's columns.
 - Formats on fields and totals: number (decimals, grouping), currency (symbol before or after),
   percent, date (locale pattern or `strftime` pattern; ISO, SQL and RFC 3339 inputs), following the
-  report's `locale` (`en`, `en-US`, `en-GB`, `fr`, `fr-CH`, `de`, `de-CH`, `es`, `it`, `nl`, `pt`).
+  report's `locale` (`en`, `en-US`, `en-GB`, `fr`, `fr-CH`, `de`, `de-CH`, `es`, `it`, `nl`, `pt`), day and
+  month names included (`%A %-d %B` writes "mercredi 11 novembre" in `fr`).
 - Typed parameters: text, integer, number, boolean, date, date range; allowed values, several
   values, required, defaults; checked before rendering, listed by `report.parameters`, shown with
   formats (a date range writes both ends).
@@ -113,7 +114,7 @@
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
   edits the session, or acts outside the application).
-- CLI and MCP server reaching every command. 144 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 145 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).

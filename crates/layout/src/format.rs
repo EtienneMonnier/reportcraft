@@ -29,8 +29,9 @@ pub fn write(value: &Value, format: Option<&Format>, locale: &LocaleStyle) -> St
             Value::Text(t) => {
                 let pattern = pattern.as_deref().unwrap_or(locale.date_pattern);
                 // A date range parameter (`from..to`) writes both ends.
-                let range = t.split_once("..").and_then(|(a, b)| Some(format!("{} – {}", date(a, pattern)?, date(b, pattern)?)));
-                range.or_else(|| date(t, pattern)).unwrap_or_else(|| t.clone())
+                let range =
+                    t.split_once("..").and_then(|(a, b)| Some(format!("{} – {}", date(a, pattern, locale.names)?, date(b, pattern, locale.names)?)));
+                range.or_else(|| date(t, pattern, locale.names)).unwrap_or_else(|| t.clone())
             }
             other => other.to_string(),
         },
@@ -74,8 +75,9 @@ fn currency(n: f64, symbol: &str, decimals: u8, symbol_after: bool, locale: &Loc
 }
 
 /// A date or date-time written as text by a data source (ISO 8601, SQL, RFC 3339), rewritten
-/// with `pattern`. `None` when the text isn't a date or the pattern isn't valid.
-fn date(text: &str, pattern: &str) -> Option<String> {
+/// with `pattern`, day and month names in `names`' language. `None` when the text isn't a date
+/// or the pattern isn't valid.
+fn date(text: &str, pattern: &str, names: chrono::Locale) -> Option<String> {
     let items: Vec<Item<'_>> = StrftimeItems::new(pattern).collect();
     if items.iter().any(|i| matches!(i, Item::Error)) {
         return None;
@@ -90,7 +92,8 @@ fn date(text: &str, pattern: &str) -> Option<String> {
         .or_else(|| ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M"].iter().find_map(|f| NaiveDateTime::parse_from_str(t, f).ok()))
         .or_else(|| NaiveDate::parse_from_str(t, "%Y-%m-%d").ok().and_then(|d| d.and_hms_opt(0, 0, 0)))?;
     let mut out = String::new();
-    std::fmt::Write::write_fmt(&mut out, format_args!("{}", parsed.format_with_items(items.into_iter()))).ok()?;
+    // The time is the one written in the data: it is formatted as is, not converted.
+    std::fmt::Write::write_fmt(&mut out, format_args!("{}", parsed.and_utc().format_localized_with_items(items.into_iter(), names))).ok()?;
     Some(out)
 }
 
@@ -140,6 +143,25 @@ mod tests {
         assert_eq!(d("not a date", None, "en"), "not a date");
         assert_eq!(d("2026-10-01..2026-10-31", None, "fr"), "01/10/2026 – 31/10/2026");
         assert_eq!(d("2026-10-01", Some("%Q"), "en"), "2026-10-01", "a bad pattern leaves the text");
+    }
+
+    #[test]
+    fn day_and_month_names_follow_the_report_language() {
+        let d = |pattern: &str, tag: &str| {
+            write(&Value::Text("2026-11-11 15:30:00".into()), Some(&Format::Date { pattern: Some(pattern.into()) }), &locale_or_default(tag))
+        };
+        let long = "%A %-d %B %Y";
+        assert_eq!(d(long, "en"), "Wednesday 11 November 2026");
+        assert_eq!(d(long, "fr"), "mercredi 11 novembre 2026");
+        assert_eq!(d(long, "fr-CH"), "mercredi 11 novembre 2026");
+        assert_eq!(d(long, "de"), "Mittwoch 11 November 2026");
+        assert_eq!(d(long, "es"), "miércoles 11 noviembre 2026");
+        assert_eq!(d(long, "it"), "mercoledì 11 novembre 2026");
+        assert_eq!(d(long, "nl"), "woensdag 11 november 2026");
+        assert_eq!(d(long, "pt"), "quarta 11 novembro 2026");
+        assert_eq!(d("%a %b", "de"), "Mi Nov");
+        assert_eq!(d("%B", "xx-YY"), "November", "an unknown locale writes English");
+        assert_eq!(d("%I:%M %p", "en-US"), "03:30 PM");
     }
 
     #[test]
