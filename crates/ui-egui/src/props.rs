@@ -11,7 +11,7 @@ pub(crate) fn finished(r: &Response) -> bool {
 }
 
 /// The kinds of content the panel can switch between, with a starting value for each.
-const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Chart", "Barcode"];
+const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Chart", "Cross-tab", "Barcode"];
 
 fn kind_of(c: &Content) -> &'static str {
     match c {
@@ -28,6 +28,7 @@ fn kind_of(c: &Content) -> &'static str {
         Content::Barcode { .. } => "Barcode",
         Content::Subreport { .. } => "Subreport",
         Content::Chart { .. } => "Chart",
+        Content::Crosstab { .. } => "Cross-tab",
     }
 }
 
@@ -54,6 +55,13 @@ pub(crate) fn content_of(kind: &str, from: &Content, first_field: &str) -> Conte
         "Page number" => Content::PageNumber,
         "Line" => Content::Line { thickness_mm: 0.3, color: "#000000".into() },
         "Box" => Content::Rect { border_mm: 0.3, border_color: "#000000".into(), fill: None },
+        "Cross-tab" => Content::Crosstab {
+            rows: first_field.to_owned(),
+            columns: first_field.to_owned(),
+            value: field,
+            function: AggregateFn::Sum,
+            totals: true,
+        },
         "Barcode" => Content::Barcode {
             symbology: reportcraft_model::Symbology::Code128,
             field: Some(field.clone()),
@@ -207,6 +215,24 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
                 } else {
                     done |= ui.checkbox(show_text, tl!("show the text")).changed();
                 }
+            });
+        }
+        Content::Crosstab { rows, columns, value, function, totals } => {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("crosstab function").selected_text(crate::canvas::aggregate_name(*function)).show_ui(ui, |ui| {
+                    for f in [AggregateFn::Sum, AggregateFn::Count, AggregateFn::Avg, AggregateFn::Min, AggregateFn::Max] {
+                        done |= ui.selectable_value(function, f, crate::canvas::aggregate_name(f)).clicked();
+                    }
+                });
+                ui.label(tl!("of"));
+                done |= field_combo(ui, "crosstab value", value);
+            });
+            ui.horizontal(|ui| {
+                ui.label(tl!("rows"));
+                done |= field_combo(ui, "crosstab rows", rows);
+                ui.label(tl!("columns"));
+                done |= field_combo(ui, "crosstab columns", columns);
+                done |= ui.checkbox(totals, tl!("totals")).changed();
             });
         }
         Content::Chart { chart, category, value, function, title } => {

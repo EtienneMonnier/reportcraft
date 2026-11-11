@@ -440,6 +440,19 @@ pub enum Content {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
     },
+    /// A cross-tab of the rows the band summarises: one row per value of `rows`, one column per
+    /// value of `columns` (both in ascending order), each cell `value` totalled by `function`,
+    /// with totals on the right and at the bottom. Lines that don't fit the element's height are
+    /// left out, with a last line saying how many.
+    Crosstab {
+        rows: String,
+        columns: String,
+        value: String,
+        #[serde(default = "sum")]
+        function: AggregateFn,
+        #[serde(default = "yes")]
+        totals: bool,
+    },
     /// Another report laid out in this element's place, over a dataset of its own, flowing
     /// across pages below the band's other elements. With `links`, it reads only the rows that
     /// match the current row (an invoice's lines, a customer's rentals).
@@ -467,6 +480,9 @@ pub enum ChartKind {
 fn sum() -> AggregateFn {
     AggregateFn::Sum
 }
+
+/// Most columns a cross-tab draws (the rest are left out).
+pub const MAX_CROSSTAB_COLUMNS: usize = 40;
 
 /// Most categories a chart draws (the rest are left out, with a diagnostic).
 pub const MAX_CHART_CATEGORIES: usize = 60;
@@ -884,6 +900,10 @@ impl Report {
                         out.push(Diagnostic::error(&at, unknown(field)));
                     }
                     Content::Chart { category, value, .. } => out.extend(check_chart(&at, [category, value], columns, repeating)),
+                    Content::Crosstab { rows, columns: across, value, .. } => {
+                        out.extend(check_chart(&at, [rows, across], columns, repeating));
+                        out.extend(check_chart(&at, [value, value], columns, false).into_iter().take(1));
+                    }
                     Content::Field { .. } | Content::Aggregate { .. } | Content::Barcode { field: Some(_), .. } if repeating => {
                         out.push(Diagnostic::warning(&at, "page headers and footers have no current row: this shows nothing"));
                     }

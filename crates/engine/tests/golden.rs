@@ -993,3 +993,32 @@ fn charts() {
     };
     check("charts", &r, &rentals(24), &Params::new());
 }
+
+/// Cross-tabs (R5.1): amount by branch and item, with totals, over every row.
+#[test]
+fn crosstab() {
+    let mut r = Report::new("Cross-tab");
+    r.report_footer = Band {
+        height_mm: 60.0,
+        elements: vec![Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 180.0,
+            height_mm: 55.0,
+            style: TextStyle { size_pt: 9.0, ..TextStyle::default() },
+            content: Content::Crosstab {
+                rows: "branch".into(),
+                columns: "item".into(),
+                value: "amount".into(),
+                function: AggregateFn::Sum,
+                totals: true,
+            },
+            format: Some(Format::Number { decimals: 0, grouping: true }),
+            visible_if: None,
+            color_formula: None,
+            background_formula: None,
+        }],
+        ..Band::default()
+    };
+    check("crosstab", &r, &rentals(24), &Params::new());
+}

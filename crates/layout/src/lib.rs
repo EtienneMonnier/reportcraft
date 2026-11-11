@@ -3,6 +3,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod chart;
+mod crosstab;
 mod format;
 mod formula;
 mod html;
@@ -800,6 +801,11 @@ impl<'a> Writer<'a> {
                 self.barcode(el, scope, left);
                 continue;
             }
+            if let Content::Crosstab { .. } = &el.content {
+                let items = crosstab::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, self.y + el.y_mm), &self.locale);
+                self.page.items.extend(items);
+                continue;
+            }
             if let Content::Chart { .. } = &el.content {
                 let items = chart::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, self.y + el.y_mm), &self.locale);
                 self.page.items.extend(items);
@@ -930,7 +936,8 @@ impl<'a> Writer<'a> {
             | Content::Rect { .. }
             | Content::Barcode { .. }
             | Content::Subreport { .. }
-            | Content::Chart { .. } => none(),
+            | Content::Chart { .. }
+            | Content::Crosstab { .. } => none(),
         }
     }
 
@@ -1372,6 +1379,40 @@ mod tests {
         };
         assert!((angle(&wedges[0]) / std::f64::consts::TAU - 12.5 / 17.5).abs() < 1e-6);
         assert!(items(&r).iter().any(|i| i.text.starts_with("Lyon  71.4 %")), "legend with shares");
+    }
+
+    #[test]
+    fn crosstabs_total_each_cell_line_and_column() {
+        let col = |n: &str, t| reportcraft_core::Column { name: n.into(), field_type: t };
+        let data = RowSet {
+            columns: vec![col("branch", FieldType::Text), col("month", FieldType::Text), col("amount", FieldType::Number)],
+            rows: [("Lyon", "01", 10.0), ("Lyon", "02", 5.0), ("Paris", "01", 2.0), ("Lyon", "01", 1.0)]
+                .iter()
+                .map(|(b, m, a)| vec![Value::Text((*b).into()), Value::Text((*m).into()), Value::Number(*a)])
+                .collect(),
+        };
+        let cross = |height: f64| Element {
+            width_mm: 100.0,
+            height_mm: height,
+            ..el(Content::Crosstab {
+                rows: "branch".into(),
+                columns: "month".into(),
+                value: "amount".into(),
+                function: AggregateFn::Sum,
+                totals: true,
+            })
+        };
+        let mut r = Report::new("t");
+        r.report_footer = Band { height_mm: 40.0, elements: vec![cross(30.0)], ..Band::default() };
+        let doc = layout(&r, &data, &Params::new()).unwrap();
+        let shown: Vec<&str> = doc.pages[0].items.iter().filter(|i| i.shape.is_none()).map(|i| i.text.as_str()).collect();
+        assert_eq!(shown, ["01", "02", "Total", "Lyon", "11", "5", "16", "Paris", "2", "2", "Total", "13", "5", "18"]);
+        let cell = doc.pages[0].items.iter().find(|i| i.text == "11").and_then(|i| i.cell.clone());
+        assert_eq!(cell.map(|c| c.value), Some(Value::Number(11.0)), "cells keep their number for spreadsheets");
+        // Too short for every line: the last one says how many are left out.
+        r.report_footer.elements = vec![cross(17.0)];
+        let short = layout(&r, &data, &Params::new()).unwrap();
+        assert!(short.pages[0].items.iter().any(|i| i.text == "… 2 more"), "{:?}", texts(&short));
     }
 
     #[test]
