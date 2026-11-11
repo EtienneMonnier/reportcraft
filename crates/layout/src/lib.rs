@@ -255,7 +255,13 @@ fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Wr
             }
             w.open.push(OpenGroup { level, start: pos, end });
             if let Some(scope) = order.get(pos..end) {
-                w.band_in(&group.header, Scope::new(scope, Some(row)), &order)?;
+                // What must follow a header kept with it: the inner headers and one detail row.
+                let following = if group.header.keep_with_next {
+                    report.groups.iter().skip(level + 1).map(|g| g.header.height_mm).sum::<f64>() + report.detail.height_mm
+                } else {
+                    0.0
+                };
+                w.band_in_keeping(&group.header, Scope::new(scope, Some(row)), &order, following)?;
             }
         }
         let group = w.open.last().copied().and_then(|g| order.get(g.start..g.end)).unwrap_or(&order);
@@ -542,6 +548,12 @@ impl<'a> Writer<'a> {
     /// Places a band, moving to a new page first when it doesn't fit, unless the page is fresh
     /// (a break wouldn't give it more room, so it is placed rather than looping).
     fn band_in(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
+        self.band_in_keeping(band, scope, order, 0.0)
+    }
+
+    /// `band_in`, moving on first unless `following` millimetres also fit below the band (a band
+    /// kept with the next one). A fresh page never moves on, so this can't loop.
+    fn band_in_keeping(&mut self, band: &Band, scope: Scope<'_>, order: &[usize], following: f64) -> Result<()> {
         if band.is_empty() || !self.band_visible(band, scope) {
             return Ok(());
         }
@@ -551,7 +563,7 @@ impl<'a> Writer<'a> {
         if self.across() {
             // A group band starts a new row of labels and spans the first column.
             self.close_row();
-            if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+            if !self.fresh && self.y + band.height_mm + following > self.body_bottom() + 1e-9 {
                 self.new_page(order)?;
             }
             self.draw(band, scope, true);
@@ -560,7 +572,7 @@ impl<'a> Writer<'a> {
             self.fresh = false;
             return Ok(());
         }
-        if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+        if !self.fresh && self.y + band.height_mm + following > self.body_bottom() + 1e-9 {
             self.next_column_or_page(true, order)?;
         }
         self.place(band, scope, true, order)?;
@@ -1061,21 +1073,29 @@ mod tests {
                 elements: vec![el(Content::Field { field: "branch".into() })],
                 page_break_before_if: None,
                 visible_if: None,
+                keep_with_next: false,
             },
             footer: Band {
                 height_mm: 6.0,
                 elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })],
                 page_break_before_if: None,
                 visible_if: None,
+                keep_with_next: false,
             },
         });
-        r.detail =
-            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })], page_break_before_if: None, visible_if: None };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Field { field: "amount".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
         r.report_footer = Band {
             height_mm: 6.0,
             elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["Lyon", "10", "2.5", "12.5", "Paris", "5", "5", "17.5"]);
@@ -1086,9 +1106,15 @@ mod tests {
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
         r.page.margin_mm = 10.0;
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None };
-        r.detail =
-            Band { height_mm: 15.0, elements: vec![el(Content::Field { field: "branch".into() })], page_break_before_if: None, visible_if: None };
+        r.page_footer =
+            Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None, keep_with_next: false };
+        r.detail = Band {
+            height_mm: 15.0,
+            elements: vec![el(Content::Field { field: "branch".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 2);
         assert!(texts(&doc).contains(&"2 / 2".to_owned()));
@@ -1113,11 +1139,17 @@ mod tests {
                 elements: vec![el(Content::Field { field: "branch".into() })],
                 page_break_before_if: None,
                 visible_if: None,
+                keep_with_next: false,
             },
             footer: Band::default(),
         });
-        r.detail =
-            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })], page_break_before_if: None, visible_if: None };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Field { field: "amount".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
         let doc = layout(&r, &many, &Params::new()).unwrap();
         // Body 50 mm: Lyon (6 + 30 x 5 = 156 mm) can't be kept together, so it flows from page one,
         // repeating its header (8 rows per page after it); Paris starts a new page.
@@ -1130,8 +1162,13 @@ mod tests {
     fn refresh_and_print_times_follow_the_locale() {
         let mut report = Report::new("r");
         report.locale = "fr".into();
-        report.report_header =
-            Band { height_mm: 6.0, elements: vec![el(Content::RefreshedAt), el(Content::PrintedAt)], page_break_before_if: None, visible_if: None };
+        report.report_header = Band {
+            height_mm: 6.0,
+            elements: vec![el(Content::RefreshedAt), el(Content::PrintedAt)],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
         let mut params = Params::new();
         params.insert(REFRESHED_AT.into(), "2026-10-01T14:05:09+02:00".into());
         let doc = layout(&report, &rows(), &params).unwrap();
@@ -1170,18 +1207,25 @@ mod tests {
                 elements: vec![f("UPPER([size]) & \" (\" & COUNT([net]) & \")\"")],
                 page_break_before_if: None,
                 visible_if: None,
+                keep_with_next: false,
             },
-            footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")], page_break_before_if: None, visible_if: None },
+            footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")], page_break_before_if: None, visible_if: None, keep_with_next: false },
         });
         r.sort.push(reportcraft_model::SortKey { field: "net".into(), descending: true });
         let share = Element { format: Some(reportcraft_model::Format::Percent { decimals: 0 }), ..f("[net] / SUM([net])") };
-        r.detail =
-            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "net".into() }), share], page_break_before_if: None, visible_if: None };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Field { field: "net".into() }), share],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
         r.report_footer = Band {
             height_mm: 6.0,
             elements: vec![f("\"Total: \" & SUM([net]) & \" over \" & COUNTIF([size], \"big\") & \" big\"")],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["BIG (2)", "80", "67%", "40", "33%", "120", "SMALL (1)", "20", "100%", "20", "Total: 140 over 2 big"]);
@@ -1212,6 +1256,7 @@ mod tests {
             ],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let mut params = Params::new();
         params.insert("period".into(), "2026-10-01..2026-10-31".into());
@@ -1237,6 +1282,34 @@ mod tests {
         assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap()), ["Total : 1750", "1\u{202f}750,00 €", "mercredi 11 novembre", "25"]);
         r.locale = "en".into();
         assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap())[1], "1,750.00 €");
+    }
+
+    #[test]
+    fn a_header_kept_with_the_next_band_never_ends_a_page() {
+        let mut r = Report::new("t");
+        // Body from 5 to 55 mm. After an 18 mm report header and Lyon (6 + 2 x 5 + 6 = 22 mm),
+        // Paris' header ends at 51 mm and its first row would end at 56 mm: the header fits, its
+        // row doesn't.
+        r.page.height_mm = 60.0;
+        r.page.margin_mm = 5.0;
+        r.report_header = Band { height_mm: 18.0, elements: vec![el(Content::Text { text: "Title".into() })], ..Band::default() };
+        r.groups.push(Group {
+            field: "branch".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
+            header: Band { height_mm: 6.0, elements: vec![el(Content::Field { field: "branch".into() })], ..Band::default() },
+            footer: Band { height_mm: 6.0, elements: vec![el(Content::Text { text: "end".into() })], ..Band::default() },
+        });
+        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })], ..Band::default() };
+        let pages = |r: &Report| -> Vec<Vec<String>> {
+            layout(r, &rows(), &Params::new()).unwrap().pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect()
+        };
+        assert_eq!(pages(&r), [vec!["Title", "Lyon", "10", "2.5", "end", "Paris"], vec!["5", "end"]], "the header alone at the bottom");
+        if let Some(g) = r.groups.first_mut() {
+            g.header.keep_with_next = true;
+        }
+        assert_eq!(pages(&r), [vec!["Title", "Lyon", "10", "2.5", "end"], vec!["Paris", "5", "end"]], "kept with its first row");
     }
 
     #[test]
@@ -1274,15 +1347,22 @@ mod tests {
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
         r.page.columns = 2;
-        r.page_header =
-            Band { height_mm: 5.0, elements: vec![el(Content::Text { text: "Amount".into() })], page_break_before_if: None, visible_if: None };
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None };
+        r.page_header = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Text { text: "Amount".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
+        r.page_footer =
+            Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None, keep_with_next: false };
         let number = reportcraft_model::Format::Number { decimals: 1, grouping: true };
         r.detail = Band {
             height_mm: 15.0,
             elements: vec![Element { format: Some(number.clone()), ..el(Content::Field { field: "amount".into() }) }],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let doc = render_continuous(&r, &rows(), &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
         assert_eq!(doc.pages.len(), 1);
@@ -1336,6 +1416,7 @@ mod tests {
             elements: vec![el(Content::Text { text: "end".into() })],
             visible_if: cond("1/0"),
             page_break_before_if: cond("1/0"),
+            keep_with_next: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();

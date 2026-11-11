@@ -251,6 +251,11 @@ pub struct Band {
     /// has nothing on it yet). An error or a blank never breaks the page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break_before_if: Option<String>,
+    /// Never print this band alone at the bottom of a page or column: when what follows it
+    /// doesn't fit after it, it moves on too. Honoured on group headers, where what follows is
+    /// the inner groups' headers and the first detail row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_with_next: bool,
 }
 
 impl Band {
@@ -963,6 +968,7 @@ mod tests {
             }],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
@@ -999,6 +1005,7 @@ mod tests {
             elements: vec![el(0.0, 20.0, Content::Field { field: "branch".into() })],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         r.detail = Band {
             height_mm: 4.0,
@@ -1009,6 +1016,7 @@ mod tests {
             ],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let found = r.check(Some(&columns));
         let at = |loc: &str, sev| found.iter().any(|d| d.location == loc && d.severity == sev);
@@ -1045,6 +1053,7 @@ mod tests {
             elements: vec![el(Content::Field { field: "name".into() }, Format::Number { decimals: 2, grouping: true })],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         let columns = [Column { name: "name".into(), field_type: FieldType::Text }];
         let found = r.check(Some(&columns));
@@ -1101,6 +1110,7 @@ mod tests {
             elements: vec![el(Content::Line { thickness_mm: 0.3, color: "#000".into() })],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
         assert!(r.validate().is_ok());
         r.detail.elements = vec![el(Content::Line { thickness_mm: 0.3, color: "black".into() })];
@@ -1146,6 +1156,7 @@ mod tests {
                 }],
                 page_break_before_if: None,
                 visible_if: None,
+                keep_with_next: false,
             };
             c
         };
@@ -1163,7 +1174,7 @@ mod tests {
                 background_formula: None,
                 color_formula: None,
             };
-            let b = Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None };
+            let b = Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None, keep_with_next: false };
             if band == "page_header" {
                 r.page_header = b
             } else {
@@ -1234,8 +1245,9 @@ mod tests {
             elements: vec![el("[net] / SUM([gross]) & PARAM(\"who\")"), el("[qty] + [nope]"), el("1 +")],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         };
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el("[price]")], page_break_before_if: None, visible_if: None };
+        r.page_footer = Band { height_mm: 5.0, elements: vec![el("[price]")], page_break_before_if: None, visible_if: None, keep_with_next: false };
         assert!(r.validate().unwrap_err().to_string().contains("detail: formula `1 +`"));
         let columns = [Column { name: "price".into(), field_type: FieldType::Number }, Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
@@ -1271,9 +1283,15 @@ mod tests {
             elements: vec![text.clone()],
             visible_if: Some("[nope] > 0".into()),
             page_break_before_if: Some("[qty] = 0".into()),
+            keep_with_next: false,
         };
-        r.page_footer =
-            Band { height_mm: 5.0, elements: Vec::new(), visible_if: Some("[qty] > 0".into()), page_break_before_if: Some("TRUE".into()) };
+        r.page_footer = Band {
+            height_mm: 5.0,
+            elements: Vec::new(),
+            visible_if: Some("[qty] > 0".into()),
+            page_break_before_if: Some("TRUE".into()),
+            keep_with_next: false,
+        };
         let columns = [Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
         let has = |loc: &str, sev, text: &str| found.iter().any(|d| d.location == loc && d.severity == sev && d.message.contains(text));
@@ -1341,6 +1359,7 @@ mod tests {
                 }],
                 page_break_before_if: None,
                 visible_if: None,
+                keep_with_next: false,
             };
             r
         };

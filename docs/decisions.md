@@ -402,3 +402,13 @@ the style's colour. HTML writes CSS, PDF fills the glyphs and a rectangle behind
 sets the run's colour and shading, XLSX the cell's font and fill. Golden snapshots print colours
 only when set, so reports without them keep their snapshots.
 
+## A band kept with the next one asks for the room of what follows (R2.3)
+
+`keep_with_next` on a band means it is never printed alone at the bottom of a page or column.
+On a group header, "what follows" is known without laying anything out twice: the headers of
+the inner groups and one detail row. Before placing the header, the layout asks for that much
+room below it; when it isn't there, the header moves to the next column or page. A fresh page
+never moves on, so a header whose followers can't fit anywhere is still placed rather than
+looping. It is opt-in so existing reports keep their pages; the designer can turn it on by
+default for new group headers.
+

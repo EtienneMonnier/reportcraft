@@ -60,7 +60,8 @@
   (zxing-cpp), from the encoder and from a rendered page.
 - Labels: `column_order: across` fills a row of columns with detail bands, then the next row;
   group headers and footers start a new row.
-- Group pagination: keep a group on one page when it fits, repeat its header on the pages it
+- Group pagination: a group header kept with its first row (`keep_with_next`: never alone at the
+  bottom of a page or column), keep a group on one page when it fits, repeat its header on the pages it
   continues on, start each group on a new page; never a blank page or an endless break.
 - `report.validate` / `reportcraft-cli validate`: every error and warning with its location (unknown
   fields, text totals, undeclared parameters, elements past the margin or their band, fields in page
@@ -121,7 +122,7 @@
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
   edits the session, or acts outside the application).
-- CLI and MCP server reaching every command. 152 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 153 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).
