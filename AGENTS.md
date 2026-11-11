@@ -82,6 +82,8 @@ checked: it would turn a bug into the reference. New layout features add a refer
 - `cargo run -p reportcraft-cli -- render --sample rentals --out /tmp/rentals.html`
 - `cargo run -p reportcraft-cli -- commands` · `… run --sample rentals --cmd 'data.preview={"limit":3}'`
 - `cargo run -p reportcraft-cli -- mcp` (MCP server on stdio; tools are command ids with `_`).
+- `cargo run -p reportcraft` (the designer); `… -- --screenshot /tmp/designer.ppm` saves the window
+  and quits, to check the UI without looking at the screen.
 
 ## CI workflows
 `.github/workflows/` only calls the shared workflows of `storytold/craft-common-actions` at

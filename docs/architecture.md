@@ -24,7 +24,8 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L4 | `pdf` | PDF writer over `Document` through craft-libs' `craft-pdf` (Krilla): embedded font subsets, shaped text, vector shapes and barcodes |
 | L5 | `engine` | `Session`, the command registry (`cmd.rs`), built-in samples |
 | L6 | `mcp` | MCP server over stdio (hand-written JSON-RPC), one tool per command |
-| L6 | `ui-egui` | _(planned, R3.1)_ the designer |
+| L6 | `ui-egui` | The designer: banded canvas, live preview of the rendered pages, menus; every action an engine command; file dialogs through the `Dialogs` trait |
+| L7 | `apps/reportcraft` | The desktop app (eframe, wgpu, the suite's egui fork; rfd dialogs; `--screenshot FILE.ppm` for checks) |
 | L7 | `apps/reportcraft-cli` | `commands`, `render`, `run`, `sample`, `mcp`, `version` |
 | — | `xtask` | `ci`, `layers` |
 

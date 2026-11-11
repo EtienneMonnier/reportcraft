@@ -110,7 +110,13 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Check formula types (text where a number is needed) from the data's column types
 
 ## R3 — Designer (owner: maintainers)
-- [ ] R3.1 `ui-egui` crate (L6) on craft-ui and the suite's egui fork; banded canvas with live preview
+- [x] R3.1 `ui-egui` crate (L6) on craft-ui and the suite's egui fork; banded canvas with live preview (#15)
+  - [ ] craft-ui's controls, icons, themes and panes (the first version uses plain egui on the suite's fork), and the suite's menu bar (craft-menu)
+  - [ ] Bold and the report's fonts in the preview (egui's default fonts have no bold face; craft-fonts)
+  - [ ] Render the preview off the UI thread for large data, with progress and Stop (R1.9)
+  - [ ] Parameters panel: ask for the report's parameters before the preview
+  - [ ] Saving and opening connections from the designer (today: `reportcraft-cli connections save`)
+  - [ ] Packaging: desktop entry, icon, RPM (as the suite's apps)
 - [ ] R3.2 Field list, drag-and-drop of fields into bands, property panel
 - [ ] R3.3 Control channel (`--control PORT`, `reportcraft-cli send`) and offscreen snapshot, as in GridCraft
 - [ ] R3.4 Undo/redo for definition edits
