@@ -80,11 +80,18 @@ pub struct Session {
     cancel: Cancel,
     /// What the session may do beyond its own state (an MCP server narrows it).
     pub policy: Policy,
+    /// Earlier report definitions, most recent last (`edit.undo`), and the ones undone
+    /// (`edit.redo`).
+    pub(crate) undo: Vec<Report>,
+    pub(crate) redo: Vec<Report>,
     /// Saved connections, opened on first use (the user's settings and keychain unless a test
     /// gave others). Shared by clones, so a restored session keeps them.
     #[cfg(not(target_arch = "wasm32"))]
     connections: Arc<std::sync::Mutex<Option<reportcraft_connections::Connections>>>,
 }
+
+/// Report definitions kept for undo.
+pub const MAX_UNDO: usize = 100;
 
 impl Default for Session {
     fn default() -> Self {
@@ -97,6 +104,8 @@ impl Default for Session {
             query_log: QueryLog::default(),
             cancel: Cancel::default(),
             policy: Policy::PERSON,
+            undo: Vec::new(),
+            redo: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             connections: Arc::default(),
         }
@@ -112,14 +121,27 @@ impl Session {
         let result = match catch_unwind(AssertUnwindSafe(|| (spec.run)(self, params))) {
             Ok(result) => result,
             Err(_) => {
-                *self = before;
+                *self = before.clone();
                 log::error!("command `{id}` panicked; session restored");
                 Err(EngineError::Internal(format!("command `{id}` failed unexpectedly")))
             }
         };
         // A stop request ends with the command it was meant for.
         self.cancel.reset();
+        // Any command that changed the report can be undone (undo and redo keep their own lists).
+        if result.is_ok() && !matches!(id, "edit.undo" | "edit.redo") && self.report != before.report {
+            if self.undo.len() == MAX_UNDO {
+                self.undo.remove(0);
+            }
+            self.undo.push(before.report);
+            self.redo.clear();
+        }
         result
+    }
+
+    /// How many edits can be undone and redone.
+    pub fn history(&self) -> (usize, usize) {
+        (self.undo.len(), self.redo.len())
     }
 
     /// A handle another thread uses to stop the command running now (`Cancel::cancel`). The
@@ -576,5 +598,38 @@ mod tests {
             assert!(s.execute(id, &params).is_err(), "{id} {params}");
             assert_eq!(s.report, before, "{id} left the report as it was");
         }
+    }
+
+    #[test]
+    fn report_edits_are_undone_and_redone() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let sample = s.report.clone();
+        s.execute("report.setProperties", &json!({"title": "One"})).unwrap();
+        s.execute("report.setProperties", &json!({"title": "Two"})).unwrap();
+        // Read-only commands, loads that leave the report alone and refused edits aren't history.
+        s.execute("report.validate", &json!({})).unwrap();
+        s.execute("data.loadCsv", &json!({"csv": "branch,amount\nLyon,1\n"})).unwrap();
+        let _ = s.execute("report.setBand", &json!({"band": "detail", "height_mm": 9000}));
+        assert_eq!(s.history(), (3, 0), "the sample, One, Two");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.report.title, "One");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.report.title, "Rentals by branch");
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.report.title, "One");
+        // A new edit forgets what was undone.
+        s.execute("report.setProperties", &json!({"title": "Three"})).unwrap();
+        assert!(s.execute("edit.redo", &json!({})).unwrap_err().to_string().contains("nothing to redo"));
+        for _ in 0..3 {
+            s.execute("edit.undo", &json!({})).unwrap();
+        }
+        assert_ne!(s.report, sample, "back before the sample: the untitled report");
+        assert!(s.execute("edit.undo", &json!({})).unwrap_err().to_string().contains("nothing to undo"));
+        // The history is bounded.
+        for i in 0..(MAX_UNDO + 20) {
+            s.execute("report.setProperties", &json!({"title": format!("t{i}")})).unwrap();
+        }
+        assert_eq!(s.history().0, MAX_UNDO);
     }
 }

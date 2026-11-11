@@ -454,3 +454,13 @@ grid. The properties panel edits a working copy and sends one command when an ed
 (focus left, a drag stopped, a choice made), not one per frame, so the preview renders once per
 edit. Undo (R3.4) will record these commands.
 
+## Undo keeps whole report definitions, recorded by the engine (R3.4)
+
+Undo lives in the session, not in the designer: after any command that succeeded and left the
+report different, the engine keeps the report as it was (at most 100, the oldest dropped), and
+`edit.undo` / `edit.redo` swap it back. A report definition is small (a few kilobytes even with
+subreports), so whole copies are simpler and safer than inverse operations, and every way of
+changing the report (designer, CLI `run`, MCP) is undoable alike, including `report.load`. Data
+loads, read-only commands and refused edits don't touch the history, and a new edit clears what
+was undone. Text boxes keep their own undo while they have the keyboard.
+

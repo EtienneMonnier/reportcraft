@@ -220,3 +220,29 @@ fn a_field_dragged_with_the_mouse_lands_in_the_band_under_it() {
     let x1 = d.session().report.detail.elements.last().map_or(0.0, |e| e.x_mm);
     assert!((x1 - x0 - 6.0).abs() < 0.6, "moved from {x0} to {x1} mm");
 }
+
+#[test]
+fn undo_and_redo_from_the_menu_and_the_keyboard() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    let elements = d.session().report.detail.elements.len();
+    d.insert("Text");
+    assert_eq!(d.session().report.detail.elements.len(), elements + 1);
+    d.undo();
+    assert_eq!(d.session().report.detail.elements.len(), elements);
+    d.redo();
+    assert_eq!(d.session().report.detail.elements.len(), elements + 1);
+    // Ctrl+Z through the window's input.
+    let ctx = egui::Context::default();
+    frame_with(&ctx, &mut d, vec![]);
+    let key = |modifiers| egui::Event::Key { key: egui::Key::Z, physical_key: None, pressed: true, repeat: false, modifiers };
+    frame_with(&ctx, &mut d, vec![key(egui::Modifiers::COMMAND)]);
+    assert_eq!(d.session().report.detail.elements.len(), elements, "{}", d.status());
+    frame_with(&ctx, &mut d, vec![key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)]);
+    assert_eq!(d.session().report.detail.elements.len(), elements + 1);
+    // Undo past the start says so.
+    for _ in 0..5 {
+        d.undo();
+    }
+    assert!(d.status().contains("nothing to undo"), "{}", d.status());
+}
