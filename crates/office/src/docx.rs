@@ -3,11 +3,12 @@
 //! or centred, as the item is aligned). The result stays editable text in Word or WordCraft.
 
 use docx_rs::{
-    AlignmentType, Docx, LineSpacing, LineSpacingType, PageMargin, Paragraph, Run, RunFonts, Shading, ShdType, Tab, TabLeaderType, TabValueType,
+    AlignmentType, Docx, LineSpacing, LineSpacingType, PageMargin, Paragraph, Pic, RelativeFromHType, RelativeFromVType, Run, RunFonts, Tab,
+    TabLeaderType, TabValueType,
 };
 use reportcraft_core::{Cancel, Error, Result};
-use reportcraft_layout::{Document, Item};
-use reportcraft_model::Align;
+use reportcraft_layout::{Document, Item, Shape};
+use reportcraft_model::{Align, Color};
 
 use crate::{Output, page_lines, skipped_warning};
 
@@ -50,8 +51,9 @@ pub fn to_docx(doc: &Document, cancel: &Cancel) -> Result<Output> {
     let mut skipped = 0;
     for (n, page) in doc.pages.iter().enumerate() {
         cancel.check("the DOCX export")?;
-        let (lines, page_skipped) = page_lines(&page.items);
-        skipped += page_skipped;
+        let (lines, _) = page_lines(&page.items);
+        let (pictures, undrawn) = page_pictures(&page.items, n);
+        skipped += undrawn;
         let mut bottom = margin;
         let mut paragraphs: Vec<Paragraph> = lines
             .iter()
@@ -70,12 +72,20 @@ pub fn to_docx(doc: &Document, cancel: &Cancel) -> Result<Output> {
         if paragraphs.is_empty() {
             paragraphs.push(Paragraph::new().line_spacing(exact(1.0)));
         }
+        // The page's pictures hang from its first paragraph, placed from the page's corner.
+        if let Some(first) = paragraphs.first_mut() {
+            for pic in pictures {
+                *first = std::mem::take(first).add_run(Run::new().add_image(pic));
+            }
+        }
         for (i, p) in paragraphs.into_iter().enumerate() {
             docx = docx.add_paragraph(if i == 0 && n > 0 { p.page_break_before(true) } else { p });
         }
     }
+    let mut xml = docx.build();
+    xml.document = behind_text(&xml.document);
     let mut buffer = std::io::Cursor::new(Vec::new());
-    docx.build().pack(&mut buffer).map_err(|e| Error::Invalid(format!("DOCX: {e}")))?;
+    xml.pack(&mut buffer).map_err(|e| Error::Invalid(format!("DOCX: {e}")))?;
     Ok(Output { bytes: buffer.into_inner(), warnings: skipped_warning(skipped, "DOCX") })
 }
 
@@ -124,10 +134,132 @@ fn line_paragraph(line: &[&Item], margin: f64, height_mm: f64) -> Paragraph {
         if let Some(c) = it.style.color {
             run = run.color(c.hex());
         }
-        if let Some(b) = it.style.background {
-            run = run.shading(Shading::new().shd_type(ShdType::Clear).color("auto").fill(b.hex()));
-        }
+        // The background is a picture behind the whole box (see `page_pictures`).
         p = p.add_run(run);
     }
     p
+}
+
+/// English Metric Units per millimetre (DrawingML positions and sizes).
+const EMU_PER_MM: f64 = 36_000.0;
+
+fn emu(mm: f64) -> i32 {
+    (mm * EMU_PER_MM).round().clamp(0.0, f64::from(i32::MAX)) as i32
+}
+
+/// A picture placed at `x`, `y` (millimetres from the page's corner), `w` × `h` millimetres.
+fn placed(png: Vec<u8>, px: (u32, u32), x: f64, y: f64, w: f64, h: f64, id: String) -> Pic {
+    let (w, h) = (w.max(0.05), h.max(0.05));
+    Pic::new_with_dimensions(png, px.0, px.1)
+        .id(id)
+        .size(u32::try_from(emu(w)).unwrap_or(1), u32::try_from(emu(h)).unwrap_or(1))
+        .floating()
+        .overlapping()
+        .relative_from_h(RelativeFromHType::Page)
+        .relative_from_v(RelativeFromVType::Page)
+        .offset_x(emu(x))
+        .offset_y(emu(y))
+}
+
+/// The pictures drawn behind a page's text: each element's background, lines, boxes and
+/// barcodes, in the page's order. Also how many shapes couldn't be drawn (diagonal lines).
+fn page_pictures(items: &[Item], page: usize) -> (Vec<Pic>, usize) {
+    let mut pics = Vec::new();
+    let mut undrawn = 0;
+    let add = |png: Vec<u8>, px: (u32, u32), x: f64, y: f64, w: f64, h: f64, pics: &mut Vec<Pic>| {
+        let id = format!("rIdReportCraft{page}x{}", pics.len());
+        pics.push(placed(png, px, x, y, w, h, id));
+    };
+    let solid = |c: Color| crate::png::solid(c.0, c.1, c.2);
+    for it in items {
+        let (x, y, w, h) = (it.x_mm, it.y_mm, it.width_mm, it.height_mm);
+        if let Some(b) = it.style.background
+            && it.shape.is_none()
+        {
+            add(solid(b), (1, 1), x, y, w, h, &mut pics);
+        }
+        match &it.shape {
+            None => {}
+            Some(Shape::Line { thickness_mm, color }) => match Color::parse(color) {
+                Some(c) if h.abs() < 1e-9 => add(solid(c), (1, 1), x, y - thickness_mm / 2.0, w, *thickness_mm, &mut pics),
+                Some(c) if w.abs() < 1e-9 => add(solid(c), (1, 1), x - thickness_mm / 2.0, y, *thickness_mm, h, &mut pics),
+                _ => undrawn += 1,
+            },
+            Some(Shape::Rect { border_mm, border_color, fill }) => {
+                if let Some(f) = fill.as_deref().and_then(Color::parse) {
+                    add(solid(f), (1, 1), x, y, w, h, &mut pics);
+                }
+                match Color::parse(border_color) {
+                    Some(c) if *border_mm > 0.0 => {
+                        let t = *border_mm;
+                        add(solid(c), (1, 1), x - t / 2.0, y - t / 2.0, w + t, t, &mut pics);
+                        add(solid(c), (1, 1), x - t / 2.0, y + h - t / 2.0, w + t, t, &mut pics);
+                        add(solid(c), (1, 1), x - t / 2.0, y - t / 2.0, t, h + t, &mut pics);
+                        add(solid(c), (1, 1), x + w - t / 2.0, y - t / 2.0, t, h + t, &mut pics);
+                    }
+                    Some(_) => {}
+                    None => undrawn += 1,
+                }
+            }
+            Some(Shape::Barcode { columns, rows, quiet, modules }) => match barcode_picture(*columns, *rows, *quiet, modules, w, h) {
+                Some(b) => add(b.png, b.pixels, x, y, b.width_mm, b.height_mm, &mut pics),
+                None => undrawn += 1,
+            },
+        }
+    }
+    (pics, undrawn)
+}
+
+/// A barcode as a black-and-white picture with its quiet zone, and the size it takes in the
+/// box (a matrix code is square, as large as the box allows), as the PDF writer draws it.
+/// Several pixels per module, so a viewer's smoothing never blurs a module away.
+struct BarcodePicture {
+    png: Vec<u8>,
+    pixels: (u32, u32),
+    width_mm: f64,
+    height_mm: f64,
+}
+
+fn barcode_picture(columns: usize, rows: usize, quiet: usize, modules: &str, w: f64, h: f64) -> Option<BarcodePicture> {
+    if columns == 0 || rows == 0 || modules.len() != columns.checked_mul(rows)? || !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let linear = rows == 1;
+    let span_x = columns + 2 * quiet;
+    let span_y = if linear { 1 } else { rows + 2 * quiet };
+    let scale = (1_200 / span_x.max(span_y)).clamp(1, 8);
+    let (px_w, px_h) = (u32::try_from(span_x * scale).ok()?, if linear { 1 } else { u32::try_from(span_y * scale).ok()? });
+    let bytes = modules.as_bytes();
+    let png = crate::png::bits(px_w, px_h, |x, y| {
+        let mx = (x as usize / scale).checked_sub(quiet);
+        let my = if linear { Some(0) } else { (y as usize / scale).checked_sub(quiet) };
+        match (mx, my) {
+            (Some(mx), Some(my)) if mx < columns && my < rows => bytes.get(my * columns + mx) == Some(&b'1'),
+            _ => false,
+        }
+    });
+    let (width_mm, height_mm) = if linear { (w, h) } else { (w.min(h), w.min(h)) };
+    Some(BarcodePicture { png, pixels: (px_w, px_h), width_mm, height_mm })
+}
+
+/// The page pictures go behind the text and don't push it aside, and every drawing gets its own
+/// id (docx-rs writes `behindDoc="0"`, square wrapping and `id="1"` for each).
+fn behind_text(document: &[u8]) -> Vec<u8> {
+    let xml = String::from_utf8_lossy(document)
+        .replace(r#"behindDoc="0""#, r#"behindDoc="1""#)
+        .replace(r#"<wp:wrapSquare wrapText="bothSides" />"#, "<wp:wrapNone />");
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml.as_str();
+    let mut next = 1;
+    while let Some(at) = rest.find(r#"<wp:docPr id=""#) {
+        let (before, after) = rest.split_at(at);
+        out.push_str(before);
+        let skip = after.find('"').map_or(0, |q| q + 1);
+        let close = after.get(skip..).and_then(|a| a.find('"')).map_or(skip, |c| skip + c);
+        out.push_str(&format!(r#"<wp:docPr id="{next}"#));
+        next += 1;
+        rest = after.get(close..).unwrap_or_default();
+    }
+    out.push_str(rest);
+    out.into_bytes()
 }
