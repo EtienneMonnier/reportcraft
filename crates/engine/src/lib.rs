@@ -54,6 +54,10 @@ pub struct Session {
     pub query_log: QueryLog,
     /// Raised through `cancel_handle` to stop the running command.
     cancel: Cancel,
+    /// Saved connections, opened on first use (the user's settings and keychain unless a test
+    /// gave others). Shared by clones, so a restored session keeps them.
+    #[cfg(not(target_arch = "wasm32"))]
+    connections: Arc<std::sync::Mutex<Option<reportcraft_connections::Connections>>>,
 }
 
 impl Default for Session {
@@ -66,6 +70,8 @@ impl Default for Session {
             cache: QueryCache::default(),
             query_log: QueryLog::default(),
             cancel: Cancel::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            connections: Arc::default(),
         }
     }
 }
@@ -93,6 +99,24 @@ impl Session {
     /// command fails with a `cancelled` error and, like any failed command, leaves the session as
     /// it was. The request is dropped when that command ends; raising it while no command runs
     /// stops the next one, so callers raise it only while a command is running.
+    /// A session that uses these saved connections instead of the user's (tests, embedding).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_saved_connections(connections: reportcraft_connections::Connections) -> Self {
+        Self { connections: Arc::new(std::sync::Mutex::new(Some(connections))), ..Self::default() }
+    }
+
+    /// Runs `f` on the saved connections, opening the user's on first use.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_connections<T>(
+        &self,
+        f: impl FnOnce(&mut reportcraft_connections::Connections) -> reportcraft_core::Result<T>,
+    ) -> reportcraft_core::Result<T> {
+        let mut guard = self.connections.lock().map_err(|_| Error::Io("saved connections are unavailable".into()))?;
+        // The engine's own tests never touch the user's settings or keychain.
+        let open = if cfg!(test) { reportcraft_connections::Connections::in_memory } else { reportcraft_connections::Connections::open_user };
+        f(guard.get_or_insert_with(open))
+    }
+
     pub fn cancel_handle(&self) -> Cancel {
         self.cancel.clone()
     }
@@ -404,5 +428,47 @@ mod tests {
         }
         assert!(s.execute("file.print", &json!({"pages": "2-"})).unwrap_err().to_string().contains("none of the 1"));
         assert!(s.execute("file.printers", &json!({})).unwrap()["printers"].is_array());
+    }
+
+    #[test]
+    fn saved_connections_are_used_by_name_and_keep_passwords_out_of_results() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-saved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("rentals.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch("CREATE TABLE rentals (branch TEXT, amount REAL); INSERT INTO rentals VALUES ('Lyon', 10), ('Paris', 5);").unwrap();
+        drop(conn);
+        let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
+        let save = json!({"name": "local", "kind": "sqlite", "path": db.display().to_string()});
+        let proposed = s.execute("data.saveConnection", &save).unwrap();
+        assert_eq!(proposed["saved"], json!(false), "nothing changes without confirm");
+        assert_eq!(s.execute("data.connections", &json!({})).unwrap()["connections"], json!([]));
+        let mut confirmed = save.clone();
+        confirmed["confirm"] = json!(true);
+        assert_eq!(s.execute("data.saveConnection", &confirmed).unwrap()["saved"], json!(true));
+        let pg = json!({"name": "odoo", "kind": "postgres", "host": "127.0.0.1", "port": 1, "user": "rc", "database": "x", "password": "hunter2", "confirm": true});
+        s.execute("data.saveConnection", &pg).unwrap();
+        let listed = s.execute("data.connections", &json!({})).unwrap();
+        assert_eq!(listed["connections"][1]["target"], json!("rc@127.0.0.1:1/x"));
+        assert_eq!(listed["connections"][1]["password"], json!(true));
+        assert!(!listed.to_string().contains("hunter2"), "{listed}");
+
+        let loaded = s.execute("data.loadSqlite", &json!({"saved": "local", "query": "SELECT * FROM rentals ORDER BY branch"})).unwrap();
+        assert_eq!(loaded["rows"], json!(2));
+        assert_eq!(s.execute("data.describeSqlite", &json!({"saved": "local"})).unwrap()["tables"][0]["name"], json!("rentals"));
+        assert_eq!(s.execute("data.testConnection", &json!({"name": "local"})).unwrap()["tables"], json!(1));
+        let wrong = s.execute("data.loadSqlite", &json!({"saved": "odoo", "query": "SELECT 1"})).unwrap_err().to_string();
+        assert!(wrong.contains("not SQLite"), "{wrong}");
+        // Nothing listens on port 1: the error and the query log name the server, never the password.
+        let failed = s.execute("data.loadPostgres", &json!({"saved": "odoo", "query": "SELECT 1", "timeoutSeconds": 5})).unwrap_err().to_string();
+        let log = s.execute("data.queryLog", &json!({})).unwrap().to_string();
+        assert!(!failed.contains("hunter2") && !log.contains("hunter2"), "{failed} {log}");
+        assert!(log.contains("rc@127.0.0.1:1/x"), "{log}");
+
+        assert_eq!(s.execute("data.deleteConnection", &json!({"name": "odoo"})).unwrap()["deleted"], json!(false));
+        assert_eq!(s.execute("data.deleteConnection", &json!({"name": "odoo", "confirm": true})).unwrap()["deleted"], json!(true));
+        assert!(s.execute("data.loadPostgres", &json!({"saved": "odoo", "query": "SELECT 1"})).unwrap_err().to_string().contains("saved: local"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -17,12 +17,16 @@ Anything marked **decision** waits for a maintainer.
 
 ## R1 — Data connections (owner: open)
 - [x] R1.1 SQLite source (read-only), with a query and typed columns (#1)
-  - [ ] Pick the database file through a named connection once R1.3 lands, so an MCP agent can only open files the user chose (specification §11)
+  - [x] Pick the database file through a named connection (R1.3: `"saved": NAME`)
+  - [ ] Restrict MCP agents to saved connections (specification §11; see R1.3)
 - [x] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases (#2)
   - [ ] TLS connections (`sslmode=require`): only plain connections today — **decision**: rustls-based connector
   - [ ] Read `~/.pgpass` / `PGPASSFILE` as libpq does (PGPASSWORD works today)
   - [ ] Run the live PostgreSQL tests in CI (needs a PostgreSQL service in craft-common-actions or a local job)
-- [ ] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports
+- [x] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports (#3)
+  - [ ] Let an MCP session use saved connections only (no raw file path or connection string), as §11 asks
+  - [ ] Saved connections in report files by name (`"connection": "odoo-prod"`), so a report knows where its data lives
+  - [ ] A connections panel in the designer (R3), with a password field that never shows the kept one
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
 - [x] R1.5 Report parameters passed to queries as bound parameters (never string-spliced) (#5)
 - [x] R1.6 Query log (what ran, when, how many rows) (#6)

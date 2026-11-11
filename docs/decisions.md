@@ -334,3 +334,23 @@ agent proposes a print that a person confirms (§11, §18.3). The CLI's `print` 
 job come from the system, so printing is native-only; the browser build answers that it isn't
 available.
 
+## Saved connections: definitions in settings, passwords in the keychain (R1.3)
+
+A connection is saved by name with what it takes to reach the database, nothing more: a SQLite
+file, or a PostgreSQL host, port, user and database. Definitions live in the suite's settings
+file through `craft-settings` (the folder the suite's rules choose, `REPORTCRAFT_CONFIG_DIR` to
+override), so they are hand-editable TOML that survives updates. Passwords go to the system
+keychain through `keyring` (MIT/Apache-2.0, crates.io; craft-libs has no keychain crate yet). Its
+default backends are pure Rust (Secret Service over zbus, the macOS Keychain, the Windows
+Credential Manager), so CI needs no system library. The keychain sits behind a small
+`SecretStore` trait so tests use memory and never touch a user's keychain. The PostgreSQL
+connection string is built only to hand to the driver; results, errors and the query log show
+`user@host:port/database`.
+
+The CLI reads a password from stdin (`--password-stdin`), never from its arguments, which end up
+in shell history and process lists. Saving and deleting change the user's settings and keychain,
+so, like printing, they do nothing without `"confirm": true` and otherwise say what they would do:
+an MCP agent can propose a connection that a person confirms. Letting an MCP session use *only*
+saved connections (no raw paths or connection strings) is the next step for §11 and is listed in
+the roadmap. The connections crate is native-only (L3); the browser build lists none.
+

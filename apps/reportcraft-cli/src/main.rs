@@ -22,6 +22,11 @@ reportcraft-cli <subcommand>
   print <report.json|--sample NAME> [data options as for render] [--param NAME=VALUE]... [--printer NAME] [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]
                                             print through the system spooler; --dry-run only shows the job
   printers                                  the system's printers
+  connections [list]                        saved connections (definitions in the settings file, passwords in the keychain)
+  connections save NAME (--sqlite FILE | --host HOST [--port N] --user USER --database DB [--password-stdin]) [--description TEXT]
+  connections delete NAME | connections test NAME
+  (--connection NAME --query SQL loads from a saved connection in render, validate and print;
+   schema takes --connection NAME too)
   schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
                                             tables, columns and keys; rows with --preview
   (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
@@ -49,6 +54,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "render" => render(rest),
         "print" => print(rest),
         "printers" => printers(),
+        "connections" => connections(rest),
         "run" => run_commands(rest),
         "schema" => schema(rest),
         "validate" => validate(rest),
@@ -107,6 +113,7 @@ fn load_inputs<'a>(
     let (mut timeout, mut max_memory) = (None, None);
     let number = |v: &str, flag: &str| v.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{flag}` expects a positive whole number"));
     let (mut sqlite, mut postgres, mut query, mut show_log) = (None, None, None, false);
+    let mut saved: Option<String> = None;
     let mut sub_queries: Vec<(String, String)> = Vec::new();
     let named =
         |v: &str, flag: &str| v.split_once('=').map(|(n, x)| (n.to_owned(), x.to_owned())).ok_or_else(|| format!("`{flag}` expects NAME=VALUE"));
@@ -134,6 +141,7 @@ fn load_inputs<'a>(
             }
             "--sqlite" => sqlite = Some(flag_value(&mut it, a)?.to_owned()),
             "--postgres" => postgres = Some(flag_value(&mut it, a)?.to_owned()),
+            "--connection" => saved = Some(flag_value(&mut it, a)?.to_owned()),
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
             "--query-log" => show_log = true,
             "--sub" => {
@@ -157,6 +165,32 @@ fn load_inputs<'a>(
         }
         p
     };
+    // A saved connection stands for `--sqlite` or `--postgres`, by its kind.
+    if let Some(name) = &saved {
+        if sqlite.is_some() || postgres.is_some() {
+            return Err("use `--connection NAME` instead of `--sqlite` or `--postgres`, not with them".to_owned());
+        }
+        if query.is_none() {
+            return Err("`--connection` needs `--query SQL`".to_owned());
+        }
+        let (command, _) = saved_commands(&mut s, name)?;
+        let database = (command, ("saved", name.clone()));
+        let mut loaded = query.map_or(Ok(()), |q| exec(&mut s, command, load(database.1.clone(), q)).map(drop));
+        for (name, sql) in std::mem::take(&mut sub_queries) {
+            if loaded.is_err() {
+                break;
+            }
+            let mut p = load(database.1.clone(), sql);
+            if let Some(map) = p.as_object_mut() {
+                map.insert("dataset".to_owned(), Json::String(name));
+            }
+            loaded = exec(&mut s, command, p).map(drop);
+        }
+        if show_log {
+            eprint!("{}", query_log_text(&exec(&mut s, "data.queryLog", json!({}))?));
+        }
+        return loaded.map(|()| (s, params, timeout));
+    }
     let database = match (&sqlite, &postgres) {
         (Some(path), None) => Some(("data.loadSqlite", ("path", path.clone()))),
         (None, Some(connection)) => Some(("data.loadPostgres", ("connection", connection.clone()))),
@@ -167,7 +201,7 @@ fn load_inputs<'a>(
         (None, Some(connection), Some(query)) => exec(&mut s, "data.loadPostgres", load(("connection", connection), query)).map(drop),
         (None, None, None) => Ok(()),
         (Some(_), Some(_), _) => Err("use either `--sqlite` or `--postgres`".to_owned()),
-        _ => Err("`--query` goes with `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
+        _ => Err("`--query` goes with `--sqlite FILE`, `--postgres CONNECTION` or `--connection NAME`".to_owned()),
     };
     for (name, sql) in sub_queries {
         if loaded.is_err() {
@@ -246,6 +280,97 @@ fn render(args: &[String]) -> Result<(), String> {
     match out {
         Some(path) => std::fs::write(&path, body).map_err(|e| format!("{path}: {e}")),
         None => std::io::stdout().write_all(&body).map_err(|e| e.to_string()),
+    }
+}
+
+/// The load command and kind of a saved connection.
+fn saved_commands(s: &mut Session, name: &str) -> Result<(&'static str, &'static str), String> {
+    let list = exec(s, "data.connections", json!({}))?;
+    let kind = list["connections"].as_array().into_iter().flatten().find(|c| c["name"] == json!(name)).and_then(|c| c["kind"].as_str());
+    match kind {
+        Some("sqlite") => Ok(("data.loadSqlite", "sqlite")),
+        Some("postgres") => Ok(("data.loadPostgres", "postgres")),
+        _ => Err(format!("no saved connection `{name}` (see `reportcraft-cli connections`)")),
+    }
+}
+
+/// `connections [list]`, `connections save NAME …`, `connections delete NAME`, `connections test NAME`.
+fn connections(args: &[String]) -> Result<(), String> {
+    let mut s = Session::default();
+    let (action, rest) = args.split_first().map_or(("list", &[][..]), |(a, r)| (a.as_str(), r));
+    match action {
+        "list" => {
+            let r = exec(&mut s, "data.connections", json!({}))?;
+            let list = r["connections"].as_array().cloned().unwrap_or_default();
+            if list.is_empty() {
+                println!("no saved connection");
+            }
+            for c in list {
+                let key = if c["password"] == json!(true) { "  (password in the keychain)" } else { "" };
+                println!(
+                    "{:<16} {:<9} {}{key}",
+                    c["name"].as_str().unwrap_or(""),
+                    c["kind"].as_str().unwrap_or(""),
+                    c["target"].as_str().unwrap_or("")
+                );
+            }
+            if let Some(path) = r["settings"].as_str() {
+                println!("settings: {path}");
+            }
+            Ok(())
+        }
+        "save" => {
+            let (name, flags) = rest.split_first().ok_or("`connections save` needs a NAME")?;
+            let mut p = json!({"name": name, "confirm": true});
+            let mut it = flags.iter();
+            while let Some(a) = it.next() {
+                let key = match a.as_str() {
+                    "--sqlite" => {
+                        p["kind"] = json!("sqlite");
+                        "path"
+                    }
+                    "--host" | "--user" | "--database" => {
+                        p["kind"] = json!("postgres");
+                        a.trim_start_matches("--")
+                    }
+                    "--description" => "description",
+                    "--port" => {
+                        let port = flag_value(&mut it, a)?.parse::<u16>().map_err(|_| "`--port` expects a port number")?;
+                        p["port"] = json!(port);
+                        continue;
+                    }
+                    "--password-stdin" => {
+                        // Read from stdin, never from the command line (shell history, process list).
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+                        p["password"] = json!(line.trim_end_matches(['\n', '\r']));
+                        continue;
+                    }
+                    other => return Err(format!("unknown option `{other}`")),
+                };
+                p[key] = json!(flag_value(&mut it, a)?);
+            }
+            let r = exec(&mut s, "data.saveConnection", p)?;
+            println!("saved {} ({})", r["connection"]["name"].as_str().unwrap_or(""), r["connection"]["target"].as_str().unwrap_or(""));
+            Ok(())
+        }
+        "delete" => {
+            let name = rest.first().ok_or("`connections delete` needs a NAME")?;
+            let r = exec(&mut s, "data.deleteConnection", json!({"name": name, "confirm": true}))?;
+            if r["deleted"] == json!(true) {
+                println!("deleted {name}")
+            } else {
+                println!("no saved connection `{name}`")
+            }
+            Ok(())
+        }
+        "test" => {
+            let name = rest.first().ok_or("`connections test` needs a NAME")?;
+            let r = exec(&mut s, "data.testConnection", json!({"name": name}))?;
+            println!("{name}: ok, {} table(s) or view(s)", r["tables"]);
+            Ok(())
+        }
+        other => Err(format!("unknown `connections` action `{other}` (list, save, delete, test)")),
     }
 }
 
@@ -331,21 +456,30 @@ fn print_sample(name: &str) -> Result<(), String> {
 
 fn schema(args: &[String]) -> Result<(), String> {
     let (mut path, mut connection, mut table, mut preview, mut as_json) = (None, None, None, None, false);
+    let mut saved: Option<String> = None;
+    let mut s = Session::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--sqlite" => path = Some(flag_value(&mut it, a)?.to_owned()),
             "--postgres" => connection = Some(flag_value(&mut it, a)?.to_owned()),
+            "--connection" => saved = Some(flag_value(&mut it, a)?.to_owned()),
             "--table" => table = Some(flag_value(&mut it, a)?.to_owned()),
             "--preview" => preview = Some(flag_value(&mut it, a)?.parse::<u64>().map_err(|_| "`--preview` expects a number of rows")?),
             "--json" => as_json = true,
             other => return Err(format!("unknown option `{other}`")),
         }
     }
-    let (describe, preview_cmd, source) = match (path, connection) {
-        (Some(p), None) => ("data.describeSqlite", "data.previewSqlite", json!({"path": p})),
-        (None, Some(c)) => ("data.describePostgres", "data.previewPostgres", json!({"connection": c})),
-        _ => return Err("`schema` needs `--sqlite FILE` or `--postgres CONNECTION`".to_owned()),
+    let (describe, preview_cmd, source) = match (path, connection, saved) {
+        (Some(p), None, None) => ("data.describeSqlite", "data.previewSqlite", json!({"path": p})),
+        (None, Some(c), None) => ("data.describePostgres", "data.previewPostgres", json!({"connection": c})),
+        (None, None, Some(name)) => {
+            let (_, kind) = saved_commands(&mut s, &name)?;
+            let (d, p) =
+                if kind == "sqlite" { ("data.describeSqlite", "data.previewSqlite") } else { ("data.describePostgres", "data.previewPostgres") };
+            (d, p, json!({"saved": name}))
+        }
+        _ => return Err("`schema` needs one of `--sqlite FILE`, `--postgres CONNECTION` or `--connection NAME`".to_owned()),
     };
     let with = |extra: Json| {
         let mut p = source.clone();
@@ -354,7 +488,6 @@ fn schema(args: &[String]) -> Result<(), String> {
         }
         p
     };
-    let mut s = Session::default();
     if let (Some(n), Some(t)) = (preview, table.as_deref()) {
         let rows = exec(&mut s, preview_cmd, with(json!({"table": t, "limit": n})))?;
         println!("{}", if as_json { rows.to_string() } else { preview_text(&rows) });
