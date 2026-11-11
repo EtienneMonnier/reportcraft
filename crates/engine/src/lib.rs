@@ -376,4 +376,33 @@ mod tests {
         let unknown = s.execute("report.render", &json!({"format": "odt"})).unwrap_err().to_string();
         assert!(unknown.contains("xlsx, docx"), "{unknown}");
     }
+
+    #[test]
+    fn print_says_what_it_would_send_until_confirmed() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        for (params, wrong) in [
+            (json!({"copies": 0}), "copies"),
+            (json!({"copies": 100}), "copies"),
+            (json!({"duplex": "both"}), "duplex"),
+            (json!({"printer": ""}), "printer"),
+        ] {
+            let err = s.execute("file.print", &params).unwrap_err().to_string();
+            assert!(err.contains(wrong), "{err}");
+        }
+        if let Err(e) = reportcraft_pdf::Fonts::find() {
+            assert!(std::env::var_os("CI").is_none(), "no font on CI: {e}");
+            return;
+        }
+        let r = s.execute("file.print", &json!({"printer": "Office", "copies": 2, "duplex": "long", "grayscale": true, "pages": "1"})).unwrap();
+        assert_eq!(r["submitted"], json!(false), "no `confirm`: nothing is printed");
+        assert_eq!((r["pages"].clone(), r["of"].clone(), r["copies"].clone()), (json!(1), json!(1), json!(2)));
+        #[cfg(unix)]
+        {
+            let command = r["command"].to_string();
+            assert!(command.contains("\"lp\"") && command.contains("\"Office\"") && command.contains("two-sided-long-edge"), "{command}");
+        }
+        assert!(s.execute("file.print", &json!({"pages": "2-"})).unwrap_err().to_string().contains("none of the 1"));
+        assert!(s.execute("file.printers", &json!({})).unwrap()["printers"].is_array());
+    }
 }

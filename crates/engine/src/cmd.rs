@@ -21,6 +21,14 @@ pub struct CommandSpec {
 static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "file.new", label: "New report", menu: "File", params: r#"{"title"?: string}"#, run: file_new },
     CommandSpec { id: "file.openSample", label: "Open sample", menu: "File", params: r#"{"name": "rentals"}"#, run: file_open_sample },
+    CommandSpec { id: "file.printers", label: "Printers", menu: "File", params: "{}", run: file_printers },
+    CommandSpec {
+        id: "file.print",
+        label: "Print",
+        menu: "File",
+        params: r#"{"confirm"?: boolean (send the job; without it nothing is printed and the result says what would be), "printer"?: string (default: the system default printer), "copies"?: integer (1 to 99), "collate"?: boolean (default true), "duplex"?: "off" | "long" | "short" (default: the printer's), "grayscale"?: boolean, "fit"?: boolean (shrink to the printer's paper; default: exact size), "pages"?: string ("1-3,5", "8-"), "params"?: {name: value or [values]}, "timeoutSeconds"?: integer}"#,
+        run: file_print,
+    },
     CommandSpec {
         id: "report.load",
         label: "Load report definition",
@@ -609,6 +617,101 @@ fn render_office(s: &Session, doc: &reportcraft_layout::Document, format: &str, 
 #[cfg(target_arch = "wasm32")]
 fn render_office(_: &Session, _: &reportcraft_layout::Document, format: &str, _: &reportcraft_core::Cancel) -> EngineResult<Json> {
     Err(bad("report.render", format!("{format} export is not available in the browser build yet")))
+}
+
+/// The system's printers (CUPS queues, or the Windows spooler's printers).
+#[cfg(not(target_arch = "wasm32"))]
+fn file_printers(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    let printers: Vec<Json> =
+        craft_print::printers().into_iter().map(|p| json!({"name": p.name, "description": p.description, "default": p.default})).collect();
+    let backend = match craft_print::backend() {
+        Some(craft_print::Backend::Cups) => Some("cups"),
+        Some(craft_print::Backend::WindowsPdf) => Some("windows"),
+        None => None,
+    };
+    Ok(json!({"printers": printers, "backend": backend}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn file_printers(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Ok(json!({"printers": [], "backend": null}))
+}
+
+/// The print job the parameters ask for.
+#[cfg(not(target_arch = "wasm32"))]
+fn print_job(s: &Session, params: &Json) -> EngineResult<craft_print::Job> {
+    const CMD: &str = "file.print";
+    let flag = |name: &str, default: bool| params.get(name).and_then(Json::as_bool).unwrap_or(default);
+    let copies = match params.get("copies") {
+        None | Some(Json::Null) => 1,
+        Some(v) => v.as_u64().filter(|n| (1..=99).contains(n)).ok_or_else(|| bad(CMD, "`copies` must be a whole number from 1 to 99"))?,
+    };
+    let duplex = match params.get("duplex").and_then(Json::as_str) {
+        None => None,
+        Some("off") => Some(craft_print::Duplex::Off),
+        Some("long") => Some(craft_print::Duplex::LongEdge),
+        Some("short") => Some(craft_print::Duplex::ShortEdge),
+        Some(other) => return Err(bad(CMD, format!("`duplex` is off, long or short, not `{other}`"))),
+    };
+    let printer = params.get("printer").and_then(Json::as_str).map(str::to_owned);
+    if printer.as_deref().is_some_and(|p| p.is_empty() || p.len() > 256 || p.chars().any(char::is_control)) {
+        return Err(bad(CMD, "`printer` must be a printer name (see file.printers)"));
+    }
+    Ok(craft_print::Job {
+        printer,
+        copies: u32::try_from(copies).unwrap_or(1),
+        collate: flag("collate", true),
+        duplex,
+        scaling: if flag("fit", false) { craft_print::Scaling::ShrinkToFit } else { craft_print::Scaling::Exact },
+        grayscale: flag("grayscale", false),
+        title: s.report.title.chars().filter(|c| !c.is_control()).take(200).collect(),
+        options: Vec::new(),
+    })
+}
+
+/// Renders the report to PDF and hands it to the system spooler, only with `"confirm": true`;
+/// otherwise says what would be printed.
+#[cfg(not(target_arch = "wasm32"))]
+fn file_print(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "file.print";
+    let job = print_job(s, params)?;
+    let command = craft_print::command_preview(&job).map_err(|e| reportcraft_core::Error::Unsupported(e.to_string()))?;
+    let resolved = resolve_parameters(s, CMD, params)?;
+    let mut values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
+    if let Some(at) = &s.refreshed_at {
+        values.insert(reportcraft_layout::REFRESHED_AT.to_owned(), at.clone());
+    }
+    if let Some(now) = now_local() {
+        values.insert(reportcraft_layout::PRINTED_AT.to_owned(), now);
+    }
+    let mut doc = reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?;
+    let total = doc.pages.len();
+    if let Some(spec) = params.get("pages").and_then(Json::as_str) {
+        doc = reportcraft_layout::select_pages(&doc, spec)?;
+    }
+    let fonts = reportcraft_pdf::Fonts::find()?;
+    let pdf = reportcraft_pdf::to_pdf(&doc, &fonts, concat!("ReportCraft ", env!("CARGO_PKG_VERSION")), &render_limit(s, params))?;
+    let confirmed = params.get("confirm").and_then(Json::as_bool).unwrap_or(false);
+    let spooler = if confirmed {
+        Some(craft_print::submit(&pdf.bytes, &job).map_err(|e| reportcraft_core::Error::Io(format!("printing: {e}")))?)
+    } else {
+        None
+    };
+    Ok(json!({
+        "submitted": confirmed,
+        "spooler": spooler,
+        "printer": job.printer,
+        "pages": doc.pages.len(),
+        "of": total,
+        "copies": job.copies,
+        "command": command,
+        "warnings": pdf.warnings,
+    }))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn file_print(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("printing is not available in the browser build yet: export a PDF and print it".into()).into())
 }
 
 fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {

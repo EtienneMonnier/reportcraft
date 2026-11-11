@@ -19,6 +19,9 @@ reportcraft-cli <subcommand>
    --query-log prints each query run, its time and row count, to stderr;
    --timeout SECONDS limits the query and the render, default 30 and 120;
    --max-memory MB limits the rows read, default 1024)
+  print <report.json|--sample NAME> [data options as for render] [--param NAME=VALUE]... [--printer NAME] [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]
+                                            print through the system spooler; --dry-run only shows the job
+  printers                                  the system's printers
   schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
                                             tables, columns and keys; rows with --preview
   (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
@@ -44,6 +47,8 @@ fn run(args: &[String]) -> Result<(), String> {
     match sub.as_str() {
         "commands" => list_commands(rest.iter().any(|a| a == "--json")),
         "render" => render(rest),
+        "print" => print(rest),
+        "printers" => printers(),
         "run" => run_commands(rest),
         "schema" => schema(rest),
         "validate" => validate(rest),
@@ -242,6 +247,60 @@ fn render(args: &[String]) -> Result<(), String> {
         Some(path) => std::fs::write(&path, body).map_err(|e| format!("{path}: {e}")),
         None => std::io::stdout().write_all(&body).map_err(|e| e.to_string()),
     }
+}
+
+fn print(args: &[String]) -> Result<(), String> {
+    let mut job = serde_json::Map::new();
+    let mut dry_run = false;
+    let (mut s, params, timeout) = load_inputs(args, |a, it| {
+        match a {
+            "--printer" | "--duplex" | "--pages" => {
+                job.insert(a.trim_start_matches("--").to_owned(), json!(flag_value(it, a)?));
+            }
+            "--copies" => {
+                let n = flag_value(it, a)?.parse::<u64>().map_err(|_| "`--copies` expects a whole number")?;
+                job.insert("copies".to_owned(), json!(n));
+            }
+            "--grayscale" | "--fit" => {
+                job.insert(a.trim_start_matches("--").to_owned(), json!(true));
+            }
+            "--dry-run" => dry_run = true,
+            other => return Err(format!("unknown option `{other}`")),
+        }
+        Ok(())
+    })?;
+    job.insert("params".to_owned(), Json::Object(params));
+    job.insert("confirm".to_owned(), json!(!dry_run));
+    if let Some(t) = timeout {
+        job.insert("timeoutSeconds".to_owned(), json!(t));
+    }
+    let r = exec(&mut s, "file.print", Json::Object(job))?;
+    for w in r.get("warnings").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str) {
+        eprintln!("warning: {w}");
+    }
+    let command: Vec<&str> = r["command"].as_array().into_iter().flatten().filter_map(Json::as_str).collect();
+    let printer = r["printer"].as_str().unwrap_or("the default printer");
+    println!("{} page(s) of {}, {} copy(ies), to {printer}", r["pages"], r["of"], r["copies"]);
+    println!("job: {}", command.join(" "));
+    match r["spooler"].as_str() {
+        Some(msg) => println!("{}", msg.trim()),
+        None => println!("dry run: nothing was sent"),
+    }
+    Ok(())
+}
+
+fn printers() -> Result<(), String> {
+    let r = exec(&mut Session::default(), "file.printers", json!({}))?;
+    let list = r["printers"].as_array().cloned().unwrap_or_default();
+    if list.is_empty() {
+        println!("no printer found");
+    }
+    for p in list {
+        let mark = if p["default"] == json!(true) { "*" } else { " " };
+        let description = p["description"].as_str().filter(|d| !d.is_empty()).map(|d| format!("  ({d})")).unwrap_or_default();
+        println!("{mark} {}{description}", p["name"].as_str().unwrap_or(""));
+    }
+    Ok(())
 }
 
 fn run_commands(args: &[String]) -> Result<(), String> {

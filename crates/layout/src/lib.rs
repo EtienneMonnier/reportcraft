@@ -150,6 +150,39 @@ pub fn render_continuous(report: &Report, rows: &RowSet, datasets: &Datasets, pa
     Ok(doc)
 }
 
+/// The pages `spec` names, in document order: `1-3,5`, `8-` (to the end), `-2` (from the start),
+/// spaces allowed. Page numbers start at 1; pages past the end are ignored, a page named twice is
+/// kept once. An empty selection or a malformed range is an error.
+pub fn select_pages(doc: &Document, spec: &str) -> Result<Document> {
+    let count = doc.pages.len();
+    let bad = |part: &str| Error::Invalid(format!("pages: `{part}` is not a page or a range like 2-5"));
+    let mut keep = vec![false; count];
+    for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let number = |t: &str| t.trim().parse::<usize>().ok().filter(|n| *n >= 1).ok_or_else(|| bad(part));
+        let (from, to) = match part.split_once('-') {
+            Some((a, b)) => {
+                let from = if a.trim().is_empty() { 1 } else { number(a)? };
+                // An open end runs to the last page, or names none when it starts past it.
+                (from, if b.trim().is_empty() { count.max(from) } else { number(b)? })
+            }
+            None => (number(part)?, number(part)?),
+        };
+        if from > to {
+            return Err(Error::Invalid(format!("pages: `{part}` ends before it starts")));
+        }
+        for page in from..=to.min(count) {
+            if let Some(k) = keep.get_mut(page - 1) {
+                *k = true;
+            }
+        }
+    }
+    let pages: Vec<Page> = doc.pages.iter().zip(&keep).filter(|(_, k)| **k).map(|(p, _)| p.clone()).collect();
+    if pages.is_empty() {
+        return Err(Error::Invalid(format!("pages: `{spec}` names none of the {count} page(s)")));
+    }
+    Ok(Document { pages, ..doc.clone() })
+}
+
 /// The values of `expression` for the first `limit` rows of `rows` (in data order), with the
 /// report's named formulas computed and every row summarised: what a formula shows before it is
 /// placed in a band.
@@ -1237,6 +1270,33 @@ mod tests {
         // Hiding every detail row leaves the groups.
         r.detail.visible_if = cond("FALSE");
         assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap()), ["Lyon", "12.5", "Paris", "end"]);
+    }
+
+    #[test]
+    fn page_ranges_pick_pages_in_order() {
+        let doc = Document {
+            title: "t".into(),
+            width_mm: 10.0,
+            height_mm: 10.0,
+            margin_mm: 0.0,
+            pages: (1..=6).map(|n| Page { items: vec![Item { text: n.to_string(), ..reportcraft_test_item() }] }).collect(),
+        };
+        let picked = |spec: &str| select_pages(&doc, spec).map(|d| texts(&d).join(","));
+        assert_eq!(picked("1-3, 5").unwrap(), "1,2,3,5");
+        assert_eq!(picked("5,1,5").unwrap(), "1,5", "document order, each page once");
+        assert_eq!(picked("5-").unwrap(), "5,6");
+        assert_eq!(picked("-2").unwrap(), "1,2");
+        assert_eq!(picked("4-99").unwrap(), "4,5,6", "past the end is ignored");
+        assert!(picked("8-").unwrap_err().to_string().contains("none of the 6"));
+        assert!(picked("9").unwrap_err().to_string().contains("none of the 6"));
+        assert!(picked("3-1").unwrap_err().to_string().contains("ends before"));
+        for bad in ["0", "a", "1-2-3", "", " , "] {
+            assert!(picked(bad).is_err(), "{bad}");
+        }
+    }
+
+    fn reportcraft_test_item() -> Item {
+        Item { x_mm: 0.0, y_mm: 0.0, width_mm: 1.0, height_mm: 1.0, style: TextStyle::default(), text: String::new(), shape: None, cell: None }
     }
 
     #[test]
