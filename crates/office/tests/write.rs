@@ -138,3 +138,58 @@ fn a_cancelled_export_stops_and_empty_reports_still_write() {
     let sheet = to_xlsx(&empty, &Cancel::default()).unwrap();
     assert!(part(&sheet.bytes, "xl/workbook.xml").contains("name=\"Report\""));
 }
+
+#[test]
+fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
+    use reportcraft_model::{Color, EcLevel, Symbology};
+    let shape = |x: f64, w: f64, h: f64, content: Content| Element {
+        x_mm: x,
+        y_mm: 2.0,
+        width_mm: w,
+        height_mm: h,
+        style: TextStyle::default(),
+        content,
+        format: None,
+        visible_if: None,
+        color_formula: None,
+        background_formula: None,
+    };
+    let mut r = Report::new("Shapes");
+    r.report_header = Band {
+        height_mm: 40.0,
+        elements: vec![
+            shape(0.0, 100.0, 0.0, Content::Line { thickness_mm: 0.5, color: "#335599".into() }),
+            shape(0.0, 40.0, 20.0, Content::Rect { border_mm: 0.4, border_color: "#c00".into(), fill: Some("#ffeecc".into()) }),
+            shape(
+                50.0,
+                30.0,
+                30.0,
+                Content::Barcode { symbology: Symbology::Qr, field: None, text: Some("x".into()), show_text: false, ec_level: EcLevel::M },
+            ),
+            shape(90.0, 20.0, 10.0, Content::Line { thickness_mm: 0.3, color: "#000".into() }),
+            Element {
+                style: TextStyle { background: Some(Color(0, 0, 0xff)), ..TextStyle::default() },
+                ..shape(120.0, 30.0, 6.0, Content::Text { text: "on blue".into() })
+            },
+        ],
+        page_break_before_if: None,
+        visible_if: None,
+        keep_with_next: false,
+    };
+    let doc = layout(&r, &RowSet::default(), &Params::new()).unwrap();
+    let out = to_docx(&doc, &Cancel::default()).unwrap();
+    // The diagonal line is the only shape left out.
+    assert_eq!(out.warnings, ["1 line(s), box(es) or barcode(s) are not written to DOCX yet"]);
+    let xml = part(&out.bytes, "word/document.xml");
+    // A line, a fill and four border edges, a barcode, a background: 8 pictures.
+    assert_eq!(xml.matches("<wp:anchor ").count(), 8, "{xml}");
+    assert_eq!(xml.matches(r#"behindDoc="1""#).count(), 8);
+    assert_eq!(xml.matches("<wp:wrapNone />").count(), 8);
+    assert!(!xml.contains("wrapSquare"));
+    let mut ids: Vec<&str> = xml.match_indices(r#"<wp:docPr id=""#).map(|(i, _)| xml.get(i + 14..i + 16).unwrap_or("")).collect();
+    let n = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), n, "every drawing has its own id");
+    assert!(xml.contains("on blue"));
+    assert_eq!(to_docx(&doc, &Cancel::default()).unwrap().bytes, out.bytes, "still the same bytes for the same report");
+}

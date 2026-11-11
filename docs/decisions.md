@@ -412,3 +412,16 @@ never moves on, so a header whose followers can't fit anywhere is still placed r
 looping. It is opt-in so existing reports keep their pages; the designer can turn it on by
 default for new group headers.
 
+## DOCX draws shapes as pictures anchored behind the text (R2.7)
+
+Word has no "rectangle at this exact place behind the text" that docx-rs can write, but it can
+anchor a picture to the page. Backgrounds, line segments, box fills and borders are 1 × 1 PNGs of
+their colour stretched to their box; barcodes are black-and-white PNGs of the module grid with
+their quiet zone, several pixels per module so a viewer's smoothing never blurs a module (the
+EAN-13 and QR code of the test report decode with zxing-cpp from WordCraft's rendering). The PNGs
+are written by a small encoder of our own (stored deflate blocks, CRC-32 and Adler-32), so no
+image crate comes in. docx-rs writes every anchor in front of the text with square wrapping and
+the same drawing id; the writer adjusts the built XML before packing it (behind the text, no
+wrapping, one id per drawing) and names the pictures itself, so the same report still gives the
+same bytes. Diagonal lines are not drawn yet.
+

@@ -37,8 +37,10 @@
   booleans and dates kept typed with Excel number formats from the element formats (`#,##0.00 "€"`,
   `0.0%`, `dd/mm/yyyy`), bold, size and alignment kept. DOCX: the report's pages and margins, a
   paragraph per line at its height and a tab stop per item (left, right or centred as the item is
-  aligned), so the text stays editable. Both open in GridCraft and WordCraft; the same report gives
-  the same file. Lines, boxes and barcodes are left out with a warning.
+  aligned), so the text stays editable; backgrounds, lines, boxes and barcodes are pictures anchored
+  behind the text at their place (diagonal lines are left out with a warning). Both open in
+  GridCraft and WordCraft; the same report gives the same file. XLSX leaves lines, boxes and
+  barcodes out with a warning.
 - Printing through craft-libs' `craft-print` (CUPS `lp` on Linux and macOS, the Windows print API):
   `file.printers` lists the printers, `file.print` renders the report to PDF and sends it with
   printer, copies (1–99), collation, duplex, grayscale, exact size or shrink to fit, and page ranges
@@ -47,8 +49,7 @@
   [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]`.
 - Text colour and background on elements (`style.color`, `style.background`, `#rgb` or `#rrggbb`),
   fixed or for each row from a formula (`color_formula`: `IF([amount] < 0, "#c00", "")`; a result
-  that isn't a colour keeps the style's), in HTML, PDF, DOCX and XLSX (in DOCX the background covers
-  the text only, not the whole box).
+  that isn't a colour keeps the style's), in HTML, PDF, DOCX and XLSX.
 - Lines (horizontal, vertical, diagonal) and rectangles (border, fill) in any band, drawn as SVG in
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
@@ -122,7 +123,7 @@
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
   edits the session, or acts outside the application).
-- CLI and MCP server reaching every command. 153 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 156 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).

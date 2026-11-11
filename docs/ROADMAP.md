@@ -63,7 +63,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.4 Lines and boxes in bands (#10)
   - [ ] Images in bands: from a field (blob or path) or embedded in the report, with size limits and ATTRIBUTION rules
   - [x] Text colour and background on text elements, fixed or from a formula
-  - [ ] DOCX: fill an element's whole box with its background (run shading covers only the text today)
+  - [x] DOCX: fill an element's whole box with its background
 - [x] R2.5 Sub-reports (#11)
   - [ ] Repeat a subreport's header on the pages it continues on
   - [ ] Expose a subreport's totals to the parent (§8 "results to the parent")
@@ -76,8 +76,10 @@ Anything marked **decision** waits for a maintainer.
   - [ ] PDF in the browser build: fonts passed as bytes by the page
   - [ ] PDF/A for archiving (Krilla validators), document outline from groups, links
 - [x] R2.7 XLSX and DOCX export — decided: `rust_xlsxwriter` and `docx-rs` from crates.io (MIT/Apache-2.0); GridCraft and WordCraft writers are tied to their apps' models (#13)
-  - [ ] Lines and boxes in DOCX (paragraph borders or drawing shapes) and cell borders in XLSX
-  - [ ] Barcodes as images in both formats (needs a PNG or SVG rendering of the module grid)
+  - [x] Lines and boxes in DOCX (pictures anchored behind the text)
+  - [ ] Diagonal lines in DOCX; cell borders for lines and boxes in XLSX
+  - [x] Barcodes as images in DOCX
+  - [ ] Barcodes as images in XLSX
   - [ ] A "data only" XLSX: detail rows as a table with a header row (no group or report bands), for further analysis
   - [ ] One sheet per group, or per subreport, as an option
   - [ ] XLSX and DOCX in the browser build (the writers build for wasm; the clock-free path needs checking)
