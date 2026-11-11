@@ -90,7 +90,12 @@
   their own values (a date plus days, a date minus a date). `report.validate` reports syntax
   errors with their position, unknown fields, argument counts, undeclared parameters and cycles;
   `report.evaluateFormula` tries a formula on the loaded rows.
-- CLI and MCP server reaching every command. 133 tests (plus 8 live PostgreSQL tests run on demand), including 13 golden rendering snapshots; `cargo xtask ci` green.
+- Conditions (formulas): `visible_if` on bands (a hidden band takes no room) and on elements (their
+  room stays), `page_break_before_if` on bands. TRUE or a non-zero number holds; FALSE, 0 or a blank
+  doesn't; an error never hides a band or element and never breaks a page. Hidden rows still count
+  in their group's totals. A hidden page header takes no room, a hidden page footer keeps its room.
+  `report.validate` checks the conditions as formulas.
+- CLI and MCP server reaching every command. 136 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no printing, no designer UI (see `ROADMAP.md`).

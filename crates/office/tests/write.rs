@@ -8,7 +8,7 @@ use reportcraft_model::{Align, Band, Content, Element, Format, Report, TextStyle
 use reportcraft_office::{to_docx, to_xlsx};
 
 fn el(x: f64, w: f64, content: Content, format: Option<Format>, align: Align) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style: TextStyle { align, ..TextStyle::default() }, content, format }
+    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style: TextStyle { align, ..TextStyle::default() }, content, format, visible_if: None }
 }
 
 fn report() -> (Report, RowSet) {
@@ -21,8 +21,11 @@ fn report() -> (Report, RowSet) {
             el(60.0, 30.0, Content::Text { text: "Since".into() }, None, Align::Left),
             el(90.0, 40.0, Content::Text { text: "Amount".into() }, None, Align::Right),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
-    r.page_footer = Band { height_mm: 6.0, elements: vec![el(0.0, 30.0, Content::PageNumber, None, Align::Left)] };
+    r.page_footer =
+        Band { height_mm: 6.0, elements: vec![el(0.0, 30.0, Content::PageNumber, None, Align::Left)], page_break_before_if: None, visible_if: None };
     let money = Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true };
     r.detail = Band {
         height_mm: 6.0,
@@ -32,6 +35,8 @@ fn report() -> (Report, RowSet) {
             el(90.0, 40.0, Content::Field { field: "amount".into() }, Some(money), Align::Right),
             el(140.0, 20.0, Content::Line { thickness_mm: 0.2, color: "#000".into() }, None, Align::Left),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     let col = |n: &str, t| Column { name: n.into(), field_type: t };
     let rows = RowSet {

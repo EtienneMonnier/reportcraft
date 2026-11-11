@@ -301,3 +301,19 @@ footer onto a page of its own. Both files carry a fixed creation date, so the sa
 the same bytes. Lines, boxes and barcodes are left out with a warning for now. The office crate
 is a native-only dependency of the engine, like the database sources.
 
+## Conditions are formulas on bands and elements (R2.10)
+
+A band or element shows on a formula (`visible_if`) and a band can start a new page on one
+(`page_break_before_if`), read like a formula element in the same band (current row, the rows it
+summarises, parameters). There is no separate condition language: one formula engine, one set of
+diagnostics. A condition holds for TRUE or a non-zero number; FALSE, 0 and a blank don't. An
+error never hides anything or breaks a page, so a mistake in a condition shows up as data on the
+page rather than as data silently missing.
+
+Hiding is about printing, not about data: a hidden detail row still counts in its group's totals
+(filtering rows belongs in the query or, later, a report filter). A hidden band takes no room; a
+hidden element keeps its room, so the band's other elements don't move. Page footers keep their
+room when hidden so the body ends at the same height on every page; a hidden page header frees its
+room. `keep_together` still estimates a group's height from every band, so a group with hidden
+bands may move to a new page a little early (noted in the roadmap).
+

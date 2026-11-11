@@ -398,6 +398,8 @@ struct Writer<'a> {
     child_reports: HashMap<usize, Arc<Report>>,
     /// Formula elements, parsed once (boxed: their address keys the aggregate memo).
     formulas: HashMap<usize, Option<Box<reportcraft_expr::Expr>>>,
+    /// `visible_if` and `page_break_before_if` formulas, parsed once (by the address of their text).
+    conditions: HashMap<usize, Option<Box<reportcraft_expr::Expr>>>,
     memo: formula::Memo,
     now: Option<chrono::NaiveDateTime>,
 }
@@ -416,6 +418,7 @@ impl<'a> Writer<'a> {
             link_index: HashMap::new(),
             child_reports: HashMap::new(),
             formulas: HashMap::new(),
+            conditions: HashMap::new(),
             memo: formula::Memo::default(),
             now: formula::now(ctx.params),
             locale,
@@ -459,8 +462,9 @@ impl<'a> Writer<'a> {
         let open = self.open.clone();
         for g in open {
             let (Some(group), Some(scope)) = (self.report.groups.get(g.level), order.get(g.start..g.end)) else { continue };
-            if group.repeat_header && !group.header.is_empty() {
-                self.draw(&group.header, Scope::new(scope, order.get(g.start).copied()), true);
+            let scope = Scope::new(scope, order.get(g.start).copied());
+            if group.repeat_header && !group.header.is_empty() && self.band_visible(&group.header, scope) {
+                self.draw(&group.header, scope, true);
                 self.y += group.header.height_mm;
                 self.column_bottom = self.column_bottom.max(self.y);
             }
@@ -480,8 +484,12 @@ impl<'a> Writer<'a> {
     }
 
     fn page_header(&mut self) {
-        self.draw(&self.report.page_header, Scope::new(&[], None), false);
-        self.y += self.report.page_header.height_mm;
+        let report = self.report;
+        // A hidden page header takes no room; it has no current row, only parameters to go by.
+        if self.band_visible(&report.page_header, Scope::new(&[], None)) {
+            self.draw(&report.page_header, Scope::new(&[], None), false);
+            self.y += report.page_header.height_mm;
+        }
         // Columns start below the page header (and below the report header on page one).
         self.column_top = self.y;
         self.column_bottom = self.y;
@@ -489,7 +497,11 @@ impl<'a> Writer<'a> {
 
     fn finish_page(&mut self) -> Result<()> {
         self.y = self.body_bottom();
-        self.draw(&self.report.page_footer, Scope::new(&[], None), false);
+        let report = self.report;
+        // A hidden page footer keeps its room: the body ends at the same place on every page.
+        if self.band_visible(&report.page_footer, Scope::new(&[], None)) {
+            self.draw(&report.page_footer, Scope::new(&[], None), false);
+        }
         self.pages.push(std::mem::take(&mut self.page));
         Ok(())
     }
@@ -497,8 +509,11 @@ impl<'a> Writer<'a> {
     /// Places a band, moving to a new page first when it doesn't fit, unless the page is fresh
     /// (a break wouldn't give it more room, so it is placed rather than looping).
     fn band_in(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
-        if band.is_empty() {
+        if band.is_empty() || !self.band_visible(band, scope) {
             return Ok(());
+        }
+        if !self.fresh && self.band_breaks(band, scope) {
+            self.new_page(order)?;
         }
         if self.across() {
             // A group band starts a new row of labels and spans the first column.
@@ -545,7 +560,13 @@ impl<'a> Writer<'a> {
     fn place(&mut self, band: &Band, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
         let (top, item) = (self.y, self.page.items.len());
         self.draw(band, scope, columned);
-        match band.elements.iter().find(|e| matches!(e.content, Content::Subreport { .. })) {
+        let mut subreport = None;
+        for el in band.elements.iter().filter(|e| matches!(e.content, Content::Subreport { .. })) {
+            if self.element_visible(el, scope) {
+                subreport = Some(el);
+            }
+        }
+        match subreport {
             None => {
                 self.marks.push(Mark { item, top, height: band.height_mm });
                 self.y += band.height_mm;
@@ -656,8 +677,11 @@ impl<'a> Writer<'a> {
         if !self.across() {
             return self.band_in(band, scope, order);
         }
-        if band.is_empty() {
+        if band.is_empty() || !self.band_visible(band, scope) {
             return Ok(());
+        }
+        if !self.fresh && self.band_breaks(band, scope) {
+            self.new_page(order)?;
         }
         if self.column == 0 && !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
             self.new_page(order)?;
@@ -675,13 +699,13 @@ impl<'a> Writer<'a> {
 
     /// Places a band that spans the page (report header or footer) below every column.
     fn full_band(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
-        if band.is_empty() {
+        if band.is_empty() || !self.band_visible(band, scope) {
             return Ok(());
         }
         self.close_row();
         self.y = self.y.max(self.column_bottom);
         self.column = 0;
-        if !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+        if !self.fresh && (self.band_breaks(band, scope) || self.y + band.height_mm > self.body_bottom() + 1e-9) {
             self.new_page(order)?;
         }
         self.place(band, scope, false, order)?;
@@ -710,6 +734,9 @@ impl<'a> Writer<'a> {
         let column = if columned { self.column as f64 } else { 0.0 };
         let left = page.margin_mm + column * (page.column_width() + page.column_gap_mm);
         for el in &band.elements {
+            if !self.element_visible(el, scope) {
+                continue;
+            }
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
             }
@@ -843,6 +870,43 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// Whether a condition formula holds for `scope`: `Some(true)` for TRUE or a non-zero
+    /// number, `Some(false)` for FALSE, 0 or a blank, `None` for anything else (an error, text).
+    fn holds(&mut self, condition: &String, scope: Scope<'_>) -> Option<bool> {
+        let key = std::ptr::from_ref(condition) as usize;
+        self.conditions.entry(key).or_insert_with(|| reportcraft_expr::parse(condition).ok().map(Box::new));
+        let expr = self.conditions.get(&key)?.as_deref()?;
+        let env = formula::BandEnv {
+            report: self.report,
+            rows: self.rows,
+            current: scope.current,
+            summary: scope.group.unwrap_or(scope.rows),
+            params: self.params,
+            now: self.now,
+            memo: &self.memo,
+        };
+        match reportcraft_expr::evaluate(expr, &env) {
+            reportcraft_expr::Val::Bool(b) => Some(b),
+            reportcraft_expr::Val::Number(n) => Some(n != 0.0),
+            reportcraft_expr::Val::Blank => Some(false),
+            _ => None,
+        }
+    }
+
+    /// A band is printed unless its `visible_if` says otherwise (an error shows it).
+    fn band_visible(&mut self, band: &Band, scope: Scope<'_>) -> bool {
+        band.visible_if.as_ref().is_none_or(|c| self.holds(c, scope).unwrap_or(true))
+    }
+
+    /// A band starts a new page when its `page_break_before_if` holds (an error doesn't break).
+    fn band_breaks(&mut self, band: &Band, scope: Scope<'_>) -> bool {
+        band.page_break_before_if.as_ref().is_some_and(|c| self.holds(c, scope).unwrap_or(false))
+    }
+
+    fn element_visible(&mut self, el: &Element, scope: Scope<'_>) -> bool {
+        el.visible_if.as_ref().is_none_or(|c| self.holds(c, scope).unwrap_or(true))
+    }
+
     /// A value's text with `format`, keeping numbers, booleans and dates (text under a date
     /// format) typed.
     fn typed(&self, value: Value, format: Option<&reportcraft_model::Format>) -> (String, Option<Cell>) {
@@ -893,7 +957,7 @@ mod tests {
     use reportcraft_model::{Element, Group};
 
     fn el(content: Content) -> Element {
-        Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content, format: None }
+        Element { x_mm: 0.0, y_mm: 0.0, width_mm: 50.0, height_mm: 5.0, style: TextStyle::default(), content, format: None, visible_if: None }
     }
 
     fn rows() -> RowSet {
@@ -920,11 +984,27 @@ mod tests {
             keep_together: false,
             repeat_header: false,
             page_break_before: false,
-            header: Band { height_mm: 6.0, elements: vec![el(Content::Field { field: "branch".into() })] },
-            footer: Band { height_mm: 6.0, elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })] },
+            header: Band {
+                height_mm: 6.0,
+                elements: vec![el(Content::Field { field: "branch".into() })],
+                page_break_before_if: None,
+                visible_if: None,
+            },
+            footer: Band {
+                height_mm: 6.0,
+                elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })],
+                page_break_before_if: None,
+                visible_if: None,
+            },
         });
-        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })] };
-        r.report_footer = Band { height_mm: 6.0, elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })] };
+        r.detail =
+            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })], page_break_before_if: None, visible_if: None };
+        r.report_footer = Band {
+            height_mm: 6.0,
+            elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })],
+            page_break_before_if: None,
+            visible_if: None,
+        };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["Lyon", "10", "2.5", "12.5", "Paris", "5", "5", "17.5"]);
     }
@@ -934,8 +1014,9 @@ mod tests {
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
         r.page.margin_mm = 10.0;
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)] };
-        r.detail = Band { height_mm: 15.0, elements: vec![el(Content::Field { field: "branch".into() })] };
+        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None };
+        r.detail =
+            Band { height_mm: 15.0, elements: vec![el(Content::Field { field: "branch".into() })], page_break_before_if: None, visible_if: None };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 2);
         assert!(texts(&doc).contains(&"2 / 2".to_owned()));
@@ -955,10 +1036,16 @@ mod tests {
             keep_together: true,
             repeat_header: true,
             page_break_before: true,
-            header: Band { height_mm: 6.0, elements: vec![el(Content::Field { field: "branch".into() })] },
+            header: Band {
+                height_mm: 6.0,
+                elements: vec![el(Content::Field { field: "branch".into() })],
+                page_break_before_if: None,
+                visible_if: None,
+            },
             footer: Band::default(),
         });
-        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })] };
+        r.detail =
+            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })], page_break_before_if: None, visible_if: None };
         let doc = layout(&r, &many, &Params::new()).unwrap();
         // Body 50 mm: Lyon (6 + 30 x 5 = 156 mm) can't be kept together, so it flows from page one,
         // repeating its header (8 rows per page after it); Paris starts a new page.
@@ -971,7 +1058,8 @@ mod tests {
     fn refresh_and_print_times_follow_the_locale() {
         let mut report = Report::new("r");
         report.locale = "fr".into();
-        report.report_header = Band { height_mm: 6.0, elements: vec![el(Content::RefreshedAt), el(Content::PrintedAt)] };
+        report.report_header =
+            Band { height_mm: 6.0, elements: vec![el(Content::RefreshedAt), el(Content::PrintedAt)], page_break_before_if: None, visible_if: None };
         let mut params = Params::new();
         params.insert(REFRESHED_AT.into(), "2026-10-01T14:05:09+02:00".into());
         let doc = layout(&report, &rows(), &params).unwrap();
@@ -1005,13 +1093,24 @@ mod tests {
             keep_together: false,
             repeat_header: false,
             page_break_before: false,
-            header: Band { height_mm: 6.0, elements: vec![f("UPPER([size]) & \" (\" & COUNT([net]) & \")\"")] },
-            footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")] },
+            header: Band {
+                height_mm: 6.0,
+                elements: vec![f("UPPER([size]) & \" (\" & COUNT([net]) & \")\"")],
+                page_break_before_if: None,
+                visible_if: None,
+            },
+            footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")], page_break_before_if: None, visible_if: None },
         });
         r.sort.push(reportcraft_model::SortKey { field: "net".into(), descending: true });
         let share = Element { format: Some(reportcraft_model::Format::Percent { decimals: 0 }), ..f("[net] / SUM([net])") };
-        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "net".into() }), share] };
-        r.report_footer = Band { height_mm: 6.0, elements: vec![f("\"Total: \" & SUM([net]) & \" over \" & COUNTIF([size], \"big\") & \" big\"")] };
+        r.detail =
+            Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "net".into() }), share], page_break_before_if: None, visible_if: None };
+        r.report_footer = Band {
+            height_mm: 6.0,
+            elements: vec![f("\"Total: \" & SUM([net]) & \" over \" & COUNTIF([size], \"big\") & \" big\"")],
+            page_break_before_if: None,
+            visible_if: None,
+        };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["BIG (2)", "80", "67%", "40", "33%", "120", "SMALL (1)", "20", "100%", "20", "Total: 140 over 2 big"]);
     }
@@ -1039,6 +1138,8 @@ mod tests {
                 },
                 f("1/0"),
             ],
+            page_break_before_if: None,
+            visible_if: None,
         };
         let mut params = Params::new();
         params.insert("period".into(), "2026-10-01..2026-10-31".into());
@@ -1061,11 +1162,16 @@ mod tests {
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
         r.page.columns = 2;
-        r.page_header = Band { height_mm: 5.0, elements: vec![el(Content::Text { text: "Amount".into() })] };
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)] };
+        r.page_header =
+            Band { height_mm: 5.0, elements: vec![el(Content::Text { text: "Amount".into() })], page_break_before_if: None, visible_if: None };
+        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None };
         let number = reportcraft_model::Format::Number { decimals: 1, grouping: true };
-        r.detail =
-            Band { height_mm: 15.0, elements: vec![Element { format: Some(number.clone()), ..el(Content::Field { field: "amount".into() }) }] };
+        r.detail = Band {
+            height_mm: 15.0,
+            elements: vec![Element { format: Some(number.clone()), ..el(Content::Field { field: "amount".into() }) }],
+            page_break_before_if: None,
+            visible_if: None,
+        };
         let doc = render_continuous(&r, &rows(), &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
         assert_eq!(doc.pages.len(), 1);
         assert_eq!(texts(&doc), ["Amount", "10.0", "5.0", "2.5"]);
@@ -1074,6 +1180,63 @@ mod tests {
         assert_eq!(first.cell, Some(Cell { value: Value::Number(10.0), format: Some(number) }));
         assert!((doc.height_mm - 40.0).abs() < 1e-9, "down to the last item");
         assert_eq!(layout(&r, &rows(), &Params::new()).unwrap().pages.len(), 2, "paginated, for comparison");
+    }
+
+    #[test]
+    fn conditions_hide_bands_and_elements_and_break_pages() {
+        let cond = |c: &str| Some(c.to_owned());
+        let mut r = Report::new("t");
+        r.parameters = vec![reportcraft_model::Parameter::text("title", "", None)];
+        r.page_header = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Text { text: "Header".into() })],
+            visible_if: cond("PARAM(\"title\") <> \"\""),
+            ..Band::default()
+        };
+        r.groups.push(Group {
+            field: "branch".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
+            header: Band {
+                height_mm: 6.0,
+                elements: vec![el(Content::Field { field: "branch".into() })],
+                page_break_before_if: cond("[branch] = \"Paris\""),
+                ..Band::default()
+            },
+            footer: Band {
+                height_mm: 6.0,
+                elements: vec![el(Content::Aggregate { function: AggregateFn::Sum, field: "amount".into() })],
+                visible_if: cond("COUNT([amount]) > 1"),
+                ..Band::default()
+            },
+        });
+        let big = Element { visible_if: cond("[amount] > 6"), ..el(Content::Text { text: "big".into() }) };
+        r.detail = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::Field { field: "amount".into() }), big],
+            visible_if: cond("[amount] >= 2.5"),
+            ..Band::default()
+        };
+        // An error never hides data or breaks a page.
+        r.report_footer = Band {
+            height_mm: 6.0,
+            elements: vec![el(Content::Text { text: "end".into() })],
+            visible_if: cond("1/0"),
+            page_break_before_if: cond("1/0"),
+        };
+        let doc = layout(&r, &rows(), &Params::new()).unwrap();
+        let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();
+        assert_eq!(pages, [vec!["Lyon", "10", "big", "2.5", "12.5"], vec!["Paris", "5", "end"]]);
+        let first = doc.pages.first().and_then(|p| p.items.first()).unwrap();
+        assert!((first.y_mm - 15.0).abs() < 1e-9, "a hidden page header takes no room");
+        let mut params = Params::new();
+        params.insert("title".into(), "Q4".into());
+        let doc = layout(&r, &rows(), &params).unwrap();
+        assert_eq!(doc.pages.iter().filter(|p| p.items.iter().any(|i| i.text == "Header")).count(), 2, "shown when the parameter is given");
+        // Hiding every detail row leaves the groups.
+        r.detail.visible_if = cond("FALSE");
+        assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap()), ["Lyon", "12.5", "Paris", "end"]);
     }
 
     #[test]

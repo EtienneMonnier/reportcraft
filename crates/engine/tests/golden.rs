@@ -84,7 +84,7 @@ fn check_doc(name: &str, doc: &Document) {
 }
 
 fn el(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None }
+    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None, visible_if: None }
 }
 
 fn field(name: &str) -> Content {
@@ -151,31 +151,53 @@ fn nested_groups_across_pages() {
     r.page.height_mm = 105.0;
     r.page.margin_mm = 8.0;
     r.sort.push(SortKey { field: "amount".into(), descending: true });
-    r.report_header = Band { height_mm: 9.0, elements: vec![el(0.0, 100.0, Content::Text { text: "Nested groups".into() }, bold)] };
-    r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold)] };
+    r.report_header = Band {
+        height_mm: 9.0,
+        elements: vec![el(0.0, 100.0, Content::Text { text: "Nested groups".into() }, bold)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
+    r.page_header = Band {
+        height_mm: 6.0,
+        elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
     r.groups = vec![
         Group {
             field: "region".into(),
             keep_together: false,
             repeat_header: false,
             page_break_before: false,
-            header: Band { height_mm: 7.0, elements: vec![el(0.0, 80.0, field("region"), bold)] },
-            footer: Band { height_mm: 6.0, elements: vec![el(90.0, 40.0, agg(AggregateFn::Sum, "amount"), right)] },
+            header: Band { height_mm: 7.0, elements: vec![el(0.0, 80.0, field("region"), bold)], page_break_before_if: None, visible_if: None },
+            footer: Band {
+                height_mm: 6.0,
+                elements: vec![el(90.0, 40.0, agg(AggregateFn::Sum, "amount"), right)],
+                page_break_before_if: None,
+                visible_if: None,
+            },
         },
         Group {
             field: "branch".into(),
             keep_together: false,
             repeat_header: false,
             page_break_before: false,
-            header: Band { height_mm: 6.0, elements: vec![el(4.0, 80.0, field("branch"), bold)] },
+            header: Band { height_mm: 6.0, elements: vec![el(4.0, 80.0, field("branch"), bold)], page_break_before_if: None, visible_if: None },
             footer: Band {
                 height_mm: 6.0,
                 elements: vec![el(4.0, 40.0, agg(AggregateFn::Count, "item"), plain), el(90.0, 40.0, agg(AggregateFn::Avg, "amount"), right)],
+                page_break_before_if: None,
+                visible_if: None,
             },
         },
     ];
-    r.detail = Band { height_mm: 5.0, elements: vec![el(8.0, 60.0, field("item"), plain), el(90.0, 40.0, field("amount"), right)] };
-    r.page_footer = Band { height_mm: 5.0, elements: vec![el(90.0, 40.0, Content::PageNumber, right)] };
+    r.detail = Band {
+        height_mm: 5.0,
+        elements: vec![el(8.0, 60.0, field("item"), plain), el(90.0, 40.0, field("amount"), right)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
+    r.page_footer = Band { height_mm: 5.0, elements: vec![el(90.0, 40.0, Content::PageNumber, right)], page_break_before_if: None, visible_if: None };
     r.report_footer = Band {
         height_mm: 7.0,
         elements: vec![
@@ -183,6 +205,8 @@ fn nested_groups_across_pages() {
             el(45.0, 40.0, agg(AggregateFn::Max, "days"), plain),
             el(90.0, 40.0, agg(AggregateFn::Sum, "amount"), TextStyle { bold: true, ..right }),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     check("nested_groups_across_pages", &r, &rentals(60), &Params::new());
 }
@@ -201,9 +225,15 @@ fn bands_that_exactly_fill_the_page() {
     let mut r = Report::new("Exact fit");
     r.page.height_mm = 100.0;
     r.page.margin_mm = 10.0;
-    r.page_footer = Band { height_mm: 10.0, elements: vec![el(0.0, 40.0, Content::PageNumber, TextStyle::default())] };
+    r.page_footer = Band {
+        height_mm: 10.0,
+        elements: vec![el(0.0, 40.0, Content::PageNumber, TextStyle::default())],
+        page_break_before_if: None,
+        visible_if: None,
+    };
     // 100 - 2 * 10 margin - 10 footer = 70 mm of body: seven 10 mm rows per page.
-    r.detail = Band { height_mm: 10.0, elements: vec![el(0.0, 60.0, field("item"), TextStyle::default())] };
+    r.detail =
+        Band { height_mm: 10.0, elements: vec![el(0.0, 60.0, field("item"), TextStyle::default())], page_break_before_if: None, visible_if: None };
     check("bands_that_exactly_fill_the_page", &r, &rentals(14), &Params::new());
 }
 
@@ -226,6 +256,8 @@ fn formats_in_french() {
             fmt(el(112.0, 25.0, field("ratio"), right), Format::Percent { decimals: 1 }),
             fmt(el(140.0, 30.0, field("note"), plain), Format::Number { decimals: 2, grouping: true }),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     r.report_footer = Band {
         height_mm: 6.0,
@@ -234,6 +266,8 @@ fn formats_in_french() {
             fmt(el(112.0, 25.0, agg(AggregateFn::Count, "amount"), right), eur),
             fmt(el(0.0, 70.0, Content::Parameter { name: "period".into() }, plain), Format::Date { pattern: None }),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     let col = |name: &str, t| Column { name: name.into(), field_type: t };
     let rows = RowSet {
@@ -263,27 +297,42 @@ fn group_pagination() {
     r.page.width_mm = 148.0;
     r.page.height_mm = 105.0;
     r.page.margin_mm = 8.0;
-    r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold)] };
+    r.page_header = Band {
+        height_mm: 6.0,
+        elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
     r.groups = vec![
         Group {
             field: "region".into(),
             keep_together: false,
             repeat_header: true,
             page_break_before: true,
-            header: Band { height_mm: 7.0, elements: vec![el(0.0, 80.0, field("region"), bold)] },
-            footer: Band { height_mm: 6.0, elements: vec![el(0.0, 80.0, Content::Text { text: "end of region".into() }, plain)] },
+            header: Band { height_mm: 7.0, elements: vec![el(0.0, 80.0, field("region"), bold)], page_break_before_if: None, visible_if: None },
+            footer: Band {
+                height_mm: 6.0,
+                elements: vec![el(0.0, 80.0, Content::Text { text: "end of region".into() }, plain)],
+                page_break_before_if: None,
+                visible_if: None,
+            },
         },
         Group {
             field: "branch".into(),
             keep_together: true,
             repeat_header: false,
             page_break_before: false,
-            header: Band { height_mm: 6.0, elements: vec![el(4.0, 80.0, field("branch"), bold)] },
-            footer: Band { height_mm: 6.0, elements: vec![el(4.0, 40.0, agg(AggregateFn::Count, "item"), plain)] },
+            header: Band { height_mm: 6.0, elements: vec![el(4.0, 80.0, field("branch"), bold)], page_break_before_if: None, visible_if: None },
+            footer: Band {
+                height_mm: 6.0,
+                elements: vec![el(4.0, 40.0, agg(AggregateFn::Count, "item"), plain)],
+                page_break_before_if: None,
+                visible_if: None,
+            },
         },
     ];
-    r.detail = Band { height_mm: 5.0, elements: vec![el(8.0, 60.0, field("item"), plain)] };
-    r.page_footer = Band { height_mm: 5.0, elements: vec![el(90.0, 40.0, Content::PageNumber, plain)] };
+    r.detail = Band { height_mm: 5.0, elements: vec![el(8.0, 60.0, field("item"), plain)], page_break_before_if: None, visible_if: None };
+    r.page_footer = Band { height_mm: 5.0, elements: vec![el(90.0, 40.0, Content::PageNumber, plain)], page_break_before_if: None, visible_if: None };
     check("group_pagination", &r, &rentals(24), &Params::new());
 }
 
@@ -296,19 +345,41 @@ fn landscape_columns() {
     let bold = TextStyle { bold: true, ..plain };
     let mut r = Report::new("Columns");
     r.page = PageSetup { margin_mm: 10.0, columns: 3, column_gap_mm: 4.0, ..PageSetup::paper(Paper::A5, Orientation::Landscape) };
-    r.report_header = Band { height_mm: 8.0, elements: vec![el(0.0, 190.0, Content::Text { text: "Items by region".into() }, bold)] };
-    r.page_header = Band { height_mm: 6.0, elements: vec![el(0.0, 190.0, Content::Text { text: "Rentals".into() }, plain)] };
+    r.report_header = Band {
+        height_mm: 8.0,
+        elements: vec![el(0.0, 190.0, Content::Text { text: "Items by region".into() }, bold)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
+    r.page_header = Band {
+        height_mm: 6.0,
+        elements: vec![el(0.0, 190.0, Content::Text { text: "Rentals".into() }, plain)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
     r.groups = vec![Group {
         field: "region".into(),
         keep_together: false,
         repeat_header: true,
         page_break_before: false,
-        header: Band { height_mm: 6.0, elements: vec![el(0.0, 56.0, field("region"), bold)] },
-        footer: Band { height_mm: 6.0, elements: vec![el(0.0, 56.0, agg(AggregateFn::Count, "item"), plain)] },
+        header: Band { height_mm: 6.0, elements: vec![el(0.0, 56.0, field("region"), bold)], page_break_before_if: None, visible_if: None },
+        footer: Band {
+            height_mm: 6.0,
+            elements: vec![el(0.0, 56.0, agg(AggregateFn::Count, "item"), plain)],
+            page_break_before_if: None,
+            visible_if: None,
+        },
     }];
-    r.detail = Band { height_mm: 5.0, elements: vec![el(2.0, 40.0, field("item"), plain), el(42.0, 14.0, field("days"), plain)] };
-    r.page_footer = Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, plain)] };
-    r.report_footer = Band { height_mm: 6.0, elements: vec![el(0.0, 190.0, agg(AggregateFn::Sum, "days"), bold)] };
+    r.detail = Band {
+        height_mm: 5.0,
+        elements: vec![el(2.0, 40.0, field("item"), plain), el(42.0, 14.0, field("days"), plain)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
+    r.page_footer =
+        Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, plain)], page_break_before_if: None, visible_if: None };
+    r.report_footer =
+        Band { height_mm: 6.0, elements: vec![el(0.0, 190.0, agg(AggregateFn::Sum, "days"), bold)], page_break_before_if: None, visible_if: None };
     check("landscape_columns", &r, &rentals(70), &Params::new());
 }
 
@@ -326,12 +397,15 @@ fn lines_and_boxes() {
         style: plain,
         content,
         format: None,
+        visible_if: None,
     };
     let line = |color: &str| Content::Line { thickness_mm: 0.3, color: color.into() };
     let mut r = Report::new("Shapes");
     r.page_header = Band {
         height_mm: 8.0,
         elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, bold), shape(0.0, 7.0, 180.0, 0.0, line("#333"))],
+        page_break_before_if: None,
+        visible_if: None,
     };
     r.groups = vec![Group {
         field: "branch".into(),
@@ -344,6 +418,8 @@ fn lines_and_boxes() {
                 shape(0.0, 0.5, 180.0, 6.0, Content::Rect { border_mm: 0.0, border_color: "#000".into(), fill: Some("#eeeeee".into()) }),
                 el(2.0, 80.0, field("branch"), bold),
             ],
+            page_break_before_if: None,
+            visible_if: None,
         },
         footer: Band {
             height_mm: 8.0,
@@ -351,6 +427,8 @@ fn lines_and_boxes() {
                 shape(120.0, 0.5, 60.0, 6.5, Content::Rect { border_mm: 0.4, border_color: "#1f4e79".into(), fill: None }),
                 el(122.0, 56.0, agg(AggregateFn::Sum, "amount"), TextStyle { align: Align::Right, ..bold }),
             ],
+            page_break_before_if: None,
+            visible_if: None,
         },
     }];
     r.detail = Band {
@@ -360,6 +438,8 @@ fn lines_and_boxes() {
             shape(118.0, 0.0, 0.0, 5.0, line("#999999")),
             el(122.0, 56.0, field("amount"), TextStyle { align: Align::Right, ..plain }),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     check("lines_and_boxes", &r, &rentals(6), &Params::new());
 }
@@ -384,7 +464,7 @@ fn labels_across() {
         keep_together: false,
         repeat_header: false,
         page_break_before: false,
-        header: Band { height_mm: 8.0, elements: vec![el(0.0, 60.0, field("region"), bold)] },
+        header: Band { height_mm: 8.0, elements: vec![el(0.0, 60.0, field("region"), bold)], page_break_before_if: None, visible_if: None },
         footer: Band::default(),
     }];
     r.detail = Band {
@@ -394,6 +474,8 @@ fn labels_across() {
             Element { y_mm: 8.0, ..el(3.0, 55.0, field("branch"), plain) },
             Element { y_mm: 15.0, ..el(3.0, 55.0, field("days"), plain) },
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     // 13 North (4 full rows and 1 label) and 12 South labels.
     let mut rows = rentals(25);
@@ -416,6 +498,7 @@ fn barcodes() {
         style: plain,
         format: None,
         content: Content::Barcode { symbology, field: Some(field_name.into()), text: None, show_text: true, ec_level: EcLevel::M },
+        visible_if: None,
     };
     r.report_header = Band {
         height_mm: 22.0,
@@ -435,8 +518,11 @@ fn barcodes() {
                     show_text: false,
                     ec_level: EcLevel::Q,
                 },
+                visible_if: None,
             },
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     r.detail = Band {
         height_mm: 50.0,
@@ -446,6 +532,8 @@ fn barcodes() {
             code(Symbology::Ean13, "ean", 0.0, 24.0, 40.0, 20.0),
             code(Symbology::Qr, "url", 62.0, 7.0, 22.0, 22.0),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     let col = |name: &str| Column { name: name.into(), field_type: FieldType::Text };
     let text = |v: &str| if v.is_empty() { Value::Null } else { Value::Text(v.into()) };
@@ -483,6 +571,8 @@ fn subreports() {
             at(80.0, 20.0, Content::Text { text: "Days".into() }, bold),
             at(100.0, 40.0, Content::Text { text: "Amount".into() }, TextStyle { align: Align::Right, ..bold }),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     lines.detail = Band {
         height_mm: 5.0,
@@ -491,6 +581,8 @@ fn subreports() {
             at(80.0, 20.0, field("days"), plain),
             Element { format: money.clone(), ..at(100.0, 40.0, field("amount"), right) },
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     lines.report_footer = Band {
         height_mm: 6.0,
@@ -498,12 +590,20 @@ fn subreports() {
             at(0.0, 80.0, Content::Text { text: "Total".into() }, bold),
             Element { format: money.clone(), ..at(100.0, 40.0, agg(AggregateFn::Sum, "amount"), TextStyle { align: Align::Right, ..bold }) },
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
 
     let mut r = Report::new("Statements");
     r.page = PageSetup { height_mm: 120.0, margin_mm: 10.0, ..PageSetup::default() };
-    r.page_header = Band { height_mm: 7.0, elements: vec![el(0.0, 100.0, Content::Text { text: "Customer statements".into() }, bold)] };
-    r.page_footer = Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, right)] };
+    r.page_header = Band {
+        height_mm: 7.0,
+        elements: vec![el(0.0, 100.0, Content::Text { text: "Customer statements".into() }, bold)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
+    r.page_footer =
+        Band { height_mm: 5.0, elements: vec![el(150.0, 40.0, Content::PageNumber, right)], page_break_before_if: None, visible_if: None };
     r.detail = Band {
         height_mm: 14.0,
         elements: vec![
@@ -521,10 +621,18 @@ fn subreports() {
                     links: vec![SubreportLink { parent: "id".into(), child: "customer".into() }],
                     hide_when_empty: true,
                 },
+                visible_if: None,
             },
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
-    r.report_footer = Band { height_mm: 6.0, elements: vec![el(0.0, 100.0, Content::Text { text: "End of statements".into() }, plain)] };
+    r.report_footer = Band {
+        height_mm: 6.0,
+        elements: vec![el(0.0, 100.0, Content::Text { text: "End of statements".into() }, plain)],
+        page_break_before_if: None,
+        visible_if: None,
+    };
 
     let col = |name: &str, t| Column { name: name.into(), field_type: t };
     let customers = RowSet {
@@ -590,6 +698,8 @@ fn formulas() {
         header: Band {
             height_mm: 7.0,
             elements: vec![el(0.0, 120.0, formula("MID([length], 4, 20) & \" rentals (\" & COUNT([days]) & \")\""), bold)],
+            page_break_before_if: None,
+            visible_if: None,
         },
         footer: Band {
             height_mm: 7.0,
@@ -602,6 +712,8 @@ fn formulas() {
                 ),
                 money(el(140.0, 40.0, formula("SUM([amount])"), right)),
             ],
+            page_break_before_if: None,
+            visible_if: None,
         },
     });
     r.detail = Band {
@@ -613,9 +725,11 @@ fn formulas() {
             Element { format: Some(Format::Percent { decimals: 1 }), ..el(115.0, 25.0, formula("[amount] / SUM([amount])"), right) },
             money(el(140.0, 40.0, field("amount"), right)),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     // Report footer: a share computed from conditional sums.
-    r.report_footer = Band { height_mm: 7.0, elements: Vec::new() };
+    r.report_footer = Band { height_mm: 7.0, elements: Vec::new(), page_break_before_if: None, visible_if: None };
     r.report_footer.elements = vec![
         el(
             0.0,
@@ -626,4 +740,49 @@ fn formulas() {
         money(el(140.0, 40.0, formula("SUM([amount])"), right)),
     ];
     check("formulas", &r, &rentals(24), &Params::new());
+}
+
+/// Conditions (R2.10): rows, elements and footers shown on a formula, a page break on a value.
+#[test]
+fn conditions() {
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let right = TextStyle { align: Align::Right, ..plain };
+    let cond = |c: &str| Some(c.to_owned());
+    let mut r = Report::new("Long rentals");
+    r.page_header = Band { height_mm: 7.0, elements: vec![el(0.0, 100.0, Content::Text { text: "Long rentals".into() }, bold)], ..Band::default() };
+    r.groups.push(Group {
+        field: "region".into(),
+        keep_together: false,
+        repeat_header: false,
+        page_break_before: false,
+        header: Band {
+            height_mm: 7.0,
+            elements: vec![el(0.0, 60.0, field("region"), bold)],
+            page_break_before_if: cond("[region] = \"South\""),
+            ..Band::default()
+        },
+        footer: Band {
+            height_mm: 7.0,
+            elements: vec![
+                el(0.0, 60.0, Content::Formula { expression: "COUNT([days]) & \" rentals\"".into() }, plain),
+                el(120.0, 40.0, agg(AggregateFn::Sum, "amount"), right),
+            ],
+            visible_if: cond("COUNT([days]) > 3"),
+            ..Band::default()
+        },
+    });
+    r.sort.push(SortKey { field: "days".into(), descending: true });
+    r.detail = Band {
+        height_mm: 5.5,
+        elements: vec![
+            el(0.0, 60.0, field("item"), plain),
+            el(60.0, 20.0, field("days"), right),
+            Element { visible_if: cond("[days] >= 10"), ..el(85.0, 30.0, Content::Text { text: "two weeks".into() }, bold) },
+            el(120.0, 40.0, field("amount"), right),
+        ],
+        visible_if: cond("[days] > 2"),
+        ..Band::default()
+    };
+    check("conditions", &r, &rentals(24), &Params::new());
 }

@@ -24,7 +24,7 @@ Annecy,Scaffold tower,9,405.00
 ";
 
 fn text(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None }
+    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None, visible_if: None }
 }
 
 /// Amounts: two decimals, grouped thousands.
@@ -52,6 +52,8 @@ fn rentals() -> Report {
             text(0.0, 120.0, Content::Text { text: "Rentals by branch".into() }, TextStyle { size_pt: 16.0, bold: true, ..plain }),
             Element { y_mm: 8.0, ..text(0.0, 120.0, Content::Parameter { name: "period".into() }, plain) },
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     r.page_header = Band {
         height_mm: 7.0,
@@ -60,13 +62,15 @@ fn rentals() -> Report {
             text(90.0, 30.0, Content::Text { text: "Days".into() }, bold_right),
             text(130.0, 50.0, Content::Text { text: "Amount".into() }, bold_right),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     r.groups.push(Group {
         field: "branch".into(),
         keep_together: false,
         repeat_header: false,
         page_break_before: false,
-        header: Band { height_mm: 7.0, elements: vec![text(0.0, 120.0, field("branch"), bold)] },
+        header: Band { height_mm: 7.0, elements: vec![text(0.0, 120.0, field("branch"), bold)], page_break_before_if: None, visible_if: None },
         footer: Band {
             height_mm: 8.0,
             elements: vec![
@@ -74,6 +78,8 @@ fn rentals() -> Report {
                 text(90.0, 30.0, sum("days"), bold_right),
                 money(text(130.0, 50.0, sum("amount"), bold_right)),
             ],
+            page_break_before_if: None,
+            visible_if: None,
         },
     });
     r.detail = Band {
@@ -83,11 +89,16 @@ fn rentals() -> Report {
             text(90.0, 30.0, field("days"), right),
             money(text(130.0, 50.0, field("amount"), right)),
         ],
+        page_break_before_if: None,
+        visible_if: None,
     };
     r.report_footer = Band {
         height_mm: 9.0,
         elements: vec![text(0.0, 80.0, Content::Text { text: "Grand total".into() }, bold), money(text(130.0, 50.0, sum("amount"), bold_right))],
+        page_break_before_if: None,
+        visible_if: None,
     };
-    r.page_footer = Band { height_mm: 6.0, elements: vec![text(130.0, 50.0, Content::PageNumber, right)] };
+    r.page_footer =
+        Band { height_mm: 6.0, elements: vec![text(130.0, 50.0, Content::PageNumber, right)], page_break_before_if: None, visible_if: None };
     r
 }
