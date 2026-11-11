@@ -109,7 +109,11 @@
   doesn't; an error never hides a band or element and never breaks a page. Hidden rows still count
   in their group's totals. A hidden page header takes no room, a hidden page footer keeps its room.
   `report.validate` checks the conditions as formulas.
-- CLI and MCP server reaching every command. 142 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
+- MCP agents work within what the user set up (§11): `reportcraft-cli mcp` reaches databases only
+  through saved connections and can propose, but not confirm, printing or changing a connection
+  (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
+  edits the session, or acts outside the application).
+- CLI and MCP server reaching every command. 144 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).

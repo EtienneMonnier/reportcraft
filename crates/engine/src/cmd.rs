@@ -15,18 +15,40 @@ pub struct CommandSpec {
     pub menu: &'static str,
     /// Parameters, as shown by `reportcraft-cli commands` and the MCP tool list.
     pub params: &'static str,
+    /// What the command touches, for tools that must tell reads from actions (MCP annotations).
+    pub access: Access,
     pub run: fn(&mut Session, &Json) -> EngineResult<Json>,
 }
 
+/// What a command touches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// Reads the session or a database; changes nothing.
+    Read,
+    /// Changes the session (the open report, the loaded data), nothing outside it.
+    Edit,
+    /// Acts outside the application (prints, writes the user's settings or keychain). Such
+    /// commands do nothing without `"confirm": true`, which an agent session may not give.
+    External,
+}
+
 static COMMANDS: &[CommandSpec] = &[
-    CommandSpec { id: "file.new", label: "New report", menu: "File", params: r#"{"title"?: string}"#, run: file_new },
-    CommandSpec { id: "file.openSample", label: "Open sample", menu: "File", params: r#"{"name": "rentals"}"#, run: file_open_sample },
-    CommandSpec { id: "file.printers", label: "Printers", menu: "File", params: "{}", run: file_printers },
+    CommandSpec { id: "file.new", label: "New report", menu: "File", params: r#"{"title"?: string}"#, access: Access::Edit, run: file_new },
+    CommandSpec {
+        id: "file.openSample",
+        label: "Open sample",
+        menu: "File",
+        params: r#"{"name": "rentals"}"#,
+        access: Access::Edit,
+        run: file_open_sample,
+    },
+    CommandSpec { id: "file.printers", label: "Printers", menu: "File", params: "{}", access: Access::Read, run: file_printers },
     CommandSpec {
         id: "file.print",
         label: "Print",
         menu: "File",
         params: r#"{"confirm"?: boolean (send the job; without it nothing is printed and the result says what would be), "printer"?: string (default: the system default printer), "copies"?: integer (1 to 99), "collate"?: boolean (default true), "duplex"?: "off" | "long" | "short" (default: the printer's), "grayscale"?: boolean, "fit"?: boolean (shrink to the printer's paper; default: exact size), "pages"?: string ("1-3,5", "8-"), "params"?: {name: value or [values]}, "timeoutSeconds"?: integer}"#,
+        access: Access::External,
         run: file_print,
     },
     CommandSpec {
@@ -34,22 +56,25 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Load report definition",
         menu: "File",
         params: r#"{"json": string (a report definition)}"#,
+        access: Access::Edit,
         run: report_load,
     },
-    CommandSpec { id: "report.get", label: "Report definition", menu: "Report", params: "{}", run: report_get },
+    CommandSpec { id: "report.get", label: "Report definition", menu: "Report", params: "{}", access: Access::Read, run: report_get },
     CommandSpec {
         id: "data.loadCsv",
         label: "Load CSV data",
         menu: "Data",
         params: r#"{"csv": string (header row first), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        access: Access::Edit,
         run: data_load_csv,
     },
-    CommandSpec { id: "data.connections", label: "Connections", menu: "Data", params: "{}", run: data_connections },
+    CommandSpec { id: "data.connections", label: "Connections", menu: "Data", params: "{}", access: Access::Read, run: data_connections },
     CommandSpec {
         id: "data.saveConnection",
         label: "Save connection",
         menu: "Data",
         params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432), "user"?: string, "database"?: string (postgres), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
+        access: Access::External,
         run: data_save_connection,
     },
     CommandSpec {
@@ -57,14 +82,23 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Delete connection",
         menu: "Data",
         params: r#"{"name": string, "confirm"?: boolean (delete it and its password; without it nothing changes)}"#,
+        access: Access::External,
         run: data_delete_connection,
     },
-    CommandSpec { id: "data.testConnection", label: "Test connection", menu: "Data", params: r#"{"name": string}"#, run: data_test_connection },
+    CommandSpec {
+        id: "data.testConnection",
+        label: "Test connection",
+        menu: "Data",
+        params: r#"{"name": string}"#,
+        access: Access::Read,
+        run: data_test_connection,
+    },
     CommandSpec {
         id: "data.loadSqlite",
         label: "Load SQLite data",
         menu: "Data",
         params: r#"{"path": string (database file, opened read-only) or "saved": string (a saved connection), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        access: Access::Edit,
         run: data_load_sqlite,
     },
     CommandSpec {
@@ -72,6 +106,7 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Describe SQLite database",
         menu: "Data",
         params: r#"{"path": string (database file, opened read-only) or "saved": string (a saved connection), "table"?: string (only this table or view)}"#,
+        access: Access::Read,
         run: data_describe_sqlite,
     },
     CommandSpec {
@@ -79,6 +114,7 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Preview SQLite table",
         menu: "Data",
         params: r#"{"path": string or "saved": string (a saved connection), "table": string (table or view), "limit"?: integer (default 20, at most 1000)}"#,
+        access: Access::Read,
         run: data_preview_sqlite,
     },
     CommandSpec {
@@ -86,6 +122,7 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Load PostgreSQL data",
         menu: "Data",
         params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD) or "saved": string (a saved connection, password from the keychain), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        access: Access::Edit,
         run: data_load_postgres,
     },
     CommandSpec {
@@ -93,6 +130,7 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Describe PostgreSQL database",
         menu: "Data",
         params: r#"{"connection": string (libpq string or postgresql:// URL) or "saved": string (a saved connection, password from the keychain), "table"?: string (only this table or view; `schema.table` outside public)}"#,
+        access: Access::Read,
         run: data_describe_postgres,
     },
     CommandSpec {
@@ -100,14 +138,16 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Preview PostgreSQL table",
         menu: "Data",
         params: r#"{"connection": string (libpq string or postgresql:// URL) or "saved": string (a saved connection, password from the keychain), "table": string, "limit"?: integer (default 20, at most 1000)}"#,
+        access: Access::Read,
         run: data_preview_postgres,
     },
-    CommandSpec { id: "data.datasets", label: "Datasets", menu: "Data", params: "{}", run: data_datasets },
+    CommandSpec { id: "data.datasets", label: "Datasets", menu: "Data", params: "{}", access: Access::Read, run: data_datasets },
     CommandSpec {
         id: "data.preview",
         label: "Preview data",
         menu: "Data",
         params: r#"{"limit"?: integer (default 20, at most 1000)}"#,
+        access: Access::Read,
         run: data_preview,
     },
     CommandSpec {
@@ -115,16 +155,18 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Query log",
         menu: "Data",
         params: r#"{"limit"?: integer (newest entries, default 50, at most 200)}"#,
+        access: Access::Read,
         run: data_query_log,
     },
-    CommandSpec { id: "data.clearQueryLog", label: "Clear query log", menu: "Data", params: "{}", run: data_clear_query_log },
-    CommandSpec { id: "data.clearCache", label: "Clear query cache", menu: "Data", params: "{}", run: data_clear_cache },
-    CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", run: report_parameters },
+    CommandSpec { id: "data.clearQueryLog", label: "Clear query log", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_query_log },
+    CommandSpec { id: "data.clearCache", label: "Clear query cache", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_cache },
+    CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", access: Access::Read, run: report_parameters },
     CommandSpec {
         id: "report.validate",
         label: "Check report",
         menu: "Report",
         params: r#"{"json"?: string (a definition to check instead of the open report)}"#,
+        access: Access::Read,
         run: report_validate,
     },
     CommandSpec {
@@ -132,6 +174,7 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Evaluate formula",
         menu: "Report",
         params: r#"{"expression": string (Excel-style: "[price] * [qty]", "IF([qty] > 10, \"bulk\", \"unit\")", "[amount] / SUM([amount])"), "limit"?: integer (rows, default 10, at most 1000), "params"?: {name: value or [values]}}"#,
+        access: Access::Read,
         run: report_evaluate_formula,
     },
     CommandSpec {
@@ -139,6 +182,7 @@ static COMMANDS: &[CommandSpec] = &[
         label: "Render",
         menu: "Report",
         params: r#"{"format"?: "html" | "pdf" | "xlsx" | "docx" | "json" (default "html"; pdf, xlsx and docx come back base64-encoded as pdfBase64, xlsxBase64, docxBase64; xlsx is one continuous sheet with numbers and dates typed, docx keeps the pages; fonts from REPORTCRAFT_FONT/REPORTCRAFT_FONT_BOLD, CRAFT_FONTS_DIR or the system), "params"?: {name: value or [values] (dates YYYY-MM-DD, ranges YYYY-MM-DD..YYYY-MM-DD)}, "timeoutSeconds"?: integer (default 120, at most 3600)}"#,
+        access: Access::Read,
         run: report_render,
     },
 ];
@@ -238,12 +282,42 @@ fn now_local() -> Option<String> {
     None
 }
 
+/// Whether an external action is confirmed (`"confirm": true`). A session whose policy keeps
+/// external actions for a person refuses the confirmation instead of acting.
+#[cfg(not(target_arch = "wasm32"))]
+fn confirmed(s: &Session, command: &str, params: &Json) -> EngineResult<bool> {
+    let asked = params.get("confirm").and_then(Json::as_bool).unwrap_or(false);
+    if asked && !s.policy.external_actions {
+        return Err(bad(
+            command,
+            "only a person can confirm this (from the app or the command line); without `confirm`, the result shows what would be done",
+        ));
+    }
+    Ok(asked)
+}
+
+/// Refuses a raw file path or connection string when the session may use saved connections only.
+#[cfg(not(target_arch = "wasm32"))]
+fn raw_source_allowed(s: &Session, command: &str) -> EngineResult<()> {
+    if s.policy.raw_sources {
+        Ok(())
+    } else {
+        Err(bad(
+            command,
+            "this session may use saved connections only: pass `saved` with a name from data.connections, or ask the user to save the database (`reportcraft-cli connections save`)",
+        ))
+    }
+}
+
 /// The database file: `path`, or the file of the saved connection named by `saved`.
 #[cfg(not(target_arch = "wasm32"))]
 fn sqlite_path(s: &Session, command: &str, params: &Json) -> EngineResult<String> {
     match params.get("saved").and_then(Json::as_str) {
         Some(name) => Ok(s.with_connections(|c| c.sqlite_path(name))?),
-        None => str_param(command, params, "path").map(str::to_owned).map_err(|_| bad(command, "`path` or `saved` (a saved connection) is required")),
+        None => {
+            raw_source_allowed(s, command)?;
+            str_param(command, params, "path").map(str::to_owned).map_err(|_| bad(command, "`path` or `saved` (a saved connection) is required"))
+        }
     }
 }
 
@@ -253,9 +327,12 @@ fn sqlite_path(s: &Session, command: &str, params: &Json) -> EngineResult<String
 fn postgres_conninfo(s: &Session, command: &str, params: &Json) -> EngineResult<String> {
     match params.get("saved").and_then(Json::as_str) {
         Some(name) => Ok(s.with_connections(|c| c.conninfo(name))?),
-        None => str_param(command, params, "connection")
-            .map(str::to_owned)
-            .map_err(|_| bad(command, "`connection` or `saved` (a saved connection) is required")),
+        None => {
+            raw_source_allowed(s, command)?;
+            str_param(command, params, "connection")
+                .map(str::to_owned)
+                .map_err(|_| bad(command, "`connection` or `saved` (a saved connection) is required"))
+        }
     }
 }
 
@@ -310,7 +387,7 @@ fn data_save_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
     connection.check()?;
     let password = params.get("password").and_then(Json::as_str);
     let summary = json!({"name": connection.name, "kind": connection.target.kind(), "target": connection.target.describe()});
-    if params.get("confirm").and_then(Json::as_bool) != Some(true) {
+    if !confirmed(s, "data.saveConnection", params)? {
         return Ok(json!({"saved": false, "connection": summary, "password": password.map(|p| !p.is_empty())}));
     }
     s.with_connections(|c| c.save(connection, password))?;
@@ -321,7 +398,7 @@ fn data_save_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
 fn data_delete_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.deleteConnection";
     let name = str_param(CMD, params, "name")?.to_owned();
-    if params.get("confirm").and_then(Json::as_bool) != Some(true) {
+    if !confirmed(s, CMD, params)? {
         let exists = s.with_connections(|c| Ok(c.get(&name).is_some()))?;
         return Ok(json!({"deleted": false, "exists": exists}));
     }
@@ -818,6 +895,7 @@ fn print_job(s: &Session, params: &Json) -> EngineResult<craft_print::Job> {
 #[cfg(not(target_arch = "wasm32"))]
 fn file_print(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "file.print";
+    let confirmed = confirmed(s, CMD, params)?;
     let job = print_job(s, params)?;
     let command = craft_print::command_preview(&job).map_err(|e| reportcraft_core::Error::Unsupported(e.to_string()))?;
     let resolved = resolve_parameters(s, CMD, params)?;
@@ -835,7 +913,6 @@ fn file_print(s: &mut Session, params: &Json) -> EngineResult<Json> {
     }
     let fonts = reportcraft_pdf::Fonts::find()?;
     let pdf = reportcraft_pdf::to_pdf(&doc, &fonts, concat!("ReportCraft ", env!("CARGO_PKG_VERSION")), &render_limit(s, params))?;
-    let confirmed = params.get("confirm").and_then(Json::as_bool).unwrap_or(false);
     let spooler = if confirmed {
         Some(craft_print::submit(&pdf.bytes, &job).map_err(|e| reportcraft_core::Error::Io(format!("printing: {e}")))?)
     } else {

@@ -18,13 +18,13 @@ Anything marked **decision** waits for a maintainer.
 ## R1 — Data connections (owner: open)
 - [x] R1.1 SQLite source (read-only), with a query and typed columns (#1)
   - [x] Pick the database file through a named connection (R1.3: `"saved": NAME`)
-  - [ ] Restrict MCP agents to saved connections (specification §11; see R1.3)
+  - [x] Restrict MCP agents to saved connections (specification §11; see R1.3)
 - [x] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases (#2)
   - [ ] TLS connections (`sslmode=require`): only plain connections today — **decision**: rustls-based connector
   - [ ] Read `~/.pgpass` / `PGPASSFILE` as libpq does (PGPASSWORD works today)
   - [ ] Run the live PostgreSQL tests in CI (needs a PostgreSQL service in craft-common-actions or a local job)
 - [x] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports (#3)
-  - [ ] Let an MCP session use saved connections only (no raw file path or connection string), as §11 asks
+  - [x] Let an MCP session use saved connections only (no raw file path or connection string), as §11 asks
   - [ ] Saved connections in report files by name (`"connection": "odoo-prod"`), so a report knows where its data lives
   - [ ] A connections panel in the designer (R3), with a password field that never shows the kept one
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
@@ -82,7 +82,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.8 Printing through craft-libs `craft-print` (#14)
   - [ ] The printer's own options (tray, paper type: `craft_print::printer_options`) and a print dialog in the designer (R3)
   - [ ] Page ranges for PDF, XLSX and DOCX exports too (`select_pages` exists)
-  - [ ] Mark commands that act outside the app (print, later publish) in the MCP tool list, and ask the user before an agent prints
+  - [x] Mark commands that act outside the app (print, later publish) in the MCP tool list, and ask the user before an agent prints
   - [ ] Print progress and cancellation once the spooler has the job (craft-print reports Windows progress only)
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
   - [x] Columns filled across then down (needed by labels, R2.12)
