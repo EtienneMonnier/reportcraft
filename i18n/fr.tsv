@@ -119,3 +119,32 @@
 	line	courbe
 	pie	camembert
 	by	par
+	Check	Vérifier
+	Connections	Connexions
+	Connections…	Connexions…
+	Database	Base de données
+	Database file	Fichier de base de données
+	Database name	Nom de la base
+	Host	Hôte
+	New connection	Nouvelle connexion
+	No saved connection yet.	Aucune connexion enregistrée.
+	Port	Port
+	Test	Tester
+	Two-sided	Recto verso
+	all, or 1-3,5	toutes, ou 1-3,5
+	black and white	noir et blanc
+	connection saved	connexion enregistrée
+	error correction	correction d'erreur
+	fixed text	texte fixe
+	from a field	d'un champ
+	kept in the system keychain	conservé dans le trousseau du système
+	one-sided	recto seul
+	sent to the printer	envoyé à l'imprimante
+	show the text	afficher le texte
+	shrink to the paper	réduire au papier
+	the default printer	l'imprimante par défaut
+	the printer's setting	le réglage de l'imprimante
+	two-sided, long edge	recto verso, bord long
+	two-sided, short edge	recto verso, bord court
+	{name}: works, {n} table(s)	{name} : fonctionne, {n} table(s)
+	{n} page(s) of {of}, {copies} copy(ies)	{n} page(s) sur {of}, {copies} exemplaire(s)

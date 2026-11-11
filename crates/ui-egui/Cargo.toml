@@ -19,3 +19,7 @@ craft-i18n.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+reportcraft-connections.workspace = true
+reportcraft-pdf.workspace = true
