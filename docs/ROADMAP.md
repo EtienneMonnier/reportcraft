@@ -140,6 +140,10 @@ Anything marked **decision** waits for a maintainer.
 
 ## R5 — Dashboards (owner: maintainers)
 - [ ] R5.1 KPI tiles, charts, pivot tables, filters
+  - [x] Charts in reports: bars, line, pie of a field totalled by category, over the rows a band summarises (#23)
+  - [ ] More charts: several series, stacked bars, scatter, axes with ticks and gridlines, legends placed at will
+  - [ ] Charts in XLSX exports (native Excel charts through rust_xlsxwriter)
+  - [ ] KPI tiles, pivot tables, filters and an interactive dashboard page
 - [ ] R5.2 Odoo o-spreadsheet dashboard import (format from public documentation)
 
 ## Order and dependencies

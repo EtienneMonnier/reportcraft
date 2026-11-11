@@ -2,6 +2,7 @@
 //! toolkit-free. Writers (HTML here; PDF next, through craft-libs' craft-pdf) read `Document`.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod chart;
 mod format;
 mod formula;
 mod html;
@@ -83,6 +84,12 @@ pub enum Shape {
         rows: usize,
         quiet: usize,
         modules: String,
+    },
+    /// A filled polygon (a pie chart's wedge): its corners in millimetres from the page's corner;
+    /// the item's box bounds them.
+    Polygon {
+        points: Vec<[f64; 2]>,
+        fill: String,
     },
 }
 
@@ -334,7 +341,7 @@ fn link_key(v: &Value) -> String {
     v.to_string()
 }
 
-fn row_of(rows: &RowSet, i: usize) -> &[reportcraft_core::Value] {
+pub(crate) fn row_of(rows: &RowSet, i: usize) -> &[reportcraft_core::Value] {
     rows.rows.get(i).map_or(&[], Vec::as_slice)
 }
 
@@ -793,6 +800,11 @@ impl<'a> Writer<'a> {
                 self.barcode(el, scope, left);
                 continue;
             }
+            if let Content::Chart { .. } = &el.content {
+                let items = chart::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, self.y + el.y_mm), &self.locale);
+                self.page.items.extend(items);
+                continue;
+            }
             if let Content::Formula { expression } = &el.content {
                 self.formulas
                     .entry(std::ptr::from_ref(&el.content) as usize)
@@ -913,7 +925,12 @@ impl<'a> Writer<'a> {
                 let default = reportcraft_model::Format::Date { pattern: Some(format!("{} %H:%M", self.locale.date_pattern)) };
                 self.params.get(key).map(|t| self.typed(Value::Text(t.clone()), Some(format.unwrap_or(&default)))).unwrap_or_else(none)
             }
-            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } | Content::Subreport { .. } => none(),
+            Content::PageNumber
+            | Content::Line { .. }
+            | Content::Rect { .. }
+            | Content::Barcode { .. }
+            | Content::Subreport { .. }
+            | Content::Chart { .. } => none(),
         }
     }
 
@@ -1004,7 +1021,7 @@ impl<'a> Writer<'a> {
     }
 }
 
-fn aggregate<'v>(function: AggregateFn, values: impl Iterator<Item = &'v Value>) -> Value {
+pub(crate) fn aggregate<'v>(function: AggregateFn, values: impl Iterator<Item = &'v Value>) -> Value {
     let present: Vec<&Value> = values.filter(|v| !v.is_null()).collect();
     if function == AggregateFn::Count {
         return Value::Int(i64::try_from(present.len()).unwrap_or(i64::MAX));
@@ -1310,6 +1327,51 @@ mod tests {
             g.header.keep_with_next = true;
         }
         assert_eq!(pages(&r), [vec!["Title", "Lyon", "10", "2.5", "end"], vec!["Paris", "5", "end"]], "kept with its first row");
+    }
+
+    #[test]
+    fn charts_total_each_category_and_draw_bars_lines_and_wedges() {
+        use reportcraft_model::ChartKind;
+        let chart = |kind| Element {
+            width_mm: 100.0,
+            height_mm: 40.0,
+            ..el(Content::Chart {
+                chart: kind,
+                category: "branch".into(),
+                value: "amount".into(),
+                function: AggregateFn::Sum,
+                title: Some("By branch".into()),
+            })
+        };
+        let mut r = Report::new("t");
+        r.report_footer = Band { height_mm: 45.0, elements: vec![chart(ChartKind::Bar)], ..Band::default() };
+        let items = |r: &Report| layout(r, &rows(), &Params::new()).unwrap().pages.into_iter().flat_map(|p| p.items).collect::<Vec<_>>();
+        let bars = items(&r);
+        let texts: Vec<&str> = bars.iter().filter(|i| i.shape.is_none()).map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, ["By branch", "12.5", "Lyon", "5", "Paris"], "title, then each category's total and name in order");
+        let heights: Vec<f64> = bars.iter().filter(|i| matches!(&i.shape, Some(Shape::Rect { .. }))).map(|i| i.height_mm).collect();
+        assert_eq!(heights.len(), 2);
+        assert!((heights[0] / heights[1] - 12.5 / 5.0).abs() < 1e-9, "bars in proportion: {heights:?}");
+        r.report_footer.elements = vec![chart(ChartKind::Line)];
+        let segments = items(&r).iter().filter(|i| matches!(&i.shape, Some(Shape::Line { thickness_mm, .. }) if *thickness_mm > 0.3)).count();
+        assert_eq!(segments, 1, "two points, one segment");
+        r.report_footer.elements = vec![chart(ChartKind::Pie)];
+        let wedges: Vec<Vec<[f64; 2]>> = items(&r)
+            .into_iter()
+            .filter_map(|i| match i.shape {
+                Some(Shape::Polygon { points, .. }) => Some(points),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(wedges.len(), 2);
+        // The wedges' angles share the full turn as 12.5 : 5.
+        let angle = |w: &Vec<[f64; 2]>| {
+            let ([cx, cy], first, last) = (w[0], w[1], w[w.len() - 1]);
+            let a = |[x, y]: [f64; 2]| (y - cy).atan2(x - cx);
+            (a(last) - a(first)).rem_euclid(std::f64::consts::TAU)
+        };
+        assert!((angle(&wedges[0]) / std::f64::consts::TAU - 12.5 / 17.5).abs() < 1e-6);
+        assert!(items(&r).iter().any(|i| i.text.starts_with("Lyon  71.4 %")), "legend with shares");
     }
 
     #[test]

@@ -201,6 +201,13 @@ fn page_pictures(items: &[Item], page: usize) -> (Vec<Pic>, usize) {
                     None => undrawn += 1,
                 }
             }
+            Some(Shape::Polygon { points, fill }) => match (Color::parse(fill), polygon_picture(points, x, y, w, h)) {
+                (Some(c), Some((px, inside))) => {
+                    let png = crate::png::rgba(px.0, px.1, |i, j| inside(i, j).then_some([c.0, c.1, c.2]));
+                    add(png, px, x, y, w, h, &mut pics);
+                }
+                _ => undrawn += 1,
+            },
             Some(Shape::Barcode { columns, rows, quiet, modules }) => match barcode_picture(*columns, *rows, *quiet, modules, w, h) {
                 Some(b) => add(b.png, b.pixels, x, y, b.width_mm, b.height_mm, &mut pics),
                 None => undrawn += 1,
@@ -213,6 +220,30 @@ fn page_pictures(items: &[Item], page: usize) -> (Vec<Pic>, usize) {
 /// A barcode as a black-and-white picture with its quiet zone, and the size it takes in the
 /// box (a matrix code is square, as large as the box allows), as the PDF writer draws it.
 /// Several pixels per module, so a viewer's smoothing never blurs a module away.
+/// A polygon's box as pixels (8 per millimetre, at most 1,600 a side) and which pixels it covers.
+#[allow(clippy::type_complexity)]
+fn polygon_picture(points: &[[f64; 2]], x: f64, y: f64, w: f64, h: f64) -> Option<((u32, u32), Box<dyn Fn(u32, u32) -> bool + '_>)> {
+    if points.len() < 3 || !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let per_mm = (1_600.0 / w.max(h)).min(8.0);
+    let (pw, ph) = ((w * per_mm).ceil().max(1.0) as u32, (h * per_mm).ceil().max(1.0) as u32);
+    let inside = move |i: u32, j: u32| {
+        // The pixel's centre, in millimetres on the page; even-odd crossing count.
+        let (px, py) = (x + (f64::from(i) + 0.5) / per_mm, y + (f64::from(j) + 0.5) / per_mm);
+        let mut crossing = false;
+        let n = points.len();
+        for k in 0..n {
+            let ([x1, y1], [x2, y2]) = (points[k], points[(k + 1) % n]);
+            if (y1 > py) != (y2 > py) && px < x1 + (py - y1) * (x2 - x1) / (y2 - y1) {
+                crossing = !crossing;
+            }
+        }
+        crossing
+    };
+    Some(((pw, ph), Box::new(inside)))
+}
+
 struct BarcodePicture {
     png: Vec<u8>,
     pixels: (u32, u32),

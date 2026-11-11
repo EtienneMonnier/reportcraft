@@ -427,6 +427,19 @@ pub enum Content {
         #[serde(default)]
         ec_level: EcLevel,
     },
+    /// A chart of the rows the band summarises (the group in a group band, every row in the
+    /// report header and footer): `value` totalled by `function` for each `category`, in the order
+    /// categories first appear.
+    Chart {
+        /// Bars, a line or a pie.
+        chart: ChartKind,
+        category: String,
+        value: String,
+        #[serde(default = "sum")]
+        function: AggregateFn,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
     /// Another report laid out in this element's place, over a dataset of its own, flowing
     /// across pages below the band's other elements. With `links`, it reads only the rows that
     /// match the current row (an invoice's lines, a customer's rentals).
@@ -441,6 +454,22 @@ pub enum Content {
         hide_when_empty: bool,
     },
 }
+
+/// How a chart draws its values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChartKind {
+    Bar,
+    Line,
+    Pie,
+}
+
+fn sum() -> AggregateFn {
+    AggregateFn::Sum
+}
+
+/// Most categories a chart draws (the rest are left out, with a diagnostic).
+pub const MAX_CHART_CATEGORIES: usize = 60;
 
 /// A subreport reads the rows whose `child` field equals the current row's `parent` field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -729,6 +758,23 @@ impl Report {
     }
 }
 
+/// A chart's fields against the data's columns, and a chart where no rows are summarised.
+fn check_chart(at: &str, fields: [&String; 2], columns: Option<&[Column]>, repeating: bool) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    if let Some(cols) = columns {
+        for f in fields {
+            if !cols.iter().any(|c| c.name.eq_ignore_ascii_case(f)) {
+                let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+                out.push(Diagnostic::error(at, format!("unknown field `{f}` (the data has: {})", names.join(", "))));
+            }
+        }
+    }
+    if repeating {
+        out.push(Diagnostic::warning(at, "page headers and footers summarise no rows: this chart is empty"));
+    }
+    out
+}
+
 /// How serious a diagnostic is: an error stops rendering or gives a wrong result, a warning
 /// shows something the author probably didn't intend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -837,6 +883,7 @@ impl Report {
                     Content::Barcode { field: Some(field), .. } if column(field) == Some(None) => {
                         out.push(Diagnostic::error(&at, unknown(field)));
                     }
+                    Content::Chart { category, value, .. } => out.extend(check_chart(&at, [category, value], columns, repeating)),
                     Content::Field { .. } | Content::Aggregate { .. } | Content::Barcode { field: Some(_), .. } if repeating => {
                         out.push(Diagnostic::warning(&at, "page headers and footers have no current row: this shows nothing"));
                     }

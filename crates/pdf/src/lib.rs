@@ -305,6 +305,21 @@ fn draw_shape(surface: &mut Surface<'_>, it: &Item, shape: &Shape) {
             surface.draw_path(&path);
         }
         Shape::Barcode { columns, rows, quiet, modules } => barcode(surface, it, *columns, *rows, *quiet, modules),
+        Shape::Polygon { points, fill: colour } => {
+            let Some(c) = color(colour) else { return };
+            let mut b = PathBuilder::new();
+            let mut corners = points.iter();
+            let Some([x, y]) = corners.next() else { return };
+            b.move_to(mm(*x), mm(*y));
+            for [x, y] in corners {
+                b.line_to(mm(*x), mm(*y));
+            }
+            b.close();
+            let Some(path) = b.finish() else { return };
+            surface.set_stroke(None);
+            surface.set_fill(Some(fill(c)));
+            surface.draw_path(&path);
+        }
     }
 }
 

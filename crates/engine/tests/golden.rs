@@ -31,6 +31,10 @@ fn snapshot(doc: &Document) -> String {
                     Shape::Barcode { columns, rows, quiet, modules } => {
                         format!("barcode {columns}x{rows} quiet {quiet}, {} dark", modules.bytes().filter(|&b| b == b'1').count())
                     }
+                    Shape::Polygon { points, fill } => {
+                        let first = points.first().map_or_else(String::new, |[x, y]| format!(" from {x:.2},{y:.2}"));
+                        format!("polygon {} corners{first} fill {fill}", points.len())
+                    }
                 };
                 let _ = writeln!(out, "  {:>7.2} {:>7.2} {:>6.2}x{:<5.2} {what}", it.x_mm, it.y_mm, it.width_mm, it.height_mm);
                 continue;
@@ -942,4 +946,50 @@ fn colours() {
         ..Band::default()
     };
     check("colours", &r, &rentals(8), &Params::new());
+}
+
+/// Charts (R5.1): bars per branch in each region's footer, a line and a pie over every row.
+#[test]
+fn charts() {
+    use reportcraft_model::ChartKind;
+    let chart = |x: f64, w: f64, h: f64, kind, category: &str, title: &str| Element {
+        x_mm: x,
+        y_mm: 1.0,
+        width_mm: w,
+        height_mm: h,
+        style: TextStyle::default(),
+        content: Content::Chart {
+            chart: kind,
+            category: category.into(),
+            value: "amount".into(),
+            function: AggregateFn::Sum,
+            title: Some(title.into()),
+        },
+        format: Some(Format::Number { decimals: 0, grouping: true }),
+        visible_if: None,
+        color_formula: None,
+        background_formula: None,
+    };
+    let mut r = Report::new("Charts");
+    r.groups.push(Group {
+        field: "region".into(),
+        keep_together: false,
+        repeat_header: false,
+        page_break_before: false,
+        header: Band {
+            height_mm: 7.0,
+            elements: vec![el(0.0, 60.0, field("region"), TextStyle { bold: true, ..TextStyle::default() })],
+            ..Band::default()
+        },
+        footer: Band { height_mm: 50.0, elements: vec![chart(0.0, 120.0, 46.0, ChartKind::Bar, "branch", "Amount by branch")], ..Band::default() },
+    });
+    r.report_footer = Band {
+        height_mm: 60.0,
+        elements: vec![
+            chart(0.0, 85.0, 55.0, ChartKind::Line, "item", "By item"),
+            chart(95.0, 85.0, 55.0, ChartKind::Pie, "branch", "Share by branch"),
+        ],
+        ..Band::default()
+    };
+    check("charts", &r, &rentals(24), &Params::new());
 }
