@@ -11,7 +11,7 @@ pub(crate) fn finished(r: &Response) -> bool {
 }
 
 /// The kinds of content the panel can switch between, with a starting value for each.
-const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Chart"];
+const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Chart", "Barcode"];
 
 fn kind_of(c: &Content) -> &'static str {
     match c {
@@ -54,6 +54,13 @@ pub(crate) fn content_of(kind: &str, from: &Content, first_field: &str) -> Conte
         "Page number" => Content::PageNumber,
         "Line" => Content::Line { thickness_mm: 0.3, color: "#000000".into() },
         "Box" => Content::Rect { border_mm: 0.3, border_color: "#000000".into(), fill: None },
+        "Barcode" => Content::Barcode {
+            symbology: reportcraft_model::Symbology::Code128,
+            field: Some(field.clone()),
+            text: None,
+            show_text: true,
+            ec_level: reportcraft_model::EcLevel::M,
+        },
         "Chart" => Content::Chart {
             chart: reportcraft_model::ChartKind::Bar,
             category: first_field.to_owned(),
@@ -161,6 +168,47 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
             });
         }
         Content::Parameter { name } => done |= finished(&ui.text_edit_singleline(name)),
+        Content::Barcode { symbology, field, text, show_text, ec_level } => {
+            use reportcraft_model::{EcLevel, Symbology};
+            ui.horizontal(|ui| {
+                for (s, label) in [(Symbology::Code128, "Code 128"), (Symbology::Ean13, "EAN-13"), (Symbology::Qr, "QR code")] {
+                    done |= ui.radio_value(symbology, s, label).changed();
+                }
+            });
+            ui.horizontal(|ui| {
+                let mut from_field = field.is_some();
+                let a = ui.radio_value(&mut from_field, true, tl!("from a field")).changed();
+                let b = ui.radio_value(&mut from_field, false, tl!("fixed text")).changed();
+                done |= a || b;
+                match (from_field, field.is_some()) {
+                    (true, false) => {
+                        *field = Some(first.to_owned());
+                        *text = None;
+                    }
+                    (false, true) => {
+                        *field = None;
+                        *text = Some(String::new());
+                    }
+                    _ => {}
+                }
+                if let Some(f) = field.as_mut() {
+                    done |= field_combo(ui, "barcode field", f);
+                }
+                if let Some(t) = text.as_mut() {
+                    done |= finished(&ui.text_edit_singleline(t));
+                }
+            });
+            ui.horizontal(|ui| {
+                if *symbology == Symbology::Qr {
+                    ui.label(tl!("error correction"));
+                    for (l, label) in [(EcLevel::L, "L"), (EcLevel::M, "M"), (EcLevel::Q, "Q"), (EcLevel::H, "H")] {
+                        done |= ui.radio_value(ec_level, l, label).changed();
+                    }
+                } else {
+                    done |= ui.checkbox(show_text, tl!("show the text")).changed();
+                }
+            });
+        }
         Content::Chart { chart, category, value, function, title } => {
             ui.horizontal(|ui| {
                 for (k, label) in [

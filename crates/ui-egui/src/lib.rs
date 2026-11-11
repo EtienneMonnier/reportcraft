@@ -9,6 +9,7 @@
 #[macro_use]
 mod i18n;
 mod canvas;
+mod forms;
 mod preview;
 mod props;
 mod structure;
@@ -87,6 +88,8 @@ pub struct Designer {
     structure: Option<structure::Draft>,
     /// The values given to the report's parameters, for the preview and the exports.
     param_values: std::collections::BTreeMap<String, String>,
+    print: Option<forms::Print>,
+    connections: Option<forms::Connections>,
 }
 
 /// What the properties panel edits.
@@ -114,6 +117,8 @@ impl Designer {
             saved_query: None,
             structure: None,
             param_values: std::collections::BTreeMap::new(),
+            print: None,
+            connections: None,
         }
     }
 
@@ -164,6 +169,8 @@ impl Designer {
             match params.get("name").and_then(Json::as_str) {
                 Some("structure") => self.structure = Some(structure::Draft::of(&self.session.report)),
                 Some("saved_query") => self.saved_query = Some(SavedQuery::default()),
+                Some("print") => self.open_print(),
+                Some("connections") => self.open_connections(),
                 other => return Err(format!("ui.window: unknown window {other:?} (structure, saved_query)")),
             }
             return Ok(json!({"opened": params["name"]}));
@@ -365,6 +372,101 @@ impl Designer {
         });
         self.saved_query_window(ui);
         self.structure_window(ui);
+        self.print_window(ui);
+        self.connections_window(ui);
+    }
+
+    fn open_print(&mut self) {
+        let printers = self
+            .run("file.printers", json!({}))
+            .map(|r| r["printers"].as_array().into_iter().flatten().filter_map(|p| p["name"].as_str().map(str::to_owned)).collect());
+        self.print = Some(forms::Print::new(printers.unwrap_or_default()));
+    }
+
+    fn print_window(&mut self, ui: &mut egui::Ui) {
+        let Some(form) = self.print.as_mut() else { return };
+        let ask = forms::print(ui.ctx(), form);
+        let (confirm, params) = match ask {
+            forms::Ask::Nothing => return,
+            forms::Ask::Close => {
+                self.print = None;
+                return;
+            }
+            forms::Ask::Check => (false, form.params(false, &self.param_values)),
+            forms::Ask::Go => (true, form.params(true, &self.param_values)),
+        };
+        // The person clicked: the window's session prints (a person's policy).
+        if let Some(r) = self.run("file.print", params) {
+            let command: Vec<&str> = r["command"].as_array().into_iter().flatten().filter_map(Json::as_str).collect();
+            let summary = tf!("{n} page(s) of {of}, {copies} copy(ies)", n = r["pages"], of = r["of"], copies = r["copies"]);
+            if let Some(form) = self.print.as_mut() {
+                form.job = format!("{summary}\n{}", command.join(" "));
+            }
+            if confirm {
+                self.status = r["spooler"].as_str().map_or_else(|| tl!("sent to the printer").to_owned(), |s| s.trim().to_owned());
+                self.print = None;
+            }
+        }
+    }
+
+    fn connection_list(&mut self) -> Vec<(String, String, String)> {
+        self.run("data.connections", json!({}))
+            .map(|r| {
+                r["connections"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|c| {
+                        let s = |k: &str| c[k].as_str().unwrap_or_default().to_owned();
+                        (s("name"), s("kind"), s("target"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn open_connections(&mut self) {
+        let list = self.connection_list();
+        self.connections = Some(forms::Connections::new(list));
+    }
+
+    fn connections_window(&mut self, ui: &mut egui::Ui) {
+        let Some(form) = self.connections.as_mut() else { return };
+        match forms::connections(ui.ctx(), form) {
+            forms::Manage::Nothing => {}
+            forms::Manage::Close => self.connections = None,
+            forms::Manage::Browse => {
+                if let Some(p) = self.dialogs.open(tl!("Database file"), &["db", "sqlite", "sqlite3"])
+                    && let Some(form) = self.connections.as_mut()
+                {
+                    form.path = p.display().to_string();
+                }
+            }
+            forms::Manage::Save => {
+                let params = form.params();
+                if self.run("data.saveConnection", params).is_some() {
+                    self.status = tl!("connection saved").to_owned();
+                    let list = self.connection_list();
+                    if let Some(form) = self.connections.as_mut() {
+                        form.list = list;
+                        form.password.clear();
+                    }
+                }
+            }
+            forms::Manage::Test(name) => {
+                if let Some(r) = self.run("data.testConnection", json!({"name": name})) {
+                    self.status = tf!("{name}: works, {n} table(s)", name = name, n = r["tables"]);
+                }
+            }
+            forms::Manage::Delete(name) => {
+                if self.run("data.deleteConnection", json!({"name": name, "confirm": true})).is_some() {
+                    let list = self.connection_list();
+                    if let Some(form) = self.connections.as_mut() {
+                        form.list = list;
+                    }
+                }
+            }
+        }
     }
 
     fn structure_window(&mut self, ui: &mut egui::Ui) {
@@ -421,6 +523,9 @@ impl Designer {
                         self.save_report(&p);
                     }
                 }
+                if ui.button(tl!("Print…")).clicked() {
+                    self.open_print();
+                }
                 ui.separator();
                 for (label, format) in [("Export PDF…", "pdf"), ("Export HTML…", "html"), ("Export Excel…", "xlsx"), ("Export Word…", "docx")]
                 {
@@ -445,7 +550,7 @@ impl Designer {
                 }
             });
             ui.menu_button(tl!("Insert"), |ui| {
-                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box", "Chart"] {
+                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box", "Chart", "Barcode"] {
                     if ui.button(tl!(kind)).clicked() {
                         self.insert(kind);
                     }
@@ -480,6 +585,9 @@ impl Designer {
                 }
                 if ui.button(tl!("Load from a saved connection…")).clicked() {
                     self.saved_query = Some(SavedQuery::default());
+                }
+                if ui.button(tl!("Connections…")).clicked() {
+                    self.open_connections();
                 }
             });
         });
@@ -613,6 +721,9 @@ impl Designer {
         }
         if matches!(el.content, reportcraft_model::Content::Chart { .. }) {
             (el.width_mm, el.height_mm) = (120.0, 50.0);
+        }
+        if matches!(el.content, reportcraft_model::Content::Barcode { .. }) {
+            (el.width_mm, el.height_mm) = (50.0, 15.0);
         }
         if let Some(r) = self.run("report.addElement", json!({"band": band, "element": el})) {
             let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0);

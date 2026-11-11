@@ -4174,10 +4174,12 @@ dependencies = [
  "craft-i18n",
  "egui",
  "log",
+ "reportcraft-connections",
  "reportcraft-core",
  "reportcraft-engine",
  "reportcraft-layout",
  "reportcraft-model",
+ "reportcraft-pdf",
  "serde_json",
 ]
 

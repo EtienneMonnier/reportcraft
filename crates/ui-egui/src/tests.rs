@@ -329,3 +329,52 @@ fn structure_is_edited_in_one_window_and_parameters_reach_the_preview() {
     d.check();
     assert!(!d.status().is_empty());
 }
+
+#[test]
+fn print_connections_and_barcodes_from_the_designer() {
+    let session = Session::with_saved_connections(reportcraft_connections_in_memory());
+    let mut d = Designer::new(session, Box::new(NoDialogs));
+    d.open_sample("rentals");
+    // Print: the window opens with the printers; Check only says what would be sent.
+    d.open_print();
+    let check = d.print.as_ref().map(|p| p.params(false, &d.param_values)).unwrap_or_default();
+    assert_eq!(check["confirm"], serde_json::json!(false));
+    if reportcraft_has_fonts() {
+        let r = d.run("file.print", check);
+        assert!(r.is_some_and(|r| r["submitted"] == serde_json::json!(false)), "{}", d.status());
+    }
+    assert!(frames(&mut d, 2) > 0, "the print window draws");
+    d.print = None;
+    // Connections: save one, list it, test it, delete it.
+    let dir = std::env::temp_dir().join(format!("reportcraft-designer-conn-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_default();
+    let db = dir.join("x.db");
+    std::fs::write(&db, b"").unwrap_or_default();
+    d.open_connections();
+    if let Some(c) = d.connections.as_mut() {
+        c.name = "local".into();
+        c.path = db.display().to_string();
+    }
+    let params = d.connections.as_ref().map(crate::forms::Connections::params).unwrap_or_default();
+    assert!(d.run("data.saveConnection", params).is_some(), "{}", d.status());
+    assert_eq!(d.connection_list().len(), 1);
+    assert!(d.run("data.testConnection", serde_json::json!({"name": "local"})).is_some(), "{}", d.status());
+    assert!(frames(&mut d, 2) > 0, "the connections window draws");
+    assert!(d.run("data.deleteConnection", serde_json::json!({"name": "local", "confirm": true})).is_some());
+    assert!(d.connection_list().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+    // A barcode, inserted and drawn.
+    d.selected_band = Some("detail".into());
+    d.insert("Barcode");
+    assert!(d.session().report.detail.elements.iter().any(|e| matches!(e.content, Content::Barcode { .. })));
+    d.sync_draft();
+    assert!(frames(&mut d, 2) > 50);
+}
+
+fn reportcraft_connections_in_memory() -> reportcraft_connections::Connections {
+    reportcraft_connections::Connections::in_memory()
+}
+
+fn reportcraft_has_fonts() -> bool {
+    reportcraft_pdf::Fonts::find().is_ok()
+}

@@ -136,7 +136,10 @@
   conditions), band (height, conditions, keep with next) or the report (title, language, paper,
   orientation, margins); a window edits the groups, sort, named formulas and parameters
   (`report.setStructure`), the field list takes values for the parameters, and Report ▸ Check lists
-  `report.validate`'s findings; previews the rendered pages live after every change; saves the report and
+  `report.validate`'s findings; File ▸ Print… prints (printer, copies, pages, two-sided, black and
+  white, shrink to fit; Check shows the job without sending it); Data ▸ Connections… saves, tests
+  and deletes connections (the password to the keychain); barcodes and charts are inserted and
+  edited like the rest; previews the rendered pages live after every change; saves the report and
   exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
   every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
   The interface follows the system's language or `--lang CODE` (View ▸ Language), through
@@ -146,7 +149,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 180 tests (plus 8 live PostgreSQL tests run on demand), including 16 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 181 tests (plus 8 live PostgreSQL tests run on demand), including 16 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet (see `ROADMAP.md`).

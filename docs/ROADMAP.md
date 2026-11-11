@@ -84,7 +84,8 @@ Anything marked **decision** waits for a maintainer.
   - [ ] One sheet per group, or per subreport, as an option
   - [ ] XLSX and DOCX in the browser build (the writers build for wasm; the clock-free path needs checking)
 - [x] R2.8 Printing through craft-libs `craft-print` (#14)
-  - [ ] The printer's own options (tray, paper type: `craft_print::printer_options`) and a print dialog in the designer (R3)
+  - [x] A print window in the designer (printer, copies, pages, two-sided, black and white, shrink to fit; Check shows the job)
+  - [ ] The printer's own options (tray, paper type: `craft_print::printer_options`)
   - [ ] Page ranges for PDF, XLSX and DOCX exports too (`select_pages` exists)
   - [x] Mark commands that act outside the app (print, later publish) in the MCP tool list, and ask the user before an agent prints
   - [ ] Print progress and cancellation once the spooler has the job (craft-print reports Windows progress only)
@@ -115,13 +116,14 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Bold and the report's fonts in the preview (egui's default fonts have no bold face; craft-fonts)
   - [ ] Render the preview off the UI thread for large data, with progress and Stop (R1.9)
   - [x] Parameters panel: values for the report's parameters, used by the preview and the exports
-  - [ ] Saving and opening connections from the designer (today: `reportcraft-cli connections save`)
+  - [x] Saving, testing and deleting connections from the designer (Data ▸ Connections)
   - [ ] Packaging: desktop entry, icon, RPM (as the suite's apps)
 - [x] R3.2 Field list, drag-and-drop of fields into bands, property panel (#16)
   - [x] Groups, sort, named formulas and parameters edited in the designer (Report ▸ Groups, sort, formulas and parameters; `report.setStructure`)
   - [ ] Several elements selected at once; align, distribute, copy and paste
   - [ ] Band height dragged on the canvas (today in the band's properties)
-  - [ ] Subreports, barcodes and parameters edited in the panel (today shown, edited in the file)
+  - [x] Barcodes edited in the panel; parameters in the structure window
+  - [ ] Subreports edited in the designer (today in the file)
 - [x] R3.3 Control channel (`--control PORT`, `reportcraft-cli send`) and offscreen snapshot, as in GridCraft (#17)
   - [ ] An MCP server connected to the running window (`reportcraft-cli mcp --connect PORT`), as GridCraft's
   - [ ] Snapshots without a window (an offscreen renderer for CI)
