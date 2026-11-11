@@ -317,3 +317,20 @@ room when hidden so the body ends at the same height on every page; a hidden pag
 room. `keep_together` still estimates a group's height from every band, so a group with hidden
 bands may move to a new page a little early (noted in the roadmap).
 
+## Printing goes through craft-print, and only on confirmation (R2.8)
+
+Printing reuses the suite's spooler crate (`craft-print`, same craft-libs revision as
+`craft-pdf`): the report is rendered to PDF exactly as an export, then handed to CUPS (`lp`) or
+the Windows print API, with copies, collation, duplex, grayscale and scaling as job options.
+Page ranges (`1-3,5`, `8-`) pick pages of the laid-out document, so a printed page carries the
+same "page N / M" as in the full report.
+
+A print job leaves the application and uses paper, so `file.print` only sends it with
+`"confirm": true`; without it, the command renders the document and answers with the job it
+would send (printer, pages, copies, the `lp` command line). That keeps three promises at once:
+programmatic calls never open dialogs, the empty-parameters crash test never prints, and an MCP
+agent proposes a print that a person confirms (§11, §18.3). The CLI's `print` confirms unless
+`--dry-run` is given, because the person typed it. Copies are capped at 99. The printer list and
+job come from the system, so printing is native-only; the browser build answers that it isn't
+available.
+

@@ -31,6 +31,12 @@
   paragraph per line at its height and a tab stop per item (left, right or centred as the item is
   aligned), so the text stays editable. Both open in GridCraft and WordCraft; the same report gives
   the same file. Lines, boxes and barcodes are left out with a warning.
+- Printing through craft-libs' `craft-print` (CUPS `lp` on Linux and macOS, the Windows print API):
+  `file.printers` lists the printers, `file.print` renders the report to PDF and sends it with
+  printer, copies (1–99), collation, duplex, grayscale, exact size or shrink to fit, and page ranges
+  (`"1-3,5"`, `"8-"`). Nothing is sent without `"confirm": true`: otherwise the result shows the
+  job it would send. CLI: `reportcraft-cli printers`, `reportcraft-cli print … [--printer NAME]
+  [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]`.
 - Lines (horizontal, vertical, diagonal) and rectangles (border, fill) in any band, drawn as SVG in
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
@@ -95,8 +101,8 @@
   doesn't; an error never hides a band or element and never breaks a page. Hidden rows still count
   in their group's totals. A hidden page header takes no room, a hidden page footer keeps its room.
   `report.validate` checks the conditions as formulas.
-- CLI and MCP server reaching every command. 136 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 138 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No ODBC source yet, no printing, no designer UI (see `ROADMAP.md`).
+- No ODBC source yet, no designer UI (see `ROADMAP.md`).
 - Not yet built or tested on Windows, macOS, BSD or wasm.

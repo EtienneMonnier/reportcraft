@@ -24,6 +24,7 @@ chrono.workspace = true
 reportcraft-sqlite.workspace = true
 reportcraft-postgres.workspace = true
 reportcraft-office.workspace = true
+craft-print.workspace = true
 
 [dev-dependencies]
 reportcraft-data.workspace = true

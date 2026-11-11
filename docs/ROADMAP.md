@@ -75,7 +75,11 @@ Anything marked **decision** waits for a maintainer.
   - [ ] A "data only" XLSX: detail rows as a table with a header row (no group or report bands), for further analysis
   - [ ] One sheet per group, or per subreport, as an option
   - [ ] XLSX and DOCX in the browser build (the writers build for wasm; the clock-free path needs checking)
-- [ ] R2.8 Printing through craft-libs `craft-print`
+- [x] R2.8 Printing through craft-libs `craft-print` (#14)
+  - [ ] The printer's own options (tray, paper type: `craft_print::printer_options`) and a print dialog in the designer (R3)
+  - [ ] Page ranges for PDF, XLSX and DOCX exports too (`select_pages` exists)
+  - [ ] Mark commands that act outside the app (print, later publish) in the MCP tool list, and ask the user before an agent prints
+  - [ ] Print progress and cancellation once the spooler has the job (craft-print reports Windows progress only)
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
   - [x] Columns filled across then down (needed by labels, R2.12)
   - [ ] Different first page (no page header on page one, other margins)
