@@ -34,9 +34,15 @@ fn report() -> (Report, RowSet) {
         ],
         page_break_before_if: None,
         visible_if: None,
+        keep_with_next: false,
     };
-    r.page_footer =
-        Band { height_mm: 6.0, elements: vec![el(0.0, 30.0, Content::PageNumber, None, Align::Left)], page_break_before_if: None, visible_if: None };
+    r.page_footer = Band {
+        height_mm: 6.0,
+        elements: vec![el(0.0, 30.0, Content::PageNumber, None, Align::Left)],
+        page_break_before_if: None,
+        visible_if: None,
+        keep_with_next: false,
+    };
     let money = Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true };
     r.detail = Band {
         height_mm: 6.0,
@@ -51,6 +57,7 @@ fn report() -> (Report, RowSet) {
         ],
         page_break_before_if: None,
         visible_if: None,
+        keep_with_next: false,
     };
     let col = |n: &str, t| Column { name: n.into(), field_type: t };
     let rows = RowSet {

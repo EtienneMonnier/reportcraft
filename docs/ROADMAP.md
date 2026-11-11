@@ -57,7 +57,8 @@ Anything marked **decision** waits for a maintainer.
   - [ ] `PAGENUMBER()` / `TOTALPAGES()` in formulas (needs a second pass, as "page N / M" does)
   - [ ] A formula editor in the designer with the function list, field names and live errors (R3)
 - [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
-  - [ ] Keep a band with the next one (a group header never alone at the bottom of a page)
+  - [x] Keep a band with the next one (a group header never alone at the bottom of a page): `keep_with_next` on group headers
+  - [ ] `keep_with_next` on other bands (a detail row with the group footer, a report header with the first group)
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
 - [x] R2.4 Lines and boxes in bands (#10)
   - [ ] Images in bands: from a field (blob or path) or embedded in the report, with size limits and ATTRIBUTION rules

@@ -65,6 +65,7 @@ fn rentals() -> Report {
         ],
         page_break_before_if: None,
         visible_if: None,
+        keep_with_next: false,
     };
     r.page_header = Band {
         height_mm: 7.0,
@@ -75,13 +76,20 @@ fn rentals() -> Report {
         ],
         page_break_before_if: None,
         visible_if: None,
+        keep_with_next: false,
     };
     r.groups.push(Group {
         field: "branch".into(),
         keep_together: false,
         repeat_header: false,
         page_break_before: false,
-        header: Band { height_mm: 7.0, elements: vec![text(0.0, 120.0, field("branch"), bold)], page_break_before_if: None, visible_if: None },
+        header: Band {
+            height_mm: 7.0,
+            elements: vec![text(0.0, 120.0, field("branch"), bold)],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        },
         footer: Band {
             height_mm: 8.0,
             elements: vec![
@@ -91,6 +99,7 @@ fn rentals() -> Report {
             ],
             page_break_before_if: None,
             visible_if: None,
+            keep_with_next: false,
         },
     });
     r.detail = Band {
@@ -102,14 +111,21 @@ fn rentals() -> Report {
         ],
         page_break_before_if: None,
         visible_if: None,
+        keep_with_next: false,
     };
     r.report_footer = Band {
         height_mm: 9.0,
         elements: vec![text(0.0, 80.0, Content::Text { text: "Grand total".into() }, bold), money(text(130.0, 50.0, sum("amount"), bold_right))],
         page_break_before_if: None,
         visible_if: None,
+        keep_with_next: false,
     };
-    r.page_footer =
-        Band { height_mm: 6.0, elements: vec![text(130.0, 50.0, Content::PageNumber, right)], page_break_before_if: None, visible_if: None };
+    r.page_footer = Band {
+        height_mm: 6.0,
+        elements: vec![text(130.0, 50.0, Content::PageNumber, right)],
+        page_break_before_if: None,
+        visible_if: None,
+        keep_with_next: false,
+    };
     r
 }
