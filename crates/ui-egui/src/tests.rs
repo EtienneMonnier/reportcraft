@@ -288,3 +288,18 @@ fn the_preview_panel_keeps_its_width_frame_after_frame() {
     let later = (0..60).map(|_| width(&ctx, &mut d)).last().unwrap_or(0.0);
     assert!(first > 300.0 && (first - later).abs() < 1.0, "page {first} px wide, then {later} px");
 }
+
+#[test]
+fn the_french_catalog_parses_and_translates() {
+    static FR: &craft_i18n::Embedded = &[("fr", "", include_str!("../../../i18n/fr.tsv"))];
+    let (i18n, problems) = craft_i18n::I18n::new(FR, &["fr"]);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(i18n.check_all().is_empty(), "{:?}", i18n.check_all());
+    let fr = i18n.from_code("fr").unwrap_or(craft_i18n::Lang::EN);
+    assert_eq!(i18n.t(fr, "New report"), "Nouveau rapport");
+    assert_eq!(craft_i18n::fmt(i18n.t(fr, "Group {n} header ({field})"), &[("n", "1"), ("field", "branch")]), "En-tête du groupe 1 (branch)");
+    // Without catalogs (the default build), English.
+    crate::set_language("fr");
+    assert!(crate::language() == "en" || crate::language() == "fr");
+    crate::set_language("en");
+}

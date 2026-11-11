@@ -128,7 +128,10 @@ Anything marked **decision** waits for a maintainer.
 - [x] R3.4 Undo/redo for definition edits (#18)
   - [ ] Name each step in the menu ("Undo move element")
   - [ ] Keep the history with the file (today it lasts for the session)
-- [ ] R3.5 Interface translations through craft-i18n
+- [x] R3.5 Interface translations through craft-i18n (#19)
+  - [ ] Move `i18n/fr.tsv` to craft-i18n (`locales/fr/reportcraft.tsv`, with its `tools/sync_app.py`) and add other languages there
+  - [ ] Remember the chosen language (craft-settings) and offer right-to-left languages once the layout mirrors
+  - [ ] Translate engine messages (errors and diagnostics are English today)
 
 ## R4 — Formats and migration (owner: open)
 - [ ] R4.1 Odoo QWeb templates: edit visually and preview on sample data — **decision**: scope

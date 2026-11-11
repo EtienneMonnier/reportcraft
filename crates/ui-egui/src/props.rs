@@ -61,8 +61,8 @@ pub(crate) fn content_of(kind: &str, from: &Content, first_field: &str) -> Conte
 fn optional_formula(ui: &mut Ui, label: &str, value: &mut Option<String>) -> bool {
     let mut text = value.clone().unwrap_or_default();
     let r = ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(egui::TextEdit::singleline(&mut text).code_editor().hint_text("formula, e.g. [amount] < 0").desired_width(f32::INFINITY))
+        ui.label(tl!(label));
+        ui.add(egui::TextEdit::singleline(&mut text).code_editor().hint_text(tl!("formula, e.g. [amount] < 0")).desired_width(f32::INFINITY))
     });
     *value = (!text.trim().is_empty()).then_some(text);
     finished(&r.inner)
@@ -74,7 +74,7 @@ fn optional_colour(ui: &mut Ui, label: &str, value: &mut Option<Color>) -> bool 
     let mut rgb = value.map_or([0, 0, 0], |c| [c.0, c.1, c.2]);
     let mut done = false;
     ui.horizontal(|ui| {
-        done |= ui.checkbox(&mut on, label).changed();
+        done |= ui.checkbox(&mut on, tl!(label)).changed();
         if on {
             let r = ui.color_edit_button_srgb(&mut rgb);
             done |= r.changed() && !r.dragged();
@@ -86,7 +86,7 @@ fn optional_colour(ui: &mut Ui, label: &str, value: &mut Option<Color>) -> bool 
 }
 
 fn length(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    ui.label(label);
+    ui.label(tl!(label));
     finished(&ui.add(egui::DragValue::new(value).speed(0.5).range(0.0..=5000.0).suffix(" mm")))
 }
 
@@ -116,10 +116,10 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
     let current = kind_of(c);
     let first = fields.first().map_or("", String::as_str);
     ui.horizontal(|ui| {
-        ui.label("Shows");
-        egui::ComboBox::from_id_salt("kind").selected_text(current).show_ui(ui, |ui| {
+        ui.label(tl!("Shows"));
+        egui::ComboBox::from_id_salt("kind").selected_text(tl!(current)).show_ui(ui, |ui| {
             for k in KINDS {
-                if ui.selectable_label(*k == current, *k).clicked() && *k != current {
+                if ui.selectable_label(*k == current, tl!(k)).clicked() && *k != current {
                     *c = content_of(k, c, first);
                     done = true;
                 }
@@ -148,21 +148,21 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
                         done |= ui.selectable_value(function, f, crate::canvas::aggregate_name(f)).clicked();
                     }
                 });
-                ui.label("of");
+                ui.label(tl!("of"));
                 done |= field_combo(ui, "aggregate field", field);
             });
         }
         Content::Parameter { name } => done |= finished(&ui.text_edit_singleline(name)),
         Content::Line { thickness_mm, color } => {
             ui.horizontal(|ui| {
-                ui.label("thickness");
+                ui.label(tl!("thickness"));
                 done |= finished(&ui.add(egui::DragValue::new(thickness_mm).speed(0.1).range(0.0..=50.0).suffix(" mm")));
                 done |= colour_text(ui, color);
             });
         }
         Content::Rect { border_mm, border_color, fill } => {
             ui.horizontal(|ui| {
-                ui.label("border");
+                ui.label(tl!("border"));
                 done |= finished(&ui.add(egui::DragValue::new(border_mm).speed(0.1).range(0.0..=50.0).suffix(" mm")));
                 done |= colour_text(ui, border_color);
                 let mut filled = fill.clone().and_then(|f| Color::parse(&f));
@@ -186,11 +186,11 @@ fn colour_text(ui: &mut Ui, text: &mut String) -> bool {
 fn style(ui: &mut Ui, el: &mut Element) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
-        ui.label("size");
+        ui.label(tl!("size"));
         done |= finished(&ui.add(egui::DragValue::new(&mut el.style.size_pt).speed(0.5).range(1.0..=400.0).suffix(" pt")));
-        done |= ui.checkbox(&mut el.style.bold, "bold").changed();
+        done |= ui.checkbox(&mut el.style.bold, tl!("bold")).changed();
         for (a, label) in [(Align::Left, "left"), (Align::Center, "centre"), (Align::Right, "right")] {
-            done |= ui.radio_value(&mut el.style.align, a, label).changed();
+            done |= ui.radio_value(&mut el.style.align, a, tl!(label)).changed();
         }
     });
     ui.horizontal(|ui| {
@@ -211,10 +211,10 @@ fn format(ui: &mut Ui, f: &mut Option<Format>) -> bool {
         Some(Format::Date { .. }) => "date",
     };
     ui.horizontal(|ui| {
-        ui.label("Format");
-        egui::ComboBox::from_id_salt("format").selected_text(current).show_ui(ui, |ui| {
+        ui.label(tl!("Format"));
+        egui::ComboBox::from_id_salt("format").selected_text(tl!(current)).show_ui(ui, |ui| {
             for n in names {
-                if ui.selectable_label(n == current, n).clicked() && n != current {
+                if ui.selectable_label(n == current, tl!(n)).clicked() && n != current {
                     *f = match n {
                         "number" => Some(Format::Number { decimals: 2, grouping: true }),
                         "currency" => Some(Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true }),
@@ -226,7 +226,7 @@ fn format(ui: &mut Ui, f: &mut Option<Format>) -> bool {
                 }
             }
         });
-        let decimals = |ui: &mut Ui, d: &mut u8| finished(&ui.add(egui::DragValue::new(d).range(0..=10).prefix("decimals ")));
+        let decimals = |ui: &mut Ui, d: &mut u8| finished(&ui.add(egui::DragValue::new(d).range(0..=10).prefix(format!("{} ", tl!("decimals")))));
         match f {
             Some(Format::Number { decimals: d, grouping }) => {
                 done |= decimals(ui, d);
@@ -240,7 +240,7 @@ fn format(ui: &mut Ui, f: &mut Option<Format>) -> bool {
             Some(Format::Percent { decimals: d }) => done |= decimals(ui, d),
             Some(Format::Date { pattern }) => {
                 let mut p = pattern.clone().unwrap_or_default();
-                done |= finished(&ui.add(egui::TextEdit::singleline(&mut p).hint_text("the locale's date, or %d/%m/%Y").desired_width(140.0)));
+                done |= finished(&ui.add(egui::TextEdit::singleline(&mut p).hint_text(tl!("the locale's date, or %d/%m/%Y")).desired_width(140.0)));
                 *pattern = (!p.trim().is_empty()).then_some(p);
             }
             None => {}
@@ -254,7 +254,7 @@ pub(crate) fn band(ui: &mut Ui, b: &mut Band) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
         done |= length(ui, "height", &mut b.height_mm);
-        done |= ui.checkbox(&mut b.keep_with_next, "keep with next").changed();
+        done |= ui.checkbox(&mut b.keep_with_next, tl!("keep with next")).changed();
     });
     done |= optional_formula(ui, "Show only if", &mut b.visible_if);
     done |= optional_formula(ui, "New page if", &mut b.page_break_before_if);
@@ -274,9 +274,9 @@ pub(crate) struct ReportDraft {
 pub(crate) fn report(ui: &mut Ui, r: &mut ReportDraft) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
-        ui.label("Title");
+        ui.label(tl!("Title"));
         done |= finished(&ui.text_edit_singleline(&mut r.title));
-        ui.label("Language");
+        ui.label(tl!("Language"));
         egui::ComboBox::from_id_salt("locale").selected_text(r.locale.clone()).show_ui(ui, |ui| {
             for l in reportcraft_model::LOCALES {
                 done |= ui.selectable_value(&mut r.locale, l.tag.to_owned(), l.tag).clicked();
@@ -284,13 +284,13 @@ pub(crate) fn report(ui: &mut Ui, r: &mut ReportDraft) -> bool {
         });
     });
     ui.horizontal(|ui| {
-        ui.label("Paper");
-        egui::ComboBox::from_id_salt("paper").selected_text(r.paper.clone()).show_ui(ui, |ui| {
+        ui.label(tl!("Paper"));
+        egui::ComboBox::from_id_salt("paper").selected_text(tl!(r.paper.as_str())).show_ui(ui, |ui| {
             for p in ["A4", "A3", "A5", "Letter", "Legal"] {
                 done |= ui.selectable_value(&mut r.paper, p.to_owned(), p).clicked();
             }
         });
-        done |= ui.checkbox(&mut r.landscape, "landscape").changed();
+        done |= ui.checkbox(&mut r.landscape, tl!("landscape")).changed();
         done |= length(ui, "margins", &mut r.margin_mm);
     });
     done

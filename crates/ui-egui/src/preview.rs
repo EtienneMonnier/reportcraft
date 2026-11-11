@@ -18,7 +18,7 @@ pub(crate) fn scale_for(doc: &Document, width: f32) -> f32 {
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) {
-    ui.label(format!("{} page(s)", doc.pages.len()));
+    ui.label(tf!("{n} page(s)", n = doc.pages.len()));
     // The scroll area keeps the panel's width: shrinking to the pages (drawn a little narrower than
     // the panel) would narrow the panel a little more every frame.
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
