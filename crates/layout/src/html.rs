@@ -81,6 +81,10 @@ fn shapes(out: &mut String, page: &crate::Page, width: f64, height: f64) {
                 );
             }
             Shape::Barcode { columns, rows, quiet, modules } => barcode(out, it, *columns, *rows, *quiet, modules),
+            Shape::Polygon { points, fill } if color_is_valid(fill) => {
+                let pts: Vec<String> = points.iter().map(|[x, y]| format!("{x:.2},{y:.2}")).collect();
+                let _ = writeln!(out, "<polygon points=\"{}\" fill=\"{fill}\"/>", pts.join(" "));
+            }
             // A colour that isn't #rgb/#rrggbb never reaches the page.
             _ => {}
         }

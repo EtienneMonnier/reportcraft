@@ -33,6 +33,22 @@ pub(crate) fn bits(width: u32, height: u32, dark: impl Fn(u32, u32) -> bool) -> 
     encode(width, height, 0, 1, &raw)
 }
 
+/// A picture with transparency, `width` × `height` pixels, `colour(x, y)` the pixel or `None`
+/// for a transparent one.
+pub(crate) fn rgba(width: u32, height: u32, colour: impl Fn(u32, u32) -> Option<[u8; 3]>) -> Vec<u8> {
+    let mut raw = Vec::with_capacity((width as usize * 4 + 1) * height as usize);
+    for y in 0..height {
+        raw.push(0);
+        for x in 0..width {
+            match colour(x, y) {
+                Some([r, g, b]) => raw.extend_from_slice(&[r, g, b, 255]),
+                None => raw.extend_from_slice(&[0, 0, 0, 0]),
+            }
+        }
+    }
+    encode(width, height, 6, 8, &raw)
+}
+
 /// A PNG of filtered scanlines `raw`, colour type and bit depth as the PNG standard numbers them.
 fn encode(width: u32, height: u32, color_type: u8, depth: u8, raw: &[u8]) -> Vec<u8> {
     let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];

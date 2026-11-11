@@ -11,7 +11,7 @@ pub(crate) fn finished(r: &Response) -> bool {
 }
 
 /// The kinds of content the panel can switch between, with a starting value for each.
-const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box"];
+const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Chart"];
 
 fn kind_of(c: &Content) -> &'static str {
     match c {
@@ -27,6 +27,7 @@ fn kind_of(c: &Content) -> &'static str {
         Content::PrintedAt => "Printed at",
         Content::Barcode { .. } => "Barcode",
         Content::Subreport { .. } => "Subreport",
+        Content::Chart { .. } => "Chart",
     }
 }
 
@@ -53,6 +54,13 @@ pub(crate) fn content_of(kind: &str, from: &Content, first_field: &str) -> Conte
         "Page number" => Content::PageNumber,
         "Line" => Content::Line { thickness_mm: 0.3, color: "#000000".into() },
         "Box" => Content::Rect { border_mm: 0.3, border_color: "#000000".into(), fill: None },
+        "Chart" => Content::Chart {
+            chart: reportcraft_model::ChartKind::Bar,
+            category: first_field.to_owned(),
+            value: field,
+            function: AggregateFn::Sum,
+            title: None,
+        },
         _ => from.clone(),
     }
 }
@@ -153,6 +161,34 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
             });
         }
         Content::Parameter { name } => done |= finished(&ui.text_edit_singleline(name)),
+        Content::Chart { chart, category, value, function, title } => {
+            ui.horizontal(|ui| {
+                for (k, label) in [
+                    (reportcraft_model::ChartKind::Bar, "bars"),
+                    (reportcraft_model::ChartKind::Line, "line"),
+                    (reportcraft_model::ChartKind::Pie, "pie"),
+                ] {
+                    done |= ui.radio_value(chart, k, tl!(label)).changed();
+                }
+            });
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("chart function").selected_text(crate::canvas::aggregate_name(*function)).show_ui(ui, |ui| {
+                    for f in [AggregateFn::Sum, AggregateFn::Count, AggregateFn::Avg, AggregateFn::Min, AggregateFn::Max] {
+                        done |= ui.selectable_value(function, f, crate::canvas::aggregate_name(f)).clicked();
+                    }
+                });
+                ui.label(tl!("of"));
+                done |= field_combo(ui, "chart value", value);
+                ui.label(tl!("by"));
+                done |= field_combo(ui, "chart category", category);
+            });
+            let mut t = title.clone().unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label(tl!("Title"));
+                done |= finished(&ui.text_edit_singleline(&mut t));
+            });
+            *title = (!t.is_empty()).then_some(t);
+        }
         Content::Line { thickness_mm, color } => {
             ui.horizontal(|ui| {
                 ui.label(tl!("thickness"));

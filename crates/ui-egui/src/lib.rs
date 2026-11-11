@@ -445,7 +445,7 @@ impl Designer {
                 }
             });
             ui.menu_button(tl!("Insert"), |ui| {
-                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box"] {
+                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box", "Chart"] {
                     if ui.button(tl!(kind)).clicked() {
                         self.insert(kind);
                     }
@@ -610,6 +610,9 @@ impl Designer {
         el.content = props::content_of(kind, &reportcraft_model::Content::Text { text: kind.to_owned() }, &first);
         if matches!(el.content, reportcraft_model::Content::Line { .. }) {
             el.height_mm = 0.0;
+        }
+        if matches!(el.content, reportcraft_model::Content::Chart { .. }) {
+            (el.width_mm, el.height_mm) = (120.0, 50.0);
         }
         if let Some(r) = self.run("report.addElement", json!({"band": band, "element": el})) {
             let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0);

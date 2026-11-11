@@ -61,6 +61,18 @@ fn draw(painter: &egui::Painter, origin: Pos2, it: &Item, scale: f32) {
             painter.rect(rect, CornerRadius::ZERO, fill, stroke, StrokeKind::Middle);
         }
         Some(Shape::Barcode { columns, rows, quiet, modules }) => barcode(painter, rect, *columns, *rows, *quiet, modules),
+        Some(Shape::Polygon { points, fill }) => {
+            // A fan of triangles from the first corner: each one convex, as egui fills them.
+            let to_px = |[x, y]: [f64; 2]| origin + Vec2::new(x as f32 * scale, y as f32 * scale);
+            let colour = colour(fill);
+            if let Some((&first, rest)) = points.split_first() {
+                for pair in rest.windows(2) {
+                    if let [a, b] = pair {
+                        painter.add(egui::Shape::convex_polygon(vec![to_px(first), to_px(*a), to_px(*b)], colour, Stroke::NONE));
+                    }
+                }
+            }
+        }
         None => text(painter, rect, it, scale),
     }
 }
