@@ -32,7 +32,8 @@ reportcraft-cli <subcommand>
   (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
-  mcp                                       MCP server on stdio
+  mcp [--allow-paths] [--allow-actions]     MCP server on stdio; an agent uses saved connections only and
+                                            can't confirm prints or connection changes unless allowed
   version
 ";
 
@@ -61,7 +62,17 @@ fn run(args: &[String]) -> Result<(), String> {
         "sample" => print_sample(rest.first().map(String::as_str).unwrap_or("rentals")),
         "mcp" => {
             let mut s = Session::default();
-            reportcraft_mcp::serve(BufReader::new(std::io::stdin()), std::io::stdout(), &mut s).map_err(|e| e.to_string())
+            // An agent gets saved connections only and can't confirm external actions, unless
+            // the person starting the server allows more.
+            let mut policy = reportcraft_engine::Policy::AGENT;
+            for flag in rest {
+                match flag.as_str() {
+                    "--allow-paths" => policy.raw_sources = true,
+                    "--allow-actions" => policy.external_actions = true,
+                    other => return Err(format!("unknown option `{other}` (mcp takes --allow-paths, --allow-actions)")),
+                }
+            }
+            reportcraft_mcp::serve_with(BufReader::new(std::io::stdin()), std::io::stdout(), &mut s, policy).map_err(|e| e.to_string())
         }
         "version" | "--version" => {
             println!("reportcraft-cli {}", env!("CARGO_PKG_VERSION"));

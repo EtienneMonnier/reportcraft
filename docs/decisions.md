@@ -354,3 +354,18 @@ an MCP agent can propose a connection that a person confirms. Letting an MCP ses
 saved connections (no raw paths or connection strings) is the next step for §11 and is listed in
 the roadmap. The connections crate is native-only (L3); the browser build lists none.
 
+## An MCP client is an agent: saved connections only, no confirmed actions (§11)
+
+Every command declares what it touches (`Access`: reads, edits the session, or acts outside the
+application), and the MCP tool list turns that into MCP annotations, so a client can tell a
+preview from a print. The session carries a `Policy`. A person (CLI, the future app) may do
+everything; the MCP server narrows the session to `Policy::AGENT` for as long as it serves:
+databases only through saved connections (a raw file path or connection string is refused with
+a message that says how to save one), and external actions (`file.print`,
+`data.saveConnection`, `data.deleteConnection`) can be called without `confirm`, which answers
+what would happen, but `"confirm": true` is refused. That is the propose → approve flow of §18.3
+without a dialog in the engine: the agent proposes, a person confirms in the app or at the
+command line. Whoever starts the server can widen it (`mcp --allow-paths --allow-actions`), a
+choice made by a person rather than by the agent. Inline data (`data.loadCsv` with the CSV text,
+`report.load` with JSON) stays allowed: it reaches nothing the agent didn't already have.
+

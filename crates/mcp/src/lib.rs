@@ -1,6 +1,12 @@
 //! ReportCraft MCP server (L6): JSON-RPC 2.0 over stdio, one line per message. Every engine
 //! command is an MCP tool; its name is the command id with `.` replaced by `_`.
 //!
+//! An MCP client is an agent, so [`serve`] narrows the session to [`Policy::AGENT`]: databases
+//! only through the user's saved connections, and actions outside the application (printing,
+//! saving a connection) proposed but never confirmed. [`serve_with`] takes another policy (the
+//! CLI's `mcp --allow-paths --allow-actions`). Each tool carries MCP annotations saying whether
+//! it only reads, edits the session, or acts outside it.
+//!
 //! Requests run one at a time. A reader thread keeps reading while one runs, so a
 //! `notifications/cancelled` for it stops it (the reply is then an error); one for a request not
 //! yet started means that request is skipped without a reply.
@@ -10,7 +16,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex, mpsc};
 
-use reportcraft_engine::{Session, commands};
+use reportcraft_engine::{Access, Policy, Session, commands};
 use serde_json::{Value as Json, json};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -29,8 +35,21 @@ struct InFlight {
     cancelled: VecDeque<Json>,
 }
 
-/// Serves requests from `input` until it closes.
-pub fn serve(input: impl BufRead + Send + 'static, mut output: impl Write, session: &mut Session) -> std::io::Result<()> {
+/// Serves requests from `input` until it closes, as an agent ([`Policy::AGENT`]).
+pub fn serve(input: impl BufRead + Send + 'static, output: impl Write, session: &mut Session) -> std::io::Result<()> {
+    serve_with(input, output, session, Policy::AGENT)
+}
+
+/// [`serve`] with the given policy for the session (restored when the input closes).
+pub fn serve_with(input: impl BufRead + Send + 'static, output: impl Write, session: &mut Session, policy: Policy) -> std::io::Result<()> {
+    let before = session.policy;
+    session.policy = policy;
+    let result = serve_loop(input, output, session);
+    session.policy = before;
+    result
+}
+
+fn serve_loop(input: impl BufRead + Send + 'static, mut output: impl Write, session: &mut Session) -> std::io::Result<()> {
     let state = Arc::new(Mutex::new(InFlight::default()));
     let (lines, incoming) = mpsc::sync_channel::<std::io::Result<String>>(64);
     let reader_state = Arc::clone(&state);
@@ -149,9 +168,19 @@ fn tool_list() -> Vec<Json> {
                 "name": tool_name(c.id),
                 "description": format!("{} ({} menu). Parameters: {}", c.label, c.menu, c.params),
                 "inputSchema": {"type": "object", "additionalProperties": true},
+                "annotations": annotations(c.access, c.label),
             })
         })
         .collect()
+}
+
+/// MCP tool annotations: reads are read-only; external actions reach outside the application.
+fn annotations(access: Access, title: &str) -> Json {
+    match access {
+        Access::Read => json!({"title": title, "readOnlyHint": true, "openWorldHint": false}),
+        Access::Edit => json!({"title": title, "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}),
+        Access::External => json!({"title": title, "readOnlyHint": false, "destructiveHint": true, "openWorldHint": true}),
+    }
 }
 
 fn tool_name(id: &str) -> String {
@@ -188,6 +217,11 @@ mod tests {
         let mut s = Session::default();
         let list = handle_line(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &mut s).unwrap();
         assert!(list.to_string().contains("report_render"));
+        let tools = list["result"]["tools"].as_array().unwrap();
+        let tool = |name: &str| tools.iter().find(|t| t["name"] == json!(name)).unwrap()["annotations"].clone();
+        assert_eq!(tool("report_validate")["readOnlyHint"], json!(true));
+        assert_eq!(tool("data_loadCsv")["readOnlyHint"], json!(false));
+        assert_eq!(tool("file_print")["openWorldHint"], json!(true));
         let r = handle_line(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"file_openSample","arguments":{}}}"#, &mut s).unwrap();
         assert_eq!(r["result"]["isError"], json!(false));
     }
@@ -216,7 +250,8 @@ mod tests {
         let mut out = Vec::new();
         #[allow(clippy::disallowed_methods)] // native test
         let started = std::time::Instant::now();
-        serve(std::io::BufReader::new(reader), &mut out, &mut Session::default()).unwrap();
+        // A person's policy: this test is about cancellation, and it opens a file by its path.
+        serve_with(std::io::BufReader::new(reader), &mut out, &mut Session::default(), Policy::PERSON).unwrap();
         feeder.join().unwrap();
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
         let replies: Vec<Json> = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
@@ -225,6 +260,22 @@ mod tests {
         assert_eq!(replies[0]["result"]["isError"], json!(true));
         assert!(replies[0]["result"]["content"][0]["text"].as_str().unwrap().contains("stopped on request"));
         assert_eq!(replies[1]["id"], json!(3), "request 2 was skipped");
+    }
+
+    #[test]
+    fn an_agent_reaches_saved_connections_only_and_the_policy_is_restored() {
+        let line = |id: u32, name: &str, args: Json| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": name, "arguments": args}});
+        let input = format!(
+            "{}\n{}\n",
+            line(1, "data_loadSqlite", json!({"path": "/etc/passwd", "query": "SELECT 1"})),
+            line(2, "file_print", json!({"confirm": true}))
+        );
+        let mut out = Vec::new();
+        let mut s = Session::default();
+        serve(std::io::Cursor::new(input.into_bytes()), &mut out, &mut s).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("saved connections only") && text.contains("only a person"), "{text}");
+        assert_eq!(s.policy, Policy::PERSON, "the session's own policy comes back");
     }
 
     #[test]

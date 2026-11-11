@@ -20,7 +20,31 @@ use reportcraft_model::Report;
 use serde_json::Value as Json;
 
 pub use cache::QueryCache;
-pub use cmd::{CommandSpec, commands, find_command};
+pub use cmd::{Access, CommandSpec, commands, find_command};
+
+/// What a session may do beyond its own state. A person at the command line or in the app may do
+/// everything; an MCP agent, by default, only what the user set up: saved connections, and no
+/// external action without a person's confirmation (specification §11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Policy {
+    /// May open a database from a raw file path or connection string (else only saved ones).
+    pub raw_sources: bool,
+    /// May confirm external actions (print, save or delete a connection).
+    pub external_actions: bool,
+}
+
+impl Policy {
+    /// A person: everything.
+    pub const PERSON: Policy = Policy { raw_sources: true, external_actions: true };
+    /// An agent: saved connections only, external actions proposed but never confirmed.
+    pub const AGENT: Policy = Policy { raw_sources: false, external_actions: false };
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Policy::PERSON
+    }
+}
 pub use query_log::{QueryLog, QueryLogEntry};
 
 /// What a command can fail with: the core error, plus the engine's own cases.
@@ -54,6 +78,8 @@ pub struct Session {
     pub query_log: QueryLog,
     /// Raised through `cancel_handle` to stop the running command.
     cancel: Cancel,
+    /// What the session may do beyond its own state (an MCP server narrows it).
+    pub policy: Policy,
     /// Saved connections, opened on first use (the user's settings and keychain unless a test
     /// gave others). Shared by clones, so a restored session keeps them.
     #[cfg(not(target_arch = "wasm32"))]
@@ -70,6 +96,7 @@ impl Default for Session {
             cache: QueryCache::default(),
             query_log: QueryLog::default(),
             cancel: Cancel::default(),
+            policy: Policy::PERSON,
             #[cfg(not(target_arch = "wasm32"))]
             connections: Arc::default(),
         }
@@ -470,5 +497,36 @@ mod tests {
         assert_eq!(s.execute("data.deleteConnection", &json!({"name": "odoo", "confirm": true})).unwrap()["deleted"], json!(true));
         assert!(s.execute("data.loadPostgres", &json!({"saved": "odoo", "query": "SELECT 1"})).unwrap_err().to_string().contains("saved: local"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_agent_session_uses_saved_connections_and_cannot_confirm_external_actions() {
+        let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
+        s.execute("data.saveConnection", &json!({"name": "local", "kind": "sqlite", "path": "/nonexistent/x.db", "confirm": true})).unwrap();
+        s.policy = Policy::AGENT;
+        for (id, params) in [
+            ("data.loadSqlite", json!({"path": "/etc/passwd", "query": "SELECT 1"})),
+            ("data.describeSqlite", json!({"path": "/etc/passwd"})),
+            ("data.previewPostgres", json!({"connection": "host=evil", "table": "t"})),
+            ("data.loadPostgres", json!({"connection": "host=evil", "query": "SELECT 1"})),
+        ] {
+            let err = s.execute(id, &params).unwrap_err().to_string();
+            assert!(err.contains("saved connections only"), "{id}: {err}");
+        }
+        // A saved connection is fine (this one points nowhere, so the error is the file's).
+        let err = s.execute("data.describeSqlite", &json!({"saved": "local"})).unwrap_err().to_string();
+        assert!(!err.contains("saved connections only"), "{err}");
+        // Proposing is fine; confirming is for a person.
+        let proposed = json!({"name": "new", "kind": "sqlite", "path": "/tmp/y.db"});
+        assert_eq!(s.execute("data.saveConnection", &proposed).unwrap()["saved"], json!(false));
+        let mut confirmed = proposed.clone();
+        confirmed["confirm"] = json!(true);
+        assert!(s.execute("data.saveConnection", &confirmed).unwrap_err().to_string().contains("only a person"));
+        assert!(s.execute("data.deleteConnection", &json!({"name": "local", "confirm": true})).unwrap_err().to_string().contains("only a person"));
+        assert!(s.execute("file.print", &json!({"confirm": true})).unwrap_err().to_string().contains("only a person"));
+        assert_eq!(s.execute("data.connections", &json!({})).unwrap()["connections"].as_array().map(Vec::len), Some(1));
+        // Every command says what it touches.
+        let external: Vec<&str> = commands().iter().filter(|c| c.access == Access::External).map(|c| c.id).collect();
+        assert_eq!(external, ["file.print", "data.saveConnection", "data.deleteConnection"]);
     }
 }
