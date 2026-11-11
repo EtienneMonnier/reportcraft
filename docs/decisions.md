@@ -464,3 +464,16 @@ changing the report (designer, CLI `run`, MCP) is undoable alike, including `rep
 loads, read-only commands and refused edits don't touch the history, and a new edit clears what
 was undone. Text boxes keep their own undo while they have the keyboard.
 
+## The control channel drives the open window as an agent would (R3.3)
+
+`reportcraft --control PORT` listens on 127.0.0.1 only, for JSON lines, as GridCraft's does. A
+connection must first give a token the app writes, at start, to a file only its user can read
+(`$XDG_RUNTIME_DIR/reportcraft-control-PORT.token`, removed on exit), so another account on the
+machine, or a web page aiming at localhost, can't drive the window. Requests are engine command
+ids plus `ui.state`, `ui.screenshot` and `app.quit`; the window answers them between two frames,
+so a request sees exactly what the person sees and the canvas and preview follow. Commands run
+under the agent policy (saved connections only, no confirmed external action): whoever holds the
+token is a program, not the person at the screen. The server is plain std (a thread per
+connection, at most eight, lines up to 16 MiB, a reply within ten minutes); the network code is in
+the app (L7), the token helpers in the engine so `reportcraft-cli send` shares them.
+

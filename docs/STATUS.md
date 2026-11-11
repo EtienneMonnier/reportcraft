@@ -133,8 +133,11 @@
   orientation, margins); previews the rendered pages live after every change; saves the report and
   exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
   every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
-  `--screenshot FILE.ppm` saves the window and quits.
-- CLI and MCP server reaching every command. 170 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+  `--screenshot FILE.ppm` saves the window and quits. `--control PORT` lets scripts and agents drive
+  the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
+  PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
+  confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
+- CLI and MCP server reaching every command. 174 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet (see `ROADMAP.md`).

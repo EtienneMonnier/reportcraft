@@ -246,3 +246,45 @@ fn undo_and_redo_from_the_menu_and_the_keyboard() {
     }
     assert!(d.status().contains("nothing to undo"), "{}", d.status());
 }
+
+#[test]
+fn the_control_channel_runs_commands_as_an_agent() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    let r = d.control("report.setProperties", &serde_json::json!({"title": "Remote"}));
+    assert!(r.is_ok(), "{r:?}");
+    assert_eq!(d.session().report.title, "Remote");
+    assert!(d.preview().is_ok());
+    // An agent: no raw database path, no confirmed print; the window's own policy comes back.
+    let refused = d.control("data.loadSqlite", &serde_json::json!({"path": "/etc/passwd", "query": "SELECT 1"}));
+    assert!(refused.is_err_and(|e| e.contains("saved connections only")));
+    assert_eq!(d.session().policy, reportcraft_engine::Policy::PERSON);
+    assert!(d.control("nope", &serde_json::json!({})).is_err_and(|e| e.contains("unknown method")));
+    let state = d.control("ui.state", &serde_json::json!({})).unwrap_or_default();
+    assert_eq!((state["title"].as_str(), state["undo"].as_u64()), (Some("Remote"), Some(2)));
+}
+
+#[test]
+fn the_preview_panel_keeps_its_width_frame_after_frame() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    let ctx = egui::Context::default();
+    let width = |ctx: &egui::Context, d: &mut Designer| {
+        let input =
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| d.ui(ui));
+        out.textures_delta.clear();
+        // The page's width in the preview.
+        out.shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                // Pages, in the preview on the right (the canvas's bands are white too).
+                egui::Shape::Rect(r) if r.fill == egui::Color32::WHITE && r.rect.left() > 900.0 => Some(r.rect.width()),
+                _ => None,
+            })
+            .fold(0.0, f32::max)
+    };
+    let first = (0..3).map(|_| width(&ctx, &mut d)).last().unwrap_or(0.0);
+    let later = (0..60).map(|_| width(&ctx, &mut d)).last().unwrap_or(0.0);
+    assert!(first > 300.0 && (first - later).abs() < 1.0, "page {first} px wide, then {later} px");
+}

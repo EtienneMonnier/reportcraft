@@ -22,6 +22,8 @@ reportcraft-cli <subcommand>
   print <report.json|--sample NAME> [data options as for render] [--param NAME=VALUE]... [--printer NAME] [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]
                                             print through the system spooler; --dry-run only shows the job
   printers                                  the system's printers
+  send PORT METHOD [JSON]                   one request to the designer started with `reportcraft --control PORT`
+                                            (an engine command id, ui.state, ui.screenshot with a path to a .ppm file, app.quit)
   connections [list]                        saved connections (definitions in the settings file, passwords in the keychain)
   connections save NAME (--sqlite FILE | --host HOST [--port N] --user USER --database DB [--password-stdin]) [--description TEXT]
   connections delete NAME | connections test NAME
@@ -56,6 +58,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "print" => print(rest),
         "printers" => printers(),
         "connections" => connections(rest),
+        "send" => send(rest),
         "run" => run_commands(rest),
         "schema" => schema(rest),
         "validate" => validate(rest),
@@ -382,6 +385,40 @@ fn connections(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         other => Err(format!("unknown `connections` action `{other}` (list, save, delete, test)")),
+    }
+}
+
+/// One request to a running designer over its control channel.
+fn send(args: &[String]) -> Result<(), String> {
+    use std::io::BufRead;
+    let port: u16 = args.first().ok_or("`send` needs PORT METHOD [JSON]")?.parse().map_err(|_| "PORT must be a port number")?;
+    let method = args.get(1).ok_or("`send` needs PORT METHOD [JSON]")?;
+    let params: Json = match args.get(2) {
+        Some(t) => serde_json::from_str(t).map_err(|e| format!("the parameters are not JSON: {e}"))?,
+        None => json!({}),
+    };
+    let token = reportcraft_engine::control::read_token(port)
+        .map_err(|e| format!("no designer on port {port} ({e}); start one with `reportcraft --control {port}`"))?;
+    let stream = std::net::TcpStream::connect(("127.0.0.1", port)).map_err(|e| format!("can't reach the designer on port {port}: {e}"))?;
+    let mut reader = std::io::BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+    let mut writer = stream;
+    let mut line = String::new();
+    let mut ask = |request: Json, line: &mut String| -> Result<Json, String> {
+        writeln!(writer, "{request}").map_err(|e| e.to_string())?;
+        line.clear();
+        reader.read_line(line).map_err(|e| e.to_string())?;
+        serde_json::from_str(line).map_err(|_| "the designer closed the connection".to_owned())
+    };
+    let auth = ask(json!({"auth": token}), &mut line)?;
+    if auth["ok"] != json!(true) {
+        return Err(auth["error"].as_str().unwrap_or("refused").to_owned());
+    }
+    let reply = ask(json!({"id": 1, "method": method, "params": params}), &mut line)?;
+    if reply["ok"] == json!(true) {
+        println!("{}", serde_json::to_string_pretty(&reply["result"]).map_err(|e| e.to_string())?);
+        Ok(())
+    } else {
+        Err(reply["error"].as_str().unwrap_or("failed").to_owned())
     }
 }
 
