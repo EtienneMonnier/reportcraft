@@ -13,11 +13,12 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 |---|---|---|
 | L0 | `core` | `Value`, `FieldType`, `Column`, `RowSet`, the shared `Error`, input caps (`limits`) |
 | L0 | `barcode` | Code 128, EAN-13 and QR code encoders (module grids), written from the public standards |
+| L0 | `expr` | Excel-style formulas: parser (length and depth bounded), function catalogue, deterministic evaluator over an `Env` the caller provides |
 | L1 | `model` | The report definition (`*.rcr.json`, `format_version`): page setup, parameters, sort, groups, bands, elements |
 | L2 | `data` | `DataSource` and `SchemaSource` traits, schema types; `MemorySource`, `CsvSource` (wasm-safe) |
 | L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `postgres` | Read-only PostgreSQL source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
-| L3 | `layout` | Banded layout to `Document` (pages of positioned text); HTML writer |
+| L3 | `layout` | Banded layout to `Document` (pages of positioned text), named formulas as computed columns, formula elements; HTML writer |
 | L4 | `pdf` | PDF writer over `Document` through craft-libs' `craft-pdf` (Krilla): embedded font subsets, shaped text, vector shapes and barcodes |
 | L5 | `engine` | `Session`, the command registry (`cmd.rs`), built-in samples |
 | L6 | `mcp` | MCP server over stdio (hand-written JSON-RPC), one tool per command |

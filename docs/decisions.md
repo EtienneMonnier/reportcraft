@@ -243,3 +243,36 @@ that says what to set. A character the font lacks becomes `.notdef` and a warnin
 gap. The engine returns the PDF base64-encoded in the command result so the MCP server and the CLI
 share one path. CI installs `fonts-liberation` for the writer's tests, which fail on CI (but skip
 locally) when no font is found.
+
+## Formulas: an Excel subset, evaluated by our own crate (R2.2)
+
+Formulas use the syntax report authors already know from spreadsheets (decided 2026-11-01):
+`IF([qty] > 10, [price] * 0.9, [price])`, fields in brackets, `,` or `;` between arguments. The
+parser and evaluator are a crate of their own (`reportcraft-expr`, L0, chrono only) so the model
+can check formulas and the layout can run them, on every target including wasm. No existing crate
+fit: spreadsheet engines are tied to a cell grid, and general expression crates have other syntax
+and no Excel semantics. Formulas can only compute: there is no function that reads a file, the
+network or the clock beyond the render's own time, so a shared report never runs code.
+
+Semantics follow Excel where it has an answer, so a formula behaves as its author expects:
+operator precedence (negation before `^`), blanks as 0 or `""`, case-insensitive text comparison,
+errors as values that flow until `IFERROR`, `ROUND` on the 15 significant digits Excel keeps
+(`ROUND(2.675, 2)` is 2.68), numbers shown with 15 digits (`0.1 + 0.2` is `0.3`), `DATE` adding
+1900 to years below 1900. Where Excel's answer comes from its cell grid we chose the report's
+equivalent: a field given directly to `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX`, `COUNTA`, `SUMIF`,
+`COUNTIF` or `AVERAGEIF` is a range — that field over the rows the band summarises (the group in a
+group band and in the detail band, every row in the report header and footer). Dates are values
+of their own rather than serial numbers: a date plus days is a date, a date minus a date is days,
+and text holding an ISO date (as data sources write them) is read as a date where one is
+expected; `YEAR(45000)` is `#VALUE!`. An empty date stays empty through date functions, so a
+missing return date prints nothing rather than 1900.
+
+Named formulas are computed once per row before sorting and grouping, as extra columns, so they
+work wherever a field does (groups, sort, totals, subreport links); they are evaluated in
+dependency order and a circle is a validation error. They may not summarise rows (that would make
+a row's value depend on its group, which depends on the sort); totals go in formula elements.
+Aggregates that don't read the current row are remembered for the rows being summarised, so a
+share-of-group in the detail band costs one sum per group, not one per row. Hostile input is
+bounded: formulas are at most 8 KiB and 100 levels deep (checked while parsing, so evaluation
+recursion is bounded too), 255 arguments, 256 named formulas, 32 KiB of text per result.
+

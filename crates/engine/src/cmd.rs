@@ -104,6 +104,13 @@ static COMMANDS: &[CommandSpec] = &[
         run: report_validate,
     },
     CommandSpec {
+        id: "report.evaluateFormula",
+        label: "Evaluate formula",
+        menu: "Report",
+        params: r#"{"expression": string (Excel-style: "[price] * [qty]", "IF([qty] > 10, \"bulk\", \"unit\")", "[amount] / SUM([amount])"), "limit"?: integer (rows, default 10, at most 1000), "params"?: {name: value or [values]}}"#,
+        run: report_evaluate_formula,
+    },
+    CommandSpec {
         id: "report.render",
         label: "Render",
         menu: "Report",
@@ -492,6 +499,22 @@ fn report_validate(s: &mut Session, params: &Json) -> EngineResult<Json> {
         "dataChecked": columns.is_some(),
         "diagnostics": diagnostics,
     }))
+}
+
+/// A formula's values over the first rows of the loaded data (named formulas computed, every
+/// row summarised), to try a formula before placing it.
+fn report_evaluate_formula(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.evaluateFormula";
+    let expression = str_param(CMD, params, "expression")?;
+    let limit = params.get("limit").and_then(Json::as_u64).unwrap_or(10).min(1_000);
+    let resolved = resolve_parameters(s, CMD, params)?;
+    let mut values: Params = resolved.iter().map(|(k, v)| (k.clone(), v.display())).collect();
+    if let Some(now) = now_local() {
+        values.insert(reportcraft_layout::PRINTED_AT.to_owned(), now);
+    }
+    let limit = usize::try_from(limit).unwrap_or(1_000);
+    let results = reportcraft_layout::evaluate_formula(&s.report, &s.rows, &values, expression, limit)?;
+    Ok(json!({"values": results, "rows": s.rows.rows.len()}))
 }
 
 fn report_parameters(s: &mut Session, _: &Json) -> EngineResult<Json> {
