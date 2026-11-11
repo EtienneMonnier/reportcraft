@@ -152,3 +152,8 @@
 	rows	lignes
 	totals	totaux
 	columns	colonnes
+	Encryption	Chiffrement
+	none	aucun
+	encrypted	chiffré
+	encrypted, certificate checked	chiffré, certificat vérifié
+	encrypted when the server offers it	chiffré si le serveur le propose

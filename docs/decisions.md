@@ -502,3 +502,18 @@ and golden snapshots check their geometry. Categories keep the order they first 
 report's sort), at most 60. Colours come from a fixed palette of eight with contrast on white.
 Several series, axes with ticks and native Excel charts are next steps.
 
+## Database connections stay pure Rust; PostgreSQL is encrypted with rustls (R1.2, R1.4)
+
+Etienne decided on 2026-11-11: connections in pure Rust for now. So no ODBC yet (it needs the
+system's driver manager and each vendor's C driver; Advantage has no other route, so it waits),
+SQL Server will come through a Rust driver (tiberius), and TLS goes through rustls with the ring
+provider (no system library; ring compiles a little C and assembly with the project, as the
+bundled SQLite does). PostgreSQL follows libpq's `sslmode`, so connection strings mean what
+people expect: `prefer` (the default) and `require` encrypt without checking the certificate, as
+libpq does; `verify-full` (and `verify-ca`, held to the same standard) checks it against the
+system's certificate authorities (`rustls-native-certs`, which honours `SSL_CERT_FILE`) and the
+server's name; `disable` sends nothing encrypted. The driver only knows `disable`, `prefer` and
+`require`, so the strict modes are turned into `require` plus verification before parsing. A
+failed handshake says which check failed and what each mode does. Saved connections keep an
+`sslmode`; the designer offers it as a plain choice.
+

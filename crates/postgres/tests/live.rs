@@ -27,7 +27,12 @@ static SETUP: Once = Once::new();
 /// Creates the test schema once per run (as the connecting user, who must be allowed to).
 fn setup(conninfo: &str) {
     SETUP.call_once(|| {
-        let mut c = Client::connect(conninfo, NoTls).unwrap();
+        // As the source connects: TLS unless the connection string says `sslmode=disable`.
+        let (prepared, tls) = reportcraft_postgres::client_parts(conninfo).unwrap();
+        let mut c = match tls {
+            Some(tls) => Client::connect(&prepared, tls).unwrap(),
+            None => Client::connect(&prepared, NoTls).unwrap(),
+        };
         c.batch_execute(
             r#"
             DROP SCHEMA IF EXISTS rc_live CASCADE;

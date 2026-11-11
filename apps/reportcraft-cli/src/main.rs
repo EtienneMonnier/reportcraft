@@ -25,7 +25,7 @@ reportcraft-cli <subcommand>
   send PORT METHOD [JSON]                   one request to the designer started with `reportcraft --control PORT`
                                             (an engine command id, ui.state, ui.screenshot with a path to a .ppm file, app.quit)
   connections [list]                        saved connections (definitions in the settings file, passwords in the keychain)
-  connections save NAME (--sqlite FILE | --host HOST [--port N] --user USER --database DB [--password-stdin]) [--description TEXT]
+  connections save NAME (--sqlite FILE | --host HOST [--port N] --user USER --database DB [--sslmode MODE] [--password-stdin]) [--description TEXT]
   connections delete NAME | connections test NAME
   (--connection NAME --query SQL loads from a saved connection in render, validate and print;
    schema takes --connection NAME too)
@@ -343,6 +343,7 @@ fn connections(args: &[String]) -> Result<(), String> {
                         p["kind"] = json!("sqlite");
                         "path"
                     }
+                    "--sslmode" => "sslmode",
                     "--host" | "--user" | "--database" => {
                         p["kind"] = json!("postgres");
                         a.trim_start_matches("--")

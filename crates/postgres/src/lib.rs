@@ -15,6 +15,18 @@ use std::time::Duration;
 
 use postgres::error::SqlState;
 use postgres::types::{ToSql, Type};
+mod tls;
+
+/// The connection string the driver understands (`verify-full` and `verify-ca` become `require`)
+/// and the TLS connector a source uses for `conninfo` (`None` for `sslmode=disable`), for tools
+/// that open their own client the same way (test setups).
+pub fn client_parts(conninfo: &str) -> Result<(String, Option<tokio_postgres_rustls::MakeRustlsConnect>)> {
+    let (prepared, verify) = tls::prepare(conninfo);
+    let config = Config::from_str(&prepared).map_err(|_| Error::Invalid("the PostgreSQL connection string is not valid".into()))?;
+    let connector = if config.get_ssl_mode() == postgres::config::SslMode::Disable { None } else { Some(tls::connector(verify)?) };
+    Ok((prepared, connector))
+}
+
 use postgres::{Client, Config, NoTls, SimpleQueryMessage, Transaction};
 use reportcraft_core::{Cancel, Column, Error, FieldType, Result, RowSet, Value, limits};
 use reportcraft_data::{BindValue, ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
@@ -113,8 +125,16 @@ impl PostgresSource {
         format!("{user}{host}:{port}/{}", config.get_dbname().unwrap_or(""))
     }
 
+    /// The TLS connector this connection uses, `None` for `sslmode=disable`.
+    fn tls(&self) -> Result<Option<tokio_postgres_rustls::MakeRustlsConnect>> {
+        let (conninfo, verify) = tls::prepare(&self.conninfo);
+        let config = Config::from_str(&conninfo).map_err(|_| Error::Invalid("the PostgreSQL connection string is not valid".into()))?;
+        if config.get_ssl_mode() == postgres::config::SslMode::Disable { Ok(None) } else { tls::connector(verify).map(Some) }
+    }
+
     fn connect(&self) -> Result<Client> {
-        let mut config = Config::from_str(&self.conninfo).map_err(|_| Error::Invalid("the PostgreSQL connection string is not valid".into()))?;
+        let (conninfo, _) = tls::prepare(&self.conninfo);
+        let mut config = Config::from_str(&conninfo).map_err(|_| Error::Invalid("the PostgreSQL connection string is not valid".into()))?;
         config.application_name("ReportCraft");
         // Like libpq: a password left out of the connection string may come from PGPASSWORD, so it
         // needn't appear on a command line.
@@ -126,7 +146,11 @@ impl PostgresSource {
         if config.get_connect_timeout().is_none() {
             config.connect_timeout(CONNECT_TIMEOUT);
         }
-        config.connect(NoTls).map_err(|e| Error::Io(format!("cannot connect to PostgreSQL: {}", message(&e))))
+        let connected = match self.tls()? {
+            Some(tls) => config.connect(tls),
+            None => config.connect(NoTls),
+        };
+        connected.map_err(|e| Error::Io(format!("cannot connect to PostgreSQL: {}", message(&e))))
     }
 
     /// Runs `work` in a read-only transaction while a watcher cancels the running statement on the
@@ -139,7 +163,10 @@ impl PostgresSource {
                 while !done.load(std::sync::atomic::Ordering::SeqCst) {
                     if self.cancel.is_cancelled() {
                         // Best effort: if the request can't reach the server, the time limit still applies.
-                        let _ = token.cancel_query(NoTls);
+                        let _ = match self.tls() {
+                            Ok(Some(tls)) => token.cancel_query(tls),
+                            _ => token.cancel_query(NoTls),
+                        };
                         return;
                     }
                     std::thread::sleep(WATCH_INTERVAL);
@@ -164,7 +191,20 @@ impl PostgresSource {
 
 /// The server's message when there is one, without connection details.
 fn message(e: &postgres::Error) -> String {
-    e.as_db_error().map_or_else(|| e.to_string(), |db| db.message().to_owned())
+    if let Some(db) = e.as_db_error() {
+        return db.message().to_owned();
+    }
+    // The cause says what went wrong (a TLS handshake: which certificate check failed).
+    let mut text = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        text = format!("{text}: {s}");
+        source = s.source();
+    }
+    if text.contains("certificate") {
+        text.push_str(" (sslmode=verify-full needs a certificate from an authority this system trusts, naming the server; sslmode=require encrypts without checking)");
+    }
+    text
 }
 
 fn query_error(e: &postgres::Error) -> Error {

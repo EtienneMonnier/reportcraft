@@ -37,6 +37,11 @@ log = "0.4"
 rusqlite = { version = "0.41", features = ["bundled", "limits", "hooks", "column_decltype"] }
 # PostgreSQL source (native only): the pure-Rust synchronous client.
 postgres = "0.19"
+# TLS for PostgreSQL (and later SQL Server), in Rust: rustls with the ring provider (no system
+# library), the system's certificate authorities for `sslmode=verify-full`.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }
+rustls-native-certs = "0.8"
 # PDF writing: the suite's shared writer, pinned to the craft-libs revision GridCraft uses. It
 # needs the patched Krilla below (a compile-time marker rejects the crates.io one).
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }

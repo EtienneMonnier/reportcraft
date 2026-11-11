@@ -10,7 +10,10 @@
 - PostgreSQL data (native builds): one query in a read-only transaction, read through a cursor in
   batches, statement timeout, row cap; schema discovery across schemas (only what the user may
   read) and previews (`data.loadPostgres`, `data.describePostgres`, `data.previewPostgres`,
-  `--postgres CONN` in `render`, `validate` and `schema`). Plain connections only (no TLS yet).
+  `--postgres CONN` in `render`, `validate` and `schema`). Encrypted as libpq's `sslmode` says, in
+  Rust (rustls): `prefer` (the default) and `require` encrypt without checking the certificate,
+  `verify-full` also checks it against the system's authorities (or `SSL_CERT_FILE`) and the
+  server's name, `disable` doesn't encrypt; saved connections keep their `sslmode`.
 - Saved connections: a SQLite file or a PostgreSQL host, port, user and database saved by name in
   the suite's settings file (craft-settings, `reportcraft/config.toml`, or `REPORTCRAFT_CONFIG_DIR`),
   the password in the system keychain (Secret Service, macOS Keychain, Windows Credential Manager),
@@ -153,7 +156,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 183 tests (plus 8 live PostgreSQL tests run on demand), including 17 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 184 tests (plus 8 live PostgreSQL tests run on demand), including 17 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet (see `ROADMAP.md`).
