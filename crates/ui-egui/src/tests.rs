@@ -303,3 +303,29 @@ fn the_french_catalog_parses_and_translates() {
     assert!(crate::language() == "en" || crate::language() == "fr");
     crate::set_language("en");
 }
+
+#[test]
+fn structure_is_edited_in_one_window_and_parameters_reach_the_preview() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    let mut draft = crate::structure::Draft::of(&d.session().report);
+    let sort_keys = draft.sort.len();
+    draft.sort.push(reportcraft_model::SortKey { field: "amount".into(), descending: true });
+    draft.parameters.push(reportcraft_model::Parameter {
+        required: true,
+        kind: reportcraft_model::ParamType::Number,
+        ..reportcraft_model::Parameter::text("min", "Minimum", None)
+    });
+    d.structure = Some(draft);
+    assert!(frames(&mut d, 2) > 50, "the window draws");
+    let params = d.structure.as_ref().map(crate::structure::Draft::params).unwrap_or_default();
+    assert!(d.run("report.setStructure", params).is_some(), "{}", d.status());
+    assert_eq!(d.session().report.sort.len(), sort_keys + 1);
+    // A required parameter with no value: the preview says so; given one, it renders.
+    assert!(d.preview().is_err_and(|e| e.contains("min")));
+    d.param_values.insert("min".into(), "100".into());
+    d.revision += 1;
+    assert!(d.preview().is_ok());
+    d.check();
+    assert!(!d.status().is_empty());
+}

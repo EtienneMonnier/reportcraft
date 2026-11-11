@@ -114,11 +114,11 @@ Anything marked **decision** waits for a maintainer.
   - [ ] craft-ui's controls, icons, themes and panes (the first version uses plain egui on the suite's fork), and the suite's menu bar (craft-menu)
   - [ ] Bold and the report's fonts in the preview (egui's default fonts have no bold face; craft-fonts)
   - [ ] Render the preview off the UI thread for large data, with progress and Stop (R1.9)
-  - [ ] Parameters panel: ask for the report's parameters before the preview
+  - [x] Parameters panel: values for the report's parameters, used by the preview and the exports
   - [ ] Saving and opening connections from the designer (today: `reportcraft-cli connections save`)
   - [ ] Packaging: desktop entry, icon, RPM (as the suite's apps)
 - [x] R3.2 Field list, drag-and-drop of fields into bands, property panel (#16)
-  - [ ] Groups, sort and named formulas edited in the designer (today in the report file or by command)
+  - [x] Groups, sort, named formulas and parameters edited in the designer (Report ▸ Groups, sort, formulas and parameters; `report.setStructure`)
   - [ ] Several elements selected at once; align, distribute, copy and paste
   - [ ] Band height dragged on the canvas (today in the band's properties)
   - [ ] Subreports, barcodes and parameters edited in the panel (today shown, edited in the file)

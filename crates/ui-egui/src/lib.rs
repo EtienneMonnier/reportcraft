@@ -11,6 +11,7 @@ mod i18n;
 mod canvas;
 mod preview;
 mod props;
+mod structure;
 
 pub use i18n::{language, set_language};
 
@@ -82,6 +83,10 @@ pub struct Designer {
     /// The properties panel's working copy, for the revision it was taken at.
     draft: Option<(u64, Draft)>,
     saved_query: Option<SavedQuery>,
+    /// The structure window's working copy, while it is open.
+    structure: Option<structure::Draft>,
+    /// The values given to the report's parameters, for the preview and the exports.
+    param_values: std::collections::BTreeMap<String, String>,
 }
 
 /// What the properties panel edits.
@@ -107,6 +112,8 @@ impl Designer {
             canvas: canvas::State::default(),
             draft: None,
             saved_query: None,
+            structure: None,
+            param_values: std::collections::BTreeMap::new(),
         }
     }
 
@@ -153,8 +160,16 @@ impl Designer {
         if method == "ui.state" {
             return Ok(self.state());
         }
+        if method == "ui.window" {
+            match params.get("name").and_then(Json::as_str) {
+                Some("structure") => self.structure = Some(structure::Draft::of(&self.session.report)),
+                Some("saved_query") => self.saved_query = Some(SavedQuery::default()),
+                other => return Err(format!("ui.window: unknown window {other:?} (structure, saved_query)")),
+            }
+            return Ok(json!({"opened": params["name"]}));
+        }
         if find_command(method).is_none() {
-            return Err(format!("unknown method `{method}` (an engine command id, ui.state, ui.screenshot or app.quit)"));
+            return Err(format!("unknown method `{method}` (an engine command id, ui.state, ui.window, ui.screenshot or app.quit)"));
         }
         let person = self.session.policy;
         self.session.policy = reportcraft_engine::Policy::AGENT;
@@ -268,7 +283,7 @@ impl Designer {
 
     /// Exports the report as `format` (`pdf`, `html`, `xlsx`, `docx`) to `path`.
     pub fn export(&mut self, format: &str, path: &Path) {
-        let Some(r) = self.run("report.render", json!({"format": format})) else { return };
+        let Some(r) = self.run("report.render", json!({"format": format, "params": self.param_values})) else { return };
         let bytes = match format {
             "html" => r["html"].as_str().map(|h| h.as_bytes().to_vec()),
             _ => r[format!("{format}Base64")].as_str().and_then(reportcraft_engine::base64::decode),
@@ -295,7 +310,7 @@ impl Designer {
             return;
         }
         self.preview.revision = Some(self.revision);
-        match self.session.execute("report.render", &json!({"format": "json"})) {
+        match self.session.execute("report.render", &json!({"format": "json", "params": self.param_values})) {
             Ok(v) => match serde_json::from_value::<Document>(v) {
                 Ok(doc) => {
                     self.preview.document = Some(doc);
@@ -349,6 +364,35 @@ impl Designer {
             }
         });
         self.saved_query_window(ui);
+        self.structure_window(ui);
+    }
+
+    fn structure_window(&mut self, ui: &mut egui::Ui) {
+        let fields = self.field_names();
+        let Some(draft) = self.structure.as_mut() else { return };
+        match structure::show(ui.ctx(), draft, &fields) {
+            structure::Outcome::Open => {}
+            structure::Outcome::Close => self.structure = None,
+            structure::Outcome::Apply => {
+                let params = draft.params();
+                if self.run("report.setStructure", params).is_some() {
+                    self.structure = None;
+                    self.status = tl!("structure applied").to_owned();
+                }
+            }
+        }
+    }
+
+    /// Runs `report.validate` and puts its findings in the status line.
+    pub fn check(&mut self) {
+        let Some(r) = self.run("report.validate", json!({})) else { return };
+        let found: Vec<String> = r["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|d| format!("{}: {}", d["location"].as_str().unwrap_or(""), d["message"].as_str().unwrap_or("")))
+            .collect();
+        self.status = if found.is_empty() { tl!("no problem found").to_owned() } else { found.join(" · ") };
     }
 
     fn menu(&mut self, ui: &mut egui::Ui) {
@@ -407,6 +451,14 @@ impl Designer {
                     }
                 }
             });
+            ui.menu_button(tl!("Report"), |ui| {
+                if ui.button(tl!("Groups, sort, formulas and parameters…")).clicked() {
+                    self.structure = Some(structure::Draft::of(&self.session.report));
+                }
+                if ui.button(tl!("Check the report")).clicked() {
+                    self.check();
+                }
+            });
             ui.menu_button(tl!("View"), |ui| {
                 ui.menu_button(tl!("Language"), |ui| {
                     let current = i18n::language();
@@ -452,7 +504,7 @@ impl Designer {
     }
 
     /// The field list: drag a field or a parameter onto a band.
-    fn fields(&self, ui: &mut egui::Ui) {
+    fn fields(&mut self, ui: &mut egui::Ui) {
         ui.heading(tl!("Fields"));
         if self.session.rows.columns.is_empty() {
             ui.label(tl!("Load data (Data menu) to list its fields."));
@@ -481,8 +533,26 @@ impl Designer {
         if !self.session.report.parameters.is_empty() {
             ui.separator();
             ui.label(tl!("Parameters"));
+            let mut changed = false;
             for p in &self.session.report.parameters {
-                drag(ui, &format!("param:{}", p.name), p.name.clone(), canvas::FieldDrop::Parameter(p.name.clone()));
+                drag(
+                    ui,
+                    &format!("param:{}", p.name),
+                    if p.label.is_empty() { p.name.clone() } else { p.label.clone() },
+                    canvas::FieldDrop::Parameter(p.name.clone()),
+                );
+                let value = self.param_values.entry(p.name.clone()).or_default();
+                let hint = p.default.clone().unwrap_or_else(|| match p.kind {
+                    reportcraft_model::ParamType::Date => "YYYY-MM-DD".into(),
+                    reportcraft_model::ParamType::DateRange => "YYYY-MM-DD..YYYY-MM-DD".into(),
+                    _ => String::new(),
+                });
+                changed |= props::finished(&ui.add(egui::TextEdit::singleline(value).hint_text(hint)));
+            }
+            // An empty box means no value given (the default applies).
+            self.param_values.retain(|_, v| !v.trim().is_empty());
+            if changed {
+                self.revision += 1;
             }
         }
     }

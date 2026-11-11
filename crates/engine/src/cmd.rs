@@ -172,6 +172,14 @@ static COMMANDS: &[CommandSpec] = &[
         run: report_set_properties,
     },
     CommandSpec {
+        id: "report.setStructure",
+        label: "Groups, sort, formulas and parameters",
+        menu: "Report",
+        params: r#"{"groups"?: [{"field", "keep_together"?, "repeat_header"?, "page_break_before"?, "header"?, "footer"?}], "sort"?: [{"field", "descending"?}], "formulas"?: [{"name", "expression"}], "parameters"?: [{"name", "label"?, "type"?, "default"?, "choices"?, "multiple"?, "required"?}]} (each given list replaces the report's; a group keeps the bands you give it)"#,
+        access: Access::Edit,
+        run: report_set_structure,
+    },
+    CommandSpec {
         id: "report.setBand",
         label: "Band properties",
         menu: "Report",
@@ -825,6 +833,30 @@ fn element_param(command: &str, params: &Json) -> EngineResult<reportcraft_model
 fn index_param(command: &str, params: &Json, len: usize) -> EngineResult<usize> {
     let index = params.get("index").and_then(Json::as_u64).ok_or_else(|| bad(command, "`index` (integer) is required"))?;
     usize::try_from(index).ok().filter(|i| *i < len).ok_or_else(|| bad(command, format!("no element {index} (the band has {len})")))
+}
+
+fn report_set_structure(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.setStructure";
+    fn list<T: serde::de::DeserializeOwned>(params: &Json, key: &str) -> EngineResult<Option<Vec<T>>> {
+        params.get(key).map(|v| serde_json::from_value(v.clone()).map_err(|e| bad(CMD, format!("{key}: {e}")))).transpose()
+    }
+    let (groups, sort, formulas, parameters) =
+        (list(params, "groups")?, list(params, "sort")?, list(params, "formulas")?, list(params, "parameters")?);
+    edit_report(s, CMD, |r| {
+        if let Some(g) = groups {
+            r.groups = g;
+        }
+        if let Some(v) = sort {
+            r.sort = v;
+        }
+        if let Some(v) = formulas {
+            r.formulas = v;
+        }
+        if let Some(v) = parameters {
+            r.parameters = v;
+        }
+        Ok(json!({"groups": r.groups.len(), "sort": r.sort.len(), "formulas": r.formulas.len(), "parameters": r.parameters.len()}))
+    })
 }
 
 fn report_set_properties(s: &mut Session, params: &Json) -> EngineResult<Json> {
