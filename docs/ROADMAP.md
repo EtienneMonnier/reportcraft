@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last updated:** 2026-11-01
+> **Last updated:** 2026-11-11
 
 Items have an id (`R<milestone>.<n>`), an owner (**maintainers** or **open**) and pending changes
 (`- [ ]`). Each item points to the requirement it serves in [specification.md](specification.md)
@@ -46,7 +46,12 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Day and month names in the report's language (`%A`, `%B` are English today)
   - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
   - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
-- [ ] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code)
+- [x] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code) (#8)
+  - [ ] `TEXT(value, format)` and numbers turned into text in the report's locale (`10,8` in French; `&` writes `10.8` today)
+  - [ ] Totals in named formulas (a computed field that reads its group's sum), and running totals (`RUNNINGSUM`-style, page totals)
+  - [ ] Formulas on element properties: conditional colour, visibility and page breaks (with R2.10)
+  - [ ] `PAGENUMBER()` / `TOTALPAGES()` in formulas (needs a second pass, as "page N / M" does)
+  - [ ] A formula editor in the designer with the function list, field names and live errors (R3)
 - [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
   - [ ] Keep a band with the next one (a group header never alone at the bottom of a page)
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
@@ -79,7 +84,8 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.13 Golden rendering tests: reference reports whose page count and geometry are checked on every change (§13, §15) (#34)
   - [ ] Add a golden PDF check once PDF export lands (R2.6): page count and text positions read back from the file
 - [x] R2.14 `report.validate` command: structured diagnostics for a definition without rendering it (§11, §15) (#35)
-  - [ ] Check expressions once formula fields land (R2.2): syntax, types, unknown names
+  - [x] Check expressions once formula fields land (R2.2): syntax, unknown fields and functions, argument counts, undeclared parameters, cycles
+  - [ ] Check formula types (text where a number is needed) from the data's column types
 
 ## R3 — Designer (owner: maintainers)
 - [ ] R3.1 `ui-egui` crate (L6) on craft-ui and the suite's egui fork; banded canvas with live preview

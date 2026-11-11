@@ -3,6 +3,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod format;
+mod formula;
 mod html;
 
 use std::cmp::Ordering;
@@ -101,7 +102,28 @@ pub fn layout_with_cancel(report: &Report, rows: &RowSet, params: &Params, cance
 pub fn render(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Params, cancel: &Cancel) -> Result<Document> {
     report.validate()?;
     let ctx = Context { datasets, params, cancel, depth: 0 };
-    Ok(run(report, rows, &ctx)?.into_document())
+    let computed = formula::with_formulas(report, rows, params, cancel)?;
+    Ok(run(report, computed.as_ref().unwrap_or(rows), &ctx)?.into_document())
+}
+
+/// The values of `expression` for the first `limit` rows of `rows` (in data order), with the
+/// report's named formulas computed and every row summarised: what a formula shows before it is
+/// placed in a band.
+pub fn evaluate_formula(report: &Report, rows: &RowSet, params: &Params, expression: &str, limit: usize) -> Result<Vec<Value>> {
+    let expr = reportcraft_expr::parse(expression).map_err(|e| Error::Invalid(format!("formula: {e}")))?;
+    let computed = formula::with_formulas(report, rows, params, &Cancel::default())?;
+    let rows = computed.as_ref().unwrap_or(rows);
+    let all: Vec<usize> = (0..rows.rows.len()).collect();
+    let memo = formula::Memo::default();
+    let now = formula::now(params);
+    let at = |current: Option<usize>| {
+        let env = formula::BandEnv { report, rows, current, summary: &all, params, now, memo: &memo };
+        formula::to_value(reportcraft_expr::evaluate(&expr, &env))
+    };
+    if all.is_empty() {
+        return Ok(vec![at(None)]);
+    }
+    Ok(all.iter().take(limit).map(|&r| at(Some(r))).collect())
 }
 
 /// What a report and its subreports share while being laid out.
@@ -126,7 +148,7 @@ fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Wr
     let mut w = Writer::new(report, rows, ctx);
     // Page one: the report header comes first, then the page header.
     w.start_page(false, &order)?;
-    w.full_band(&report.report_header, Scope { rows: &order, current: order.first().copied() }, &order)?;
+    w.full_band(&report.report_header, Scope::new(&order, order.first().copied()), &order)?;
     w.page_header();
     let mut open_from = 0;
     for (pos, &row) in order.iter().enumerate() {
@@ -156,15 +178,17 @@ fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Wr
             }
             w.open.push(OpenGroup { level, start: pos, end });
             if let Some(scope) = order.get(pos..end) {
-                w.band_in(&group.header, Scope { rows: scope, current: Some(row) }, &order)?;
+                w.band_in(&group.header, Scope::new(scope, Some(row)), &order)?;
             }
         }
-        w.detail(&report.detail, Scope { rows: std::slice::from_ref(&row), current: Some(row) }, &order)?;
+        let group = w.open.last().copied().and_then(|g| order.get(g.start..g.end)).unwrap_or(&order);
+        let scope = Scope { group: Some(group), ..Scope::new(std::slice::from_ref(&row), Some(row)) };
+        w.detail(&report.detail, scope, &order)?;
     }
     if !order.is_empty() {
         w.close_groups(&order, order.len(), 0)?;
     }
-    w.full_band(&report.report_footer, Scope { rows: &order, current: order.last().copied() }, &order)?;
+    w.full_band(&report.report_footer, Scope::new(&order, order.last().copied()), &order)?;
     w.finish_page()?;
     Ok(w)
 }
@@ -190,7 +214,8 @@ struct Block {
 /// Lays a subreport out over its rows on an endless page as wide as its element, and cuts it
 /// into the blocks the parent places one after another.
 fn subreport_blocks(child: &Report, rows: &RowSet, ctx: &Context<'_>) -> Result<Vec<Block>> {
-    let w = run(child, rows, ctx)?;
+    let computed = formula::with_formulas(child, rows, ctx.params, ctx.cancel)?;
+    let w = run(child, computed.as_ref().unwrap_or(rows), ctx)?;
     let mut items: Vec<Item> = w.pages.into_iter().flat_map(|p| p.items).collect();
     let marks = w.marks;
     let mut blocks = Vec::with_capacity(marks.len());
@@ -288,6 +313,14 @@ struct OpenGroup {
 struct Scope<'a> {
     rows: &'a [usize],
     current: Option<usize>,
+    /// The rows formulas summarise when they aren't `rows` (a detail band's group).
+    group: Option<&'a [usize]>,
+}
+
+impl<'a> Scope<'a> {
+    fn new(rows: &'a [usize], current: Option<usize>) -> Self {
+        Self { rows, current, group: None }
+    }
 }
 
 struct Writer<'a> {
@@ -319,6 +352,10 @@ struct Writer<'a> {
     /// Per subreport element: its dataset's rows by link key, and the report it lays out.
     link_index: HashMap<usize, HashMap<Vec<String>, Vec<usize>>>,
     child_reports: HashMap<usize, Arc<Report>>,
+    /// Formula elements, parsed once (boxed: their address keys the aggregate memo).
+    formulas: HashMap<usize, Option<Box<reportcraft_expr::Expr>>>,
+    memo: formula::Memo,
+    now: Option<chrono::NaiveDateTime>,
 }
 
 impl<'a> Writer<'a> {
@@ -334,6 +371,9 @@ impl<'a> Writer<'a> {
             marks: Vec::new(),
             link_index: HashMap::new(),
             child_reports: HashMap::new(),
+            formulas: HashMap::new(),
+            memo: formula::Memo::default(),
+            now: formula::now(ctx.params),
             locale,
             pages: Vec::new(),
             page: Page::default(),
@@ -376,7 +416,7 @@ impl<'a> Writer<'a> {
         for g in open {
             let (Some(group), Some(scope)) = (self.report.groups.get(g.level), order.get(g.start..g.end)) else { continue };
             if group.repeat_header && !group.header.is_empty() {
-                self.draw(&group.header, Scope { rows: scope, current: order.get(g.start).copied() }, true);
+                self.draw(&group.header, Scope::new(scope, order.get(g.start).copied()), true);
                 self.y += group.header.height_mm;
                 self.column_bottom = self.column_bottom.max(self.y);
             }
@@ -396,7 +436,7 @@ impl<'a> Writer<'a> {
     }
 
     fn page_header(&mut self) {
-        self.draw(&self.report.page_header, Scope { rows: &[], current: None }, false);
+        self.draw(&self.report.page_header, Scope::new(&[], None), false);
         self.y += self.report.page_header.height_mm;
         // Columns start below the page header (and below the report header on page one).
         self.column_top = self.y;
@@ -405,7 +445,7 @@ impl<'a> Writer<'a> {
 
     fn finish_page(&mut self) -> Result<()> {
         self.y = self.body_bottom();
-        self.draw(&self.report.page_footer, Scope { rows: &[], current: None }, false);
+        self.draw(&self.report.page_footer, Scope::new(&[], None), false);
         self.pages.push(std::mem::take(&mut self.page));
         Ok(())
     }
@@ -613,7 +653,7 @@ impl<'a> Writer<'a> {
         while let Some(g) = self.open.last().copied().filter(|g| g.level >= level) {
             let footer = self.report.groups.get(g.level).map(|gr| &gr.footer);
             if let (Some(footer), Some(scope)) = (footer, order.get(g.start..pos)) {
-                self.band_in(footer, Scope { rows: scope, current: last }, order)?;
+                self.band_in(footer, Scope::new(scope, last), order)?;
             }
             self.open.pop();
         }
@@ -636,6 +676,11 @@ impl<'a> Writer<'a> {
             if let Content::Barcode { .. } = &el.content {
                 self.barcode(el, scope, left);
                 continue;
+            }
+            if let Content::Formula { expression } = &el.content {
+                self.formulas
+                    .entry(std::ptr::from_ref(&el.content) as usize)
+                    .or_insert_with(|| reportcraft_expr::parse(expression).ok().map(Box::new));
             }
             let text = self.eval(&el.content, el.format.as_ref(), scope);
             let shape = match &el.content {
@@ -726,6 +771,20 @@ impl<'a> Writer<'a> {
                     .cloned()
                     .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()));
                 raw.map(|r| format::write(&Value::Text(r), format, &self.locale)).unwrap_or_default()
+            }
+            Content::Formula { .. } => {
+                // Parsed by `draw`; a report that passed validation always parses.
+                let Some(Some(expr)) = self.formulas.get(&(std::ptr::from_ref(content) as usize)) else { return String::new() };
+                let env = formula::BandEnv {
+                    report: self.report,
+                    rows: self.rows,
+                    current: scope.current,
+                    summary: scope.group.unwrap_or(scope.rows),
+                    params: self.params,
+                    now: self.now,
+                    memo: &self.memo,
+                };
+                format::write(&formula::to_value(reportcraft_expr::evaluate(expr, &env)), format, &self.locale)
             }
             Content::RefreshedAt | Content::PrintedAt => {
                 let key = if matches!(content, Content::RefreshedAt) { REFRESHED_AT } else { PRINTED_AT };
@@ -873,6 +932,71 @@ mod tests {
         assert!(matches!(layout_with_cancel(&report, &rows(), &Params::new(), &cancel), Err(Error::Cancelled(_))));
         let late = Cancel::default().with_time_limit(std::time::Duration::ZERO);
         assert!(matches!(layout_with_cancel(&report, &rows(), &Params::new(), &late), Err(Error::TooLarge(_))));
+    }
+
+    #[test]
+    fn named_formulas_are_fields_and_formula_elements_summarise_their_band() {
+        let f = |e: &str| el(Content::Formula { expression: e.into() });
+        let mut r = Report::new("t");
+        r.formulas = vec![
+            reportcraft_model::FormulaField { name: "net".into(), expression: "[gross] * 0.8".into() },
+            reportcraft_model::FormulaField { name: "gross".into(), expression: "[amount] * 10".into() },
+            reportcraft_model::FormulaField { name: "size".into(), expression: "IF([gross] >= 50, \"big\", \"small\")".into() },
+        ];
+        r.groups.push(Group {
+            field: "size".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
+            header: Band { height_mm: 6.0, elements: vec![f("UPPER([size]) & \" (\" & COUNT([net]) & \")\"")] },
+            footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")] },
+        });
+        r.sort.push(reportcraft_model::SortKey { field: "net".into(), descending: true });
+        let share = Element { format: Some(reportcraft_model::Format::Percent { decimals: 0 }), ..f("[net] / SUM([net])") };
+        r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "net".into() }), share] };
+        r.report_footer = Band { height_mm: 6.0, elements: vec![f("\"Total: \" & SUM([net]) & \" over \" & COUNTIF([size], \"big\") & \" big\"")] };
+        let doc = layout(&r, &rows(), &Params::new()).unwrap();
+        assert_eq!(texts(&doc), ["BIG (2)", "80", "67%", "40", "33%", "120", "SMALL (1)", "20", "100%", "20", "Total: 140 over 2 big"]);
+    }
+
+    #[test]
+    fn formulas_read_typed_parameters_and_the_render_clock() {
+        let mut r = Report::new("t");
+        r.parameters = vec![
+            reportcraft_model::Parameter {
+                kind: reportcraft_model::ParamType::Number,
+                ..reportcraft_model::Parameter::text("min", "", Some("4".into()))
+            },
+            reportcraft_model::Parameter { kind: reportcraft_model::ParamType::DateRange, ..reportcraft_model::Parameter::text("period", "", None) },
+        ];
+        let f = |e: &str| el(Content::Formula { expression: e.into() });
+        r.report_header = Band {
+            height_mm: 6.0,
+            elements: vec![
+                f("COUNTIF([amount], \">\" & PARAM(\"min\"))"),
+                f("PARAM(\"period.to\") - PARAM(\"period.from\")"),
+                f("TODAY() - PARAM(\"period.from\")"),
+                Element {
+                    format: Some(reportcraft_model::Format::Date { pattern: Some("%d/%m/%Y".into()) }),
+                    ..f("EOMONTH(PARAM(\"period.from\"), 0)")
+                },
+                f("1/0"),
+            ],
+        };
+        let mut params = Params::new();
+        params.insert("period".into(), "2026-10-01..2026-10-31".into());
+        params.insert(PRINTED_AT.into(), "2026-11-11T09:30:00+01:00".into());
+        assert_eq!(texts(&layout(&r, &rows(), &params).unwrap()), ["2", "30", "41", "31/10/2026", "#DIV/0!"]);
+    }
+
+    #[test]
+    fn a_formula_is_evaluated_before_it_is_placed() {
+        let mut r = Report::new("t");
+        r.formulas = vec![reportcraft_model::FormulaField { name: "double".into(), expression: "[amount] * 2".into() }];
+        let v = evaluate_formula(&r, &rows(), &Params::new(), "[double] / SUM([double])", 2).unwrap();
+        assert_eq!(v, [Value::Number(0.571428571428571), Value::Number(0.285714285714286)]);
+        assert_eq!(evaluate_formula(&r, &RowSet::default(), &Params::new(), "SUM([x]) + 1", 5).unwrap(), [Value::Text("#NAME?".into())]);
+        assert!(matches!(evaluate_formula(&r, &rows(), &Params::new(), "1 +", 5), Err(Error::Invalid(_))));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Status
 
-> **Last updated:** 2026-11-01 · Stage: foundation (pre-alpha)
+> **Last updated:** 2026-11-11 · Stage: foundation (pre-alpha)
 
 ## Works
 - Report definitions in JSON, validated, with a format version.
@@ -67,8 +67,23 @@
   to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
   (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
   `--max-memory`). A stopped command leaves the session as it was.
-- CLI and MCP server reaching every command. 103 tests (plus 8 live PostgreSQL tests run on demand), including 12 golden rendering snapshots; `cargo xtask ci` green.
+- Formulas, Excel-style (`reportcraft-expr`): named formulas (`formulas: [{name, expression}]`) are
+  fields of every row, usable in elements, groups, sort, totals, links and other formulas (in
+  dependency order; a circle is an error); `formula` elements compute over the current row and the
+  rows their band summarises (`[amount] / SUM([amount])` is a share of the group in the detail
+  band). Operators `+ - * / ^ % &` and comparisons with Excel's precedence; 60 functions: logical
+  (`IF`, `IFS`, `SWITCH`, `AND`, `OR`, `NOT`, `IFERROR`, `IS…`), maths (`ROUND`, `ROUNDUP`,
+  `ROUNDDOWN`, `INT`, `MOD`, `POWER`, `SQRT`, `ABS`, `SIGN`), aggregates (`SUM`, `AVERAGE`, `COUNT`,
+  `COUNTA`, `MIN`, `MAX`, `SUMIF`, `COUNTIF`, `AVERAGEIF` with `">10"`, `"<>"`, `"Ly*"` criteria),
+  text (`CONCAT`, `LEFT`, `MID`, `SUBSTITUTE`, `FIND`, `SEARCH`, `PROPER`, `TRIM`…), dates (`DATE`,
+  `EDATE`, `EOMONTH`, `DATEDIF`, `DAYS`, `WEEKDAY`, `ISOWEEKNUM`, `TODAY`/`NOW` from the render's
+  clock…) and `PARAM("name")` (typed; `PARAM("period.from")` for a range's ends). Blanks, errors
+  (`#DIV/0!`, `#VALUE!`, `#NAME?`, `#NUM!`, `#N/A`) and `IFERROR` behave as in Excel; dates are
+  their own values (a date plus days, a date minus a date). `report.validate` reports syntax
+  errors with their position, unknown fields, argument counts, undeclared parameters and cycles;
+  `report.evaluateFormula` tries a formula on the loaded rows.
+- CLI and MCP server reaching every command. 126 tests (plus 8 live PostgreSQL tests run on demand), including 13 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No ODBC source yet, no PDF, no designer UI (see `ROADMAP.md`).
+- No ODBC source yet, no XLSX/DOCX export, no printing, no designer UI (see `ROADMAP.md`).
 - Not yet built or tested on Windows, macOS, BSD or wasm.

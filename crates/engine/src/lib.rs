@@ -329,4 +329,35 @@ mod tests {
         let html = out.get("html").and_then(Json::as_str).unwrap();
         assert!(html.contains("Lyon") && html.contains("1 / 1"));
     }
+
+    #[test]
+    fn formulas_are_tried_checked_and_rendered() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        s.report.formulas.push(reportcraft_model::FormulaField { name: "daily".into(), expression: "ROUND([amount] / [days], 2)".into() });
+        let tried = s.execute("report.evaluateFormula", &json!({"expression": "[daily] & \" / day\"", "limit": 2})).unwrap();
+        assert_eq!(tried["values"], json!(["45 / day", "230.17 / day"]));
+        assert_eq!(tried["rows"], json!(7));
+        let share = s.execute("report.evaluateFormula", &json!({"expression": "ROUND(SUM([daily]) / COUNT([daily]), 2)", "limit": 1})).unwrap();
+        assert_eq!(share["values"], json!([87.77]));
+        assert!(s.execute("report.evaluateFormula", &json!({"expression": "SUM("})).unwrap_err().to_string().contains("formula"));
+        assert!(matches!(s.execute("report.evaluateFormula", &json!({})), Err(EngineError::BadParams { .. })));
+
+        let formula = |e: &str| reportcraft_model::Element {
+            x_mm: 120.0,
+            y_mm: 0.5,
+            width_mm: 30.0,
+            height_mm: 5.0,
+            style: Default::default(),
+            content: reportcraft_model::Content::Formula { expression: e.into() },
+            format: None,
+        };
+        s.report.detail.elements.push(formula("[daily] & \" €/d\""));
+        let html = s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().to_owned();
+        assert!(html.contains("230.17 €/d"), "{html}");
+        s.report.detail.elements.push(formula("[dailly]"));
+        let checked = s.execute("report.validate", &json!({})).unwrap();
+        assert_eq!(checked["valid"], json!(false));
+        assert!(checked["diagnostics"].to_string().contains("unknown field `dailly`"), "{checked}");
+    }
 }

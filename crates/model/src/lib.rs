@@ -30,6 +30,10 @@ pub struct Report {
     pub page: PageSetup,
     #[serde(default)]
     pub parameters: Vec<Parameter>,
+    /// Computed fields: each row gets a value per formula, usable wherever a field is (elements,
+    /// groups, sort, totals, other formulas, subreport links).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formulas: Vec<FormulaField>,
     /// Rows are sorted by these fields before grouping (after the group fields).
     #[serde(default)]
     pub sort: Vec<SortKey>,
@@ -51,6 +55,22 @@ pub struct Report {
 /// Whether a `strftime`-style pattern only uses known directives.
 pub fn date_pattern_is_valid(pattern: &str) -> bool {
     pattern.len() <= 200 && !chrono::format::StrftimeItems::new(pattern).any(|i| matches!(i, chrono::format::Item::Error))
+}
+
+/// A named formula, computed for every row (`"margin": "[price] - [cost]"`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormulaField {
+    pub name: String,
+    /// Excel-style: `IF([qty] > 10, [price] * 0.9, [price])` (see `reportcraft_expr`).
+    pub expression: String,
+}
+
+/// Most named formulas one report may declare.
+pub const MAX_FORMULAS: usize = 256;
+
+/// Whether a formula name is letters, digits and `_`, not starting with a digit.
+fn formula_name_is_valid(name: &str) -> bool {
+    name.len() <= 64 && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') && name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn default_locale() -> String {
@@ -285,6 +305,12 @@ pub enum Content {
     Aggregate { function: AggregateFn, field: String },
     /// A parameter's value.
     Parameter { name: String },
+    /// An Excel-style formula over the current row, parameters and the rows the band summarises:
+    /// a field given directly to `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX`, `COUNTA`, `SUMIF`,
+    /// `COUNTIF` or `AVERAGEIF` covers the group's rows in a group header or footer and in the
+    /// detail band (the innermost group, or the whole report), and every row in the report
+    /// header and footer.
+    Formula { expression: String },
     /// "Page N of M".
     PageNumber,
     /// When the report's data was read (from the database, or from the cache), with a date
@@ -390,6 +416,7 @@ impl Report {
             locale: default_locale(),
             page: PageSetup::default(),
             parameters: Vec::new(),
+            formulas: Vec::new(),
             sort: Vec::new(),
             groups: Vec::new(),
             report_header: Band::default(),
@@ -457,6 +484,7 @@ impl Report {
         if let Some(problem) = self.parameters.iter().flat_map(Parameter::declaration_problems).next() {
             return Err(Error::Invalid(problem));
         }
+        self.validate_formulas()?;
         if self.groups.len() > limits::MAX_GROUPS {
             return Err(Error::TooLarge(format!("more than {} groups", limits::MAX_GROUPS)));
         }
@@ -515,6 +543,9 @@ impl Report {
                         _ => return Err(Error::Invalid(format!("{name}: a barcode encodes either a `field` or a fixed `text`"))),
                     }
                 }
+                if let Content::Formula { expression } = &el.content {
+                    reportcraft_expr::parse(expression).map_err(|e| Error::Invalid(format!("{name}: formula `{expression}`: {e}")))?;
+                }
                 if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
                     return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
                 }
@@ -531,6 +562,61 @@ impl Report {
             }
         }
         Ok(())
+    }
+}
+
+impl Report {
+    /// Named formulas: valid, unique names, formulas that parse, computed per row, no cycle.
+    fn validate_formulas(&self) -> Result<()> {
+        if self.formulas.len() > MAX_FORMULAS {
+            return Err(Error::TooLarge(format!("more than {MAX_FORMULAS} formulas")));
+        }
+        for (i, f) in self.formulas.iter().enumerate() {
+            if !formula_name_is_valid(&f.name) {
+                return Err(Error::Invalid(format!("formulas[{i}]: name `{}` must be letters, digits or `_`, not starting with a digit", f.name)));
+            }
+            if self.formulas.iter().take(i).any(|g| g.name.eq_ignore_ascii_case(&f.name)) {
+                return Err(Error::Invalid(format!("formulas[{i}]: `{}` is declared twice", f.name)));
+            }
+            let expr = reportcraft_expr::parse(&f.expression).map_err(|e| Error::Invalid(format!("formulas[{i}] `{}`: {e}", f.name)))?;
+            if expr.uses_ranges() {
+                return Err(Error::Invalid(format!(
+                    "formulas[{i}] `{}`: a named formula is computed for each row; totals such as SUM([field]) go in a formula element",
+                    f.name
+                )));
+            }
+        }
+        self.formula_order().map(|_| ())
+    }
+
+    /// The named formulas in an order where each comes after the formulas it reads; an error
+    /// names a formula that depends on itself.
+    pub fn formula_order(&self) -> Result<Vec<usize>> {
+        let n = self.formulas.len();
+        let index = |name: &str| self.formulas.iter().position(|f| f.name.eq_ignore_ascii_case(name));
+        let mut deps: Vec<Vec<usize>> = Vec::with_capacity(n);
+        for f in &self.formulas {
+            let fields =
+                reportcraft_expr::parse(&f.expression).map(|e| e.fields().iter().filter_map(|name| index(name)).collect()).unwrap_or_default();
+            deps.push(fields);
+        }
+        let mut order = Vec::with_capacity(n);
+        let mut done = vec![false; n];
+        while order.len() < n {
+            let ready = (0..n).find(|&i| {
+                !done.get(i).copied().unwrap_or(true) && deps.get(i).is_some_and(|d| d.iter().all(|&j| done.get(j).copied().unwrap_or(false)))
+            });
+            let Some(i) = ready else {
+                let stuck: Vec<&str> =
+                    (0..n).filter(|&i| !done.get(i).copied().unwrap_or(true)).filter_map(|i| self.formulas.get(i)).map(|f| f.name.as_str()).collect();
+                return Err(Error::Invalid(format!("formulas depend on each other in a circle: {}", stuck.join(", "))));
+            };
+            if let Some(d) = done.get_mut(i) {
+                *d = true;
+            }
+            order.push(i);
+        }
+        Ok(order)
     }
 }
 
@@ -582,6 +668,21 @@ impl Report {
     /// Everything `check` finds but what `validate` already said.
     fn check_inner(&self, columns: Option<&[Column]>, datasets: &std::collections::BTreeMap<String, Vec<Column>>) -> Vec<Diagnostic> {
         let mut out = Vec::new();
+        if let Some(cols) = columns {
+            for (i, f) in self.formulas.iter().enumerate() {
+                if cols.iter().any(|c| c.name.eq_ignore_ascii_case(&f.name)) {
+                    out.push(Diagnostic::error(format!("formulas[{i}]"), format!("formula `{}` has the name of a data field: rename it", f.name)));
+                }
+            }
+        }
+        // Named formulas are fields like the data's own (numeric as far as checks go).
+        let extended: Option<Vec<Column>> = columns.map(|cols| {
+            cols.iter().cloned().chain(self.formulas.iter().map(|f| Column { name: f.name.clone(), field_type: FieldType::Number })).collect()
+        });
+        let columns = extended.as_deref();
+        for (i, f) in self.formulas.iter().enumerate() {
+            out.extend(self.check_formula(&format!("formulas[{i}]"), &f.expression, columns, false));
+        }
         let column = |name: &str| columns.map(|cols| cols.iter().find(|c| c.name.eq_ignore_ascii_case(name)));
         let unknown = |name: &str| {
             let names: Vec<&str> = columns.unwrap_or_default().iter().map(|c| c.name.as_str()).collect();
@@ -643,6 +744,7 @@ impl Report {
                             out.push(Diagnostic::warning(&at, format!("`{field}` is not numeric: the number format won't apply")));
                         }
                     }
+                    Content::Formula { expression } => out.extend(self.check_formula(&at, expression, columns, repeating)),
                     Content::Parameter { name } if !self.parameters.iter().any(|p| &p.name == name) => {
                         out.push(Diagnostic::warning(
                             &at,
@@ -665,6 +767,36 @@ impl Report {
             out.push(Diagnostic::warning("report", "the report has no elements: every page is blank"));
         }
         out.extend(self.check_subreports(columns, datasets));
+        out
+    }
+
+    /// A formula's fields against the data, its parameters against the declarations.
+    fn check_formula(&self, at: &str, expression: &str, columns: Option<&[Column]>, repeating: bool) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        let expr = match reportcraft_expr::parse(expression) {
+            Ok(e) => e,
+            Err(e) => return vec![Diagnostic::error(at, format!("formula: {e}"))],
+        };
+        if let Some(cols) = columns {
+            for name in expr.fields() {
+                let known = reportcraft_expr::field_candidates(name).any(|n| cols.iter().any(|c| c.name.eq_ignore_ascii_case(n)));
+                if !known {
+                    let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+                    out.push(Diagnostic::error(at, format!("formula: unknown field `{name}` (the data has: {})", names.join(", "))));
+                }
+            }
+        }
+        for name in expr.params() {
+            if !self.parameters.iter().any(|p| p.name == name || name.strip_suffix(".from").or(name.strip_suffix(".to")) == Some(p.name.as_str())) {
+                out.push(Diagnostic::warning(
+                    at,
+                    format!("formula: parameter `{name}` is not declared: PARAM gives a blank unless a value is passed"),
+                ));
+            }
+        }
+        if repeating && (expr.uses_row() || expr.uses_ranges()) {
+            out.push(Diagnostic::warning(at, "page headers and footers have no current row: fields in this formula are blank"));
+        }
         out
     }
 
@@ -895,6 +1027,56 @@ mod tests {
         let deep = parent(parent(parent(child(Content::Text { text: "x".into() }), vec![], "detail"), vec![], "detail"), vec![], "detail");
         assert!(deep.validate().unwrap_err().to_string().contains("nest"));
         assert!(parent(parent(child(Content::Text { text: "x".into() }), vec![], "detail"), vec![], "detail").validate().is_ok(), "two levels");
+    }
+
+    #[test]
+    fn formulas_are_validated_and_checked() {
+        let formula = |name: &str, expression: &str| FormulaField { name: name.into(), expression: expression.into() };
+        let mut r = Report::new("t");
+        r.formulas = vec![formula("net", "[gross] - [tax]"), formula("gross", "[price] * [qty]"), formula("tax", "[gross] * 0.2")];
+        assert_eq!(r.formula_order().unwrap(), [1, 2, 0], "each after what it reads");
+        r.formulas.push(formula("a", "[b] + 1"));
+        r.formulas.push(formula("b", "[A] + 1"));
+        assert!(r.validate().unwrap_err().to_string().contains("circle: a, b"));
+        r.formulas.truncate(3);
+        r.formulas.push(formula("Net", "1"));
+        assert!(r.validate().unwrap_err().to_string().contains("twice"));
+        r.formulas.pop();
+        r.formulas.push(formula("1st", "1"));
+        assert!(r.validate().is_err(), "bad name");
+        r.formulas.pop();
+        r.formulas.push(formula("share", "[net] / SUM([net])"));
+        assert!(r.validate().unwrap_err().to_string().contains("formula element"));
+        r.formulas.pop();
+        r.formulas.push(formula("broken", "ROUND([net])"));
+        assert!(r.validate().unwrap_err().to_string().contains("formulas[3] `broken`: ROUND takes 2 arguments"));
+        r.formulas.pop();
+        assert!(r.validate().is_ok());
+
+        let el = |expression: &str| Element {
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 20.0,
+            height_mm: 4.0,
+            style: TextStyle::default(),
+            content: Content::Formula { expression: expression.into() },
+            format: None,
+        };
+        r.detail = Band { height_mm: 5.0, elements: vec![el("[net] / SUM([gross]) & PARAM(\"who\")"), el("[qty] + [nope]"), el("1 +")] };
+        r.page_footer = Band { height_mm: 5.0, elements: vec![el("[price]")] };
+        assert!(r.validate().unwrap_err().to_string().contains("detail: formula `1 +`"));
+        let columns = [Column { name: "price".into(), field_type: FieldType::Number }, Column { name: "qty".into(), field_type: FieldType::Integer }];
+        let found = r.check(Some(&columns));
+        let has = |loc: &str, sev, text: &str| found.iter().any(|d| d.location == loc && d.severity == sev && d.message.contains(text));
+        assert!(has("detail.elements[0]", Severity::Warning, "parameter `who`"), "{found:?}");
+        assert!(!found.iter().any(|d| d.location == "detail.elements[0]" && d.severity == Severity::Error), "formula names are fields: {found:?}");
+        assert!(has("detail.elements[1]", Severity::Error, "unknown field `nope`"));
+        assert!(has("detail.elements[2]", Severity::Error, "ends"));
+        assert!(has("page_footer.elements[0]", Severity::Warning, "no current row"));
+        let clash = [Column { name: "NET".into(), field_type: FieldType::Number }, Column { name: "price".into(), field_type: FieldType::Number }];
+        assert!(r.check(Some(&clash)).iter().any(|d| d.location == "formulas[0]" && d.message.contains("name of a data field")));
+        let read: Report = serde_json::from_str(&r.to_json().unwrap()).unwrap();
+        assert_eq!(read, r);
     }
 
     #[test]

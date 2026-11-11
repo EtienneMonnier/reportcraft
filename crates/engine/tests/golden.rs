@@ -563,3 +563,67 @@ fn subreports() {
     let doc = reportcraft_layout::render(&r, &customers, &datasets, &Params::new(), &reportcraft_core::Cancel::default()).unwrap();
     check_doc("subreports", &doc);
 }
+
+/// Formulas (R2.2): named formulas used as fields, a group on a computed field, and formula
+/// elements summarising the group, in a French layout.
+#[test]
+fn formulas() {
+    use reportcraft_model::FormulaField;
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, ..plain };
+    let right = TextStyle { align: Align::Right, ..plain };
+    let formula = |e: &str| Content::Formula { expression: e.into() };
+    let money = |el: Element| Element { format: Some(Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true }), ..el };
+    let mut r = Report::new("Rentals by duration");
+    r.locale = "fr".into();
+    r.formulas = vec![
+        FormulaField { name: "daily".into(), expression: "ROUND([amount] / [days], 2)".into() },
+        FormulaField { name: "length".into(), expression: "IFS([days] <= 3, \"1. Short\", [days] <= 8, \"2. Medium\", TRUE, \"3. Long\")".into() },
+        FormulaField { name: "label".into(), expression: "UPPER(LEFT([branch], 3)) & \"-\" & [item]".into() },
+    ];
+    r.sort.push(SortKey { field: "daily".into(), descending: true });
+    r.groups.push(Group {
+        field: "length".into(),
+        keep_together: false,
+        repeat_header: true,
+        page_break_before: false,
+        header: Band {
+            height_mm: 7.0,
+            elements: vec![el(0.0, 120.0, formula("MID([length], 4, 20) & \" rentals (\" & COUNT([days]) & \")\""), bold)],
+        },
+        footer: Band {
+            height_mm: 7.0,
+            elements: vec![
+                el(
+                    0.0,
+                    80.0,
+                    formula("\"Average \" & ROUND(AVERAGE([days]), 1) & \" days, \" & COUNTIF([region], \"North\") & \" in the North\""),
+                    plain,
+                ),
+                money(el(140.0, 40.0, formula("SUM([amount])"), right)),
+            ],
+        },
+    });
+    r.detail = Band {
+        height_mm: 5.5,
+        elements: vec![
+            el(0.0, 70.0, field("label"), plain),
+            el(70.0, 15.0, field("days"), right),
+            money(el(85.0, 30.0, field("daily"), right)),
+            Element { format: Some(Format::Percent { decimals: 1 }), ..el(115.0, 25.0, formula("[amount] / SUM([amount])"), right) },
+            money(el(140.0, 40.0, field("amount"), right)),
+        ],
+    };
+    // Report footer: a share computed from conditional sums.
+    r.report_footer = Band { height_mm: 7.0, elements: Vec::new() };
+    r.report_footer.elements = vec![
+        el(
+            0.0,
+            120.0,
+            formula("\"Long rentals bring \" & ROUND(SUMIF([length], \"3*\", [amount]) / SUM([amount]) * 100, 1) & \" % of the total\""),
+            plain,
+        ),
+        money(el(140.0, 40.0, formula("SUM([amount])"), right)),
+    ];
+    check("formulas", &r, &rentals(24), &Params::new());
+}

@@ -910,12 +910,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "reportcraft-expr"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "reportcraft-layout"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "reportcraft-barcode",
  "reportcraft-core",
+ "reportcraft-expr",
  "reportcraft-model",
  "serde",
 ]
@@ -935,6 +943,7 @@ dependencies = [
  "chrono",
  "reportcraft-barcode",
  "reportcraft-core",
+ "reportcraft-expr",
  "serde",
  "serde_json",
  "thiserror",
