@@ -145,7 +145,9 @@ Anything marked **decision** waits for a maintainer.
   - [x] Charts in reports: bars, line, pie of a field totalled by category, over the rows a band summarises (#23)
   - [ ] More charts: several series, stacked bars, scatter, axes with ticks and gridlines, legends placed at will
   - [ ] Charts in XLSX exports (native Excel charts through rust_xlsxwriter)
-  - [ ] KPI tiles, pivot tables, filters and an interactive dashboard page
+  - [x] Cross-tabs in reports: rows × columns, a field totalled in each cell, totals on the right and at the bottom
+  - [ ] Cross-tabs that grow with their data (today they fit their element's height, with a "… N more" line), several values per cell
+  - [ ] KPI tiles, filters and an interactive dashboard page
 - [ ] R5.2 Odoo o-spreadsheet dashboard import (format from public documentation)
 
 ## Order and dependencies

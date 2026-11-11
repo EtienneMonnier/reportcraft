@@ -54,6 +54,10 @@
   min, max) by category over the rows the band summarises, with a title, values in the element's
   format and a legend with shares for pies; drawn in HTML, PDF, DOCX and the designer's preview
   (XLSX leaves them out with a warning); inserted and edited in the designer.
+- Cross-tabs (`"kind": "crosstab"`): one line per value of a field, one column per value of
+  another (ascending, at most 40 columns), each cell a field totalled over its rows, totals on the
+  right and at the bottom, in the element's format; cells stay numbers in XLSX. They fit their
+  element's height: lines that don't fit are summed up in a "… N more" line.
 - Lines (horizontal, vertical, diagonal) and rectangles (border, fill) in any band, drawn as SVG in
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
@@ -149,7 +153,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 181 tests (plus 8 live PostgreSQL tests run on demand), including 16 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 183 tests (plus 8 live PostgreSQL tests run on demand), including 17 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet (see `ROADMAP.md`).

@@ -102,6 +102,9 @@ pub(crate) fn label(content: &Content) -> String {
             format!("{symbology:?}: {}", field.as_ref().map_or_else(|| text.clone().unwrap_or_default(), |f| format!("[{f}]")))
         }
         Content::Subreport { dataset, .. } => format!("subreport over `{dataset}`"),
+        Content::Crosstab { rows, columns, value, function, .. } => {
+            format!("{}: {}([{value}]) / [{rows}] × [{columns}]", tl!("Cross-tab"), aggregate_name(*function))
+        }
         Content::Chart { chart, category, value, function, .. } => {
             let kind = match chart {
                 reportcraft_model::ChartKind::Bar => tl!("Bar chart"),

@@ -550,7 +550,7 @@ impl Designer {
                 }
             });
             ui.menu_button(tl!("Insert"), |ui| {
-                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box", "Chart", "Barcode"] {
+                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box", "Chart", "Cross-tab", "Barcode"] {
                     if ui.button(tl!(kind)).clicked() {
                         self.insert(kind);
                     }
@@ -719,7 +719,7 @@ impl Designer {
         if matches!(el.content, reportcraft_model::Content::Line { .. }) {
             el.height_mm = 0.0;
         }
-        if matches!(el.content, reportcraft_model::Content::Chart { .. }) {
+        if matches!(el.content, reportcraft_model::Content::Chart { .. } | reportcraft_model::Content::Crosstab { .. }) {
             (el.width_mm, el.height_mm) = (120.0, 50.0);
         }
         if matches!(el.content, reportcraft_model::Content::Barcode { .. }) {
