@@ -531,4 +531,50 @@ mod tests {
         let external: Vec<&str> = commands().iter().filter(|c| c.access == Access::External).map(|c| c.id).collect();
         assert_eq!(external, ["file.print", "data.saveConnection", "data.deleteConnection"]);
     }
+
+    #[test]
+    fn reports_are_edited_by_commands_and_stay_valid() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let field =
+            json!({"x_mm": 120, "y_mm": 0.5, "width_mm": 30, "height_mm": 5, "content": {"kind": "formula", "expression": "[amount] / [days]"}});
+        let added = s.execute("report.addElement", &json!({"band": "detail", "element": field})).unwrap();
+        let index = added["index"].as_u64().unwrap();
+        assert!(matches!(s.report.detail.elements.last().map(|e| &e.content), Some(reportcraft_model::Content::Formula { .. })));
+        let mut moved = field.clone();
+        moved["x_mm"] = json!(100);
+        s.execute("report.setElement", &json!({"band": "detail", "index": index, "element": moved})).unwrap();
+        assert_eq!(s.report.detail.elements.last().map(|e| e.x_mm), Some(100.0));
+        // Into the group footer: it goes last there.
+        let r = s.execute("report.setElement", &json!({"band": "detail", "index": index, "element": moved, "move_to": "groups[0].footer"})).unwrap();
+        assert_eq!(r["band"], json!("groups[0].footer"));
+        let footer_len = s.report.groups[0].footer.elements.len();
+        s.execute("report.removeElement", &json!({"band": "groups[0].footer", "index": footer_len - 1})).unwrap();
+        assert_eq!(s.report.groups[0].footer.elements.len(), footer_len - 1);
+        s.execute("report.setBand", &json!({"band": "detail", "height_mm": 7, "visible_if": "[days] > 2", "keep_with_next": true})).unwrap();
+        assert_eq!((s.report.detail.height_mm, s.report.detail.visible_if.as_deref()), (7.0, Some("[days] > 2")));
+        s.execute("report.setBand", &json!({"band": "detail", "visible_if": ""})).unwrap();
+        assert!(s.report.detail.visible_if.is_none(), "an empty condition removes it");
+        s.execute("report.setProperties", &json!({"title": "Rentals", "locale": "fr", "page": {"orientation": "landscape"}})).unwrap();
+        assert_eq!((s.report.title.as_str(), s.report.locale.as_str(), s.report.page.size().0), ("Rentals", "fr", 297.0));
+        // An edit that would break the report changes nothing.
+        let before = s.report.clone();
+        for (id, params) in [
+            ("report.setBand", json!({"band": "detail", "height_mm": 5000})),
+            (
+                "report.addElement",
+                json!({"band": "detail", "element": {"x_mm": -1, "y_mm": 0, "width_mm": 1, "height_mm": 1, "content": {"kind": "text", "text": "x"}}}),
+            ),
+            (
+                "report.addElement",
+                json!({"band": "detail", "element": {"x_mm": 0, "y_mm": 0, "width_mm": 1, "height_mm": 1, "content": {"kind": "formula", "expression": "1 +"}}}),
+            ),
+            ("report.removeElement", json!({"band": "detail", "index": 99})),
+            ("report.setElement", json!({"band": "nowhere", "index": 0, "element": field})),
+            ("report.setProperties", json!({"page": {"margin_mm": 500}})),
+        ] {
+            assert!(s.execute(id, &params).is_err(), "{id} {params}");
+            assert_eq!(s.report, before, "{id} left the report as it was");
+        }
+    }
 }

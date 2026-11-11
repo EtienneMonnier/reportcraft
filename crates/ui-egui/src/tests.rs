@@ -122,3 +122,101 @@ fn the_preview_fits_the_page_to_the_panel() {
     let flat = reportcraft_layout::Document { width_mm: 0.0, ..doc };
     assert!((preview::scale_for(&flat, 420.0) - 1.0).abs() < 1e-6);
 }
+
+#[test]
+fn fields_dropped_moved_resized_and_deleted_are_commands() {
+    use crate::canvas::{Event, FieldDrop};
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    let detail = d.session().report.detail.elements.len();
+    d.apply(Event::Drop { band: "detail".into(), x_mm: 150.0, y_mm: 0.5, what: FieldDrop::Field("days".into()) });
+    assert_eq!(d.session().report.detail.elements.len(), detail + 1);
+    assert_eq!(d.selected, Some(("detail".into(), detail)), "the new element is selected");
+    let el = d.session().report.detail.elements.last().cloned().unwrap_or_else(|| FieldDrop::Field(String::new()).element(0.0, 0.0));
+    assert_eq!((el.x_mm, &el.content), (150.0, &Content::Field { field: "days".into() }));
+    d.apply(Event::Move { band: "detail".into(), index: detail, to: "detail".into(), x_mm: 140.0, y_mm: 1.0 });
+    assert_eq!(d.session().report.detail.elements.last().map(|e| (e.x_mm, e.y_mm)), Some((140.0, 1.0)));
+    d.apply(Event::Resize { band: "detail".into(), index: detail, width_mm: 20.0, height_mm: 4.5 });
+    assert_eq!(d.session().report.detail.elements.last().map(|e| (e.width_mm, e.height_mm)), Some((20.0, 4.5)));
+    // Into the report footer: it moves there and stays selected.
+    let footer = d.session().report.report_footer.elements.len();
+    d.apply(Event::Move { band: "detail".into(), index: detail, to: "report_footer".into(), x_mm: 10.0, y_mm: 0.0 });
+    assert_eq!(d.session().report.detail.elements.len(), detail);
+    assert_eq!(d.selected, Some(("report_footer".into(), footer)));
+    d.delete_selected();
+    assert_eq!(d.session().report.report_footer.elements.len(), footer);
+    assert!(d.selected.is_none());
+    // A move the report can't hold is refused and says why.
+    d.apply(Event::Resize { band: "detail".into(), index: 0, width_mm: 20.0, height_mm: 9_000.0 });
+    assert!(!d.status().is_empty());
+}
+
+#[test]
+fn insert_adds_each_kind_to_the_selected_band_and_the_panel_edits_it() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    d.selected_band = Some("report_footer".into());
+    let before = d.session().report.report_footer.elements.len();
+    for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box"] {
+        d.insert(kind);
+    }
+    assert_eq!(d.session().report.report_footer.elements.len(), before + 7, "{}", d.status());
+    assert!(
+        d.session().report.report_footer.elements.iter().any(|e| matches!(&e.content, Content::Formula { expression } if expression == "[branch]"))
+    );
+    // The panel's working copy follows the selection; a finished edit is one command.
+    d.sync_draft();
+    let Some((_, crate::Draft::Element(band, index, mut el))) = d.draft.take() else { panic!("an element is selected") };
+    el.style.bold = true;
+    d.run("report.setElement", serde_json::json!({"band": band, "index": index, "element": el}));
+    d.sync_draft();
+    assert!(matches!(&d.draft, Some((_, crate::Draft::Element(_, _, e))) if e.style.bold));
+    // Nothing selected: the report itself.
+    d.selected = None;
+    d.selected_band = None;
+    d.sync_draft();
+    assert!(matches!(&d.draft, Some((_, crate::Draft::Report(r))) if r.title == "Rentals by branch" && r.paper == "custom"));
+    assert!(frames(&mut d, 2) > 50, "the panel draws every editor");
+}
+
+/// Runs one frame with these pointer events (a 1400 × 900 window, as `frames`).
+fn frame_with(ctx: &egui::Context, d: &mut Designer, events: Vec<egui::Event>) {
+    let input =
+        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), events, ..Default::default() };
+    let mut out = ctx.run_ui(input, |ui| d.ui(ui));
+    out.textures_delta.clear();
+}
+
+fn pointer(ctx: &egui::Context, d: &mut Designer, from: egui::Pos2, to: egui::Pos2) {
+    let press = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    frame_with(ctx, d, vec![egui::Event::PointerMoved(from)]);
+    frame_with(ctx, d, vec![press(from, true)]);
+    for k in 1..=8 {
+        let p = from + (to - from) * (k as f32 / 8.0);
+        frame_with(ctx, d, vec![egui::Event::PointerMoved(p)]);
+    }
+    frame_with(ctx, d, vec![press(to, false)]);
+    frame_with(ctx, d, vec![]);
+}
+
+#[test]
+fn a_field_dragged_with_the_mouse_lands_in_the_band_under_it() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    let ctx = egui::Context::default();
+    for _ in 0..3 {
+        frame_with(&ctx, &mut d, vec![]);
+    }
+    let detail = d.session().report.detail.elements.len();
+    // `days` in the field list, onto the right of the detail band (see the designer screenshot).
+    pointer(&ctx, &mut d, egui::pos2(20.0, 94.0), egui::pos2(700.0, 257.0));
+    assert_eq!(d.session().report.detail.elements.len(), detail + 1, "{}", d.status());
+    let added = d.session().report.detail.elements.last().map(|e| (e.content.clone(), e.x_mm));
+    assert!(matches!(&added, Some((Content::Field { field }, x)) if field == "days" && *x > 100.0), "{added:?}");
+    // Then the element dragged 20 px to the right: it moves by 20 / 3.5 mm, snapped.
+    let x0 = d.session().report.detail.elements.last().map_or(0.0, |e| e.x_mm);
+    let at = egui::pos2(178.0 + (x0 as f32 + 2.0) * 3.5, 257.0);
+    pointer(&ctx, &mut d, at, at + egui::vec2(21.0, 0.0));
+    let x1 = d.session().report.detail.elements.last().map_or(0.0, |e| e.x_mm);
+    assert!((x1 - x0 - 6.0).abs() < 0.6, "moved from {x0} to {x1} mm");
+}

@@ -8,6 +8,7 @@
 
 mod canvas;
 mod preview;
+mod props;
 
 use std::path::{Path, PathBuf};
 
@@ -67,7 +68,19 @@ pub struct Designer {
     zoom: f32,
     /// The selected element: band name and index.
     selected: Option<(String, usize)>,
+    /// The selected band, when no element is.
+    selected_band: Option<String>,
+    canvas: canvas::State,
+    /// The properties panel's working copy, for the revision it was taken at.
+    draft: Option<(u64, Draft)>,
     saved_query: Option<SavedQuery>,
+}
+
+/// What the properties panel edits.
+enum Draft {
+    Element(String, usize, reportcraft_model::Element),
+    Band(String, reportcraft_model::Band),
+    Report(props::ReportDraft),
 }
 
 impl Designer {
@@ -82,6 +95,9 @@ impl Designer {
             preview: Preview::default(),
             zoom: 3.5,
             selected: None,
+            selected_band: None,
+            canvas: canvas::State::default(),
+            draft: None,
             saved_query: None,
         }
     }
@@ -253,14 +269,22 @@ impl Designer {
                 (None, None) => {}
             }
         });
-        egui::Panel::bottom("properties").resizable(true).default_size(140.0).show(ui, |ui| self.properties(ui));
+        egui::Panel::bottom("properties").resizable(true).default_size(190.0).show(ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| self.properties(ui));
+        });
+        egui::Panel::left("fields").resizable(true).default_size(170.0).show(ui, |ui| self.fields(ui));
+        // Delete removes the selected element, unless a text box has the keyboard.
+        if !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+            self.delete_selected();
+        }
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(self.session.report.title.clone());
                 ui.add(egui::Slider::new(&mut self.zoom, 1.0..=5.0).text("zoom"));
             });
-            if let Some(hit) = canvas::show(ui, &self.session.report, self.zoom, self.selected.as_ref()) {
-                self.selected = Some(hit);
+            let events = canvas::show(ui, &self.session.report, self.zoom, self.selected.as_ref(), &mut self.canvas);
+            for e in events {
+                self.apply(e);
             }
         });
         self.saved_query_window(ui);
@@ -302,6 +326,18 @@ impl Designer {
                     }
                 }
             });
+            ui.menu_button("Edit", |ui| {
+                if ui.add_enabled(self.selected.is_some(), egui::Button::new("Delete element")).clicked() {
+                    self.delete_selected();
+                }
+            });
+            ui.menu_button("Insert", |ui| {
+                for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box"] {
+                    if ui.button(kind).clicked() {
+                        self.insert(kind);
+                    }
+                }
+            });
             ui.menu_button("Data", |ui| {
                 if ui.button("Load CSV…").clicked()
                     && let Some(p) = self.dialogs.open("Load CSV", &["csv", "txt"])
@@ -326,24 +362,183 @@ impl Designer {
         });
     }
 
-    /// The selected element, read-only for now (editing comes with R3.2).
-    fn properties(&self, ui: &mut egui::Ui) {
-        ui.heading("Properties");
-        let Some((band, index)) = &self.selected else {
-            ui.label("Click an element in the canvas to see its properties.");
-            return;
+    /// The fields a report can show: the data's columns and the named formulas.
+    fn field_names(&self) -> Vec<String> {
+        let columns = self.session.rows.columns.iter().map(|c| c.name.clone());
+        columns.chain(self.session.report.formulas.iter().map(|f| f.name.clone())).collect()
+    }
+
+    /// The field list: drag a field or a parameter onto a band.
+    fn fields(&self, ui: &mut egui::Ui) {
+        ui.heading("Fields");
+        if self.session.rows.columns.is_empty() {
+            ui.label("Load data (Data menu) to list its fields.");
+        }
+        let drag = |ui: &mut egui::Ui, key: &str, text: String, what: canvas::FieldDrop| {
+            ui.dnd_drag_source(ui.make_persistent_id(("field", key)), what, |ui| {
+                ui.label(text);
+            });
         };
-        let element = self.session.report.bands().into_iter().find(|(n, _)| n == band).and_then(|(_, b)| b.elements.get(*index));
-        match element.map(serde_json::to_string_pretty) {
-            Some(Ok(text)) => {
-                ui.label(format!("{band}.elements[{index}]"));
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.monospace(text);
+        for c in &self.session.rows.columns {
+            drag(ui, &c.name, format!("{}  ·  {:?}", c.name, c.field_type).to_lowercase(), canvas::FieldDrop::Field(c.name.clone()));
+        }
+        if !self.session.report.formulas.is_empty() {
+            ui.separator();
+            ui.label("Formulas");
+            for f in &self.session.report.formulas {
+                drag(ui, &f.name, format!("{} = {}", f.name, f.expression), canvas::FieldDrop::Field(f.name.clone()));
+            }
+        }
+        if !self.session.report.parameters.is_empty() {
+            ui.separator();
+            ui.label("Parameters");
+            for p in &self.session.report.parameters {
+                drag(ui, &format!("param:{}", p.name), p.name.clone(), canvas::FieldDrop::Parameter(p.name.clone()));
+            }
+        }
+    }
+
+    /// Turns what happened on the canvas into commands.
+    fn apply(&mut self, event: canvas::Event) {
+        match event {
+            canvas::Event::Select(band, index) => {
+                self.selected = Some((band, index));
+                self.selected_band = None;
+            }
+            canvas::Event::SelectBand(band) => {
+                self.selected = None;
+                self.selected_band = Some(band);
+            }
+            canvas::Event::Move { band, index, to, x_mm, y_mm } => {
+                let Some(mut el) = self.element(&band, index) else { return };
+                el.x_mm = x_mm;
+                el.y_mm = y_mm;
+                let mut params = json!({"band": band, "index": index, "element": el});
+                if to != band {
+                    params["move_to"] = json!(to);
+                }
+                if let Some(r) = self.run("report.setElement", params) {
+                    let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(index);
+                    self.selected = Some((r["band"].as_str().unwrap_or(&band).to_owned(), index));
+                }
+            }
+            canvas::Event::Resize { band, index, width_mm, height_mm } => {
+                let Some(mut el) = self.element(&band, index) else { return };
+                el.width_mm = width_mm;
+                el.height_mm = height_mm;
+                self.run("report.setElement", json!({"band": band, "index": index, "element": el}));
+            }
+            canvas::Event::Drop { band, x_mm, y_mm, what } => {
+                let el = what.element(x_mm, y_mm);
+                if let Some(r) = self.run("report.addElement", json!({"band": band, "element": el})) {
+                    let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0);
+                    self.selected = Some((band, index));
+                    self.selected_band = None;
+                }
+            }
+        }
+    }
+
+    fn element(&self, band: &str, index: usize) -> Option<reportcraft_model::Element> {
+        self.session.report.bands().into_iter().find(|(n, _)| n == band).and_then(|(_, b)| b.elements.get(index).cloned())
+    }
+
+    /// Adds an element of `kind` to the selected band (the detail band when none is).
+    pub fn insert(&mut self, kind: &str) {
+        let band = self.selected.as_ref().map(|(b, _)| b.clone()).or_else(|| self.selected_band.clone()).unwrap_or_else(|| "detail".to_owned());
+        let first = self.field_names().first().cloned().unwrap_or_default();
+        let mut el = canvas::FieldDrop::Field(first.clone()).element(0.0, 0.0);
+        el.content = props::content_of(kind, &reportcraft_model::Content::Text { text: kind.to_owned() }, &first);
+        if matches!(el.content, reportcraft_model::Content::Line { .. }) {
+            el.height_mm = 0.0;
+        }
+        if let Some(r) = self.run("report.addElement", json!({"band": band, "element": el})) {
+            let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0);
+            self.selected = Some((band, index));
+            self.selected_band = None;
+        }
+    }
+
+    /// Deletes the selected element.
+    pub fn delete_selected(&mut self) {
+        if let Some((band, index)) = self.selected.take()
+            && self.run("report.removeElement", json!({"band": band, "index": index})).is_none()
+        {
+            self.selected = Some((band, index));
+        }
+    }
+
+    /// The working copy for what is selected, taken again after every change to the session.
+    fn sync_draft(&mut self) {
+        let wanted = match (&self.selected, &self.selected_band, &self.draft) {
+            (Some((b, i)), _, Some((rev, Draft::Element(db, di, _)))) => *rev != self.revision || b != db || i != di,
+            (None, Some(b), Some((rev, Draft::Band(db, _)))) => *rev != self.revision || b != db,
+            (None, None, Some((rev, Draft::Report(_)))) => *rev != self.revision,
+            _ => true,
+        };
+        if !wanted {
+            return;
+        }
+        let r = &self.session.report;
+        let draft = match (&self.selected, &self.selected_band) {
+            (Some((b, i)), _) => self.element(b, *i).map(|el| Draft::Element(b.clone(), *i, el)),
+            (None, Some(b)) => r.bands().into_iter().find(|(n, _)| n == b).map(|(_, band)| Draft::Band(b.clone(), band.clone())),
+            (None, None) => Some(Draft::Report(props::ReportDraft {
+                title: r.title.clone(),
+                locale: r.locale.clone(),
+                paper: r.page.paper.map_or_else(|| "custom".to_owned(), |p| format!("{p:?}")),
+                landscape: r.page.orientation == reportcraft_model::Orientation::Landscape,
+                margin_mm: r.page.margin_mm,
+            })),
+        };
+        if draft.is_none() {
+            self.selected = None;
+            self.selected_band = None;
+        }
+        self.draft = draft.map(|d| (self.revision, d));
+    }
+
+    /// The properties of what is selected, editable; each finished edit is one command.
+    fn properties(&mut self, ui: &mut egui::Ui) {
+        self.sync_draft();
+        let fields = self.field_names();
+        let report = &self.session.report;
+        let Some((_, draft)) = self.draft.as_mut() else { return };
+        let command = match draft {
+            Draft::Element(band, index, el) => {
+                ui.horizontal(|ui| {
+                    ui.heading("Element");
+                    ui.label(format!("{} · {index}", canvas::band_title(report, band)));
                 });
+                props::element(ui, el, &fields).then(|| ("report.setElement", json!({"band": band, "index": index, "element": el})))
             }
-            _ => {
-                ui.label("The element is gone.");
+            Draft::Band(band, b) => {
+                ui.heading(format!("Band · {}", canvas::band_title(report, band)));
+                props::band(ui, b).then(|| {
+                    let formula = |f: &Option<String>| f.clone().unwrap_or_default();
+                    (
+                        "report.setBand",
+                        json!({"band": band, "height_mm": b.height_mm, "visible_if": formula(&b.visible_if), "page_break_before_if": formula(&b.page_break_before_if), "keep_with_next": b.keep_with_next}),
+                    )
+                })
             }
+            Draft::Report(r) => {
+                ui.heading("Report");
+                ui.label("Click an element or a band's name to edit it; drag fields from the list onto a band.");
+                props::report(ui, r).then(|| {
+                    let mut page = json!({"orientation": if r.landscape { "landscape" } else { "portrait" }, "margin_mm": r.margin_mm});
+                    if r.paper != "custom" {
+                        page["paper"] = json!(r.paper);
+                    }
+                    ("report.setProperties", json!({"title": r.title, "locale": r.locale, "page": page}))
+                })
+            }
+        };
+        if let Some((id, params)) = command
+            && self.run(id, params).is_none()
+        {
+            // Refused (an invalid value): show the report as it is.
+            self.draft = None;
         }
     }
 

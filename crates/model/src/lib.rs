@@ -533,6 +533,26 @@ impl Report {
         out
     }
 
+    /// The band called `name` as `bands` names it (`detail`, `groups[0].header`…), to edit.
+    pub fn band_mut(&mut self, name: &str) -> Option<&mut Band> {
+        match name {
+            "report_header" => Some(&mut self.report_header),
+            "page_header" => Some(&mut self.page_header),
+            "detail" => Some(&mut self.detail),
+            "page_footer" => Some(&mut self.page_footer),
+            "report_footer" => Some(&mut self.report_footer),
+            other => {
+                let (index, part) = other.strip_prefix("groups[")?.split_once("].")?;
+                let group = self.groups.get_mut(index.parse::<usize>().ok()?)?;
+                match part {
+                    "header" => Some(&mut group.header),
+                    "footer" => Some(&mut group.footer),
+                    _ => None,
+                }
+            }
+        }
+    }
+
     /// Rejects geometry and sizes a render could not honour.
     pub fn validate(&self) -> Result<()> {
         self.validate_at(0)
@@ -1335,6 +1355,29 @@ mod tests {
         r.detail.elements = vec![Element { background_formula: None, ..el }];
         let columns = [Column { name: "amount".into(), field_type: FieldType::Number }];
         assert!(r.check(Some(&columns)).iter().any(|d| d.location == "detail.elements[0].color_formula" && d.message.contains("amout")));
+    }
+
+    #[test]
+    fn bands_are_found_by_the_names_diagnostics_use() {
+        let mut r = Report::new("t");
+        r.groups.push(Group {
+            field: "g".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
+            header: Band::default(),
+            footer: Band::default(),
+        });
+        for (name, _) in Report::bands(&r.clone()) {
+            assert!(r.band_mut(&name).is_some(), "{name}");
+        }
+        if let Some(b) = r.band_mut("groups[0].footer") {
+            b.height_mm = 7.0;
+        }
+        assert_eq!(r.groups.first().map(|g| g.footer.height_mm), Some(7.0));
+        for bad in ["groups[1].header", "groups[0].middle", "groups[x].header", "nope", ""] {
+            assert!(r.band_mut(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]
