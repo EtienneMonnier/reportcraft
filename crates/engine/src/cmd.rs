@@ -44,46 +44,62 @@ static COMMANDS: &[CommandSpec] = &[
         params: r#"{"csv": string (header row first), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
         run: data_load_csv,
     },
+    CommandSpec { id: "data.connections", label: "Connections", menu: "Data", params: "{}", run: data_connections },
+    CommandSpec {
+        id: "data.saveConnection",
+        label: "Save connection",
+        menu: "Data",
+        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432), "user"?: string, "database"?: string (postgres), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
+        run: data_save_connection,
+    },
+    CommandSpec {
+        id: "data.deleteConnection",
+        label: "Delete connection",
+        menu: "Data",
+        params: r#"{"name": string, "confirm"?: boolean (delete it and its password; without it nothing changes)}"#,
+        run: data_delete_connection,
+    },
+    CommandSpec { id: "data.testConnection", label: "Test connection", menu: "Data", params: r#"{"name": string}"#, run: data_test_connection },
     CommandSpec {
         id: "data.loadSqlite",
         label: "Load SQLite data",
         menu: "Data",
-        params: r#"{"path": string (database file, opened read-only), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        params: r#"{"path": string (database file, opened read-only) or "saved": string (a saved connection), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
         run: data_load_sqlite,
     },
     CommandSpec {
         id: "data.describeSqlite",
         label: "Describe SQLite database",
         menu: "Data",
-        params: r#"{"path": string (database file, opened read-only), "table"?: string (only this table or view)}"#,
+        params: r#"{"path": string (database file, opened read-only) or "saved": string (a saved connection), "table"?: string (only this table or view)}"#,
         run: data_describe_sqlite,
     },
     CommandSpec {
         id: "data.previewSqlite",
         label: "Preview SQLite table",
         menu: "Data",
-        params: r#"{"path": string, "table": string (table or view), "limit"?: integer (default 20, at most 1000)}"#,
+        params: r#"{"path": string or "saved": string (a saved connection), "table": string (table or view), "limit"?: integer (default 20, at most 1000)}"#,
         run: data_preview_sqlite,
     },
     CommandSpec {
         id: "data.loadPostgres",
         label: "Load PostgreSQL data",
         menu: "Data",
-        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        params: r#"{"connection": string (libpq connection string or postgresql:// URL; the password may come from PGPASSWORD) or "saved": string (a saved connection, password from the keychain), "query": string (one SELECT; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
         run: data_load_postgres,
     },
     CommandSpec {
         id: "data.describePostgres",
         label: "Describe PostgreSQL database",
         menu: "Data",
-        params: r#"{"connection": string, "table"?: string (only this table or view; `schema.table` outside public)}"#,
+        params: r#"{"connection": string (libpq string or postgresql:// URL) or "saved": string (a saved connection, password from the keychain), "table"?: string (only this table or view; `schema.table` outside public)}"#,
         run: data_describe_postgres,
     },
     CommandSpec {
         id: "data.previewPostgres",
         label: "Preview PostgreSQL table",
         menu: "Data",
-        params: r#"{"connection": string, "table": string, "limit"?: integer (default 20, at most 1000)}"#,
+        params: r#"{"connection": string (libpq string or postgresql:// URL) or "saved": string (a saved connection, password from the keychain), "table": string, "limit"?: integer (default 20, at most 1000)}"#,
         run: data_preview_postgres,
     },
     CommandSpec { id: "data.datasets", label: "Datasets", menu: "Data", params: "{}", run: data_datasets },
@@ -222,10 +238,138 @@ fn now_local() -> Option<String> {
     None
 }
 
+/// The database file: `path`, or the file of the saved connection named by `saved`.
+#[cfg(not(target_arch = "wasm32"))]
+fn sqlite_path(s: &Session, command: &str, params: &Json) -> EngineResult<String> {
+    match params.get("saved").and_then(Json::as_str) {
+        Some(name) => Ok(s.with_connections(|c| c.sqlite_path(name))?),
+        None => str_param(command, params, "path").map(str::to_owned).map_err(|_| bad(command, "`path` or `saved` (a saved connection) is required")),
+    }
+}
+
+/// The libpq connection: `connection`, or the saved connection named by `saved` (its password
+/// from the keychain). Never shown: sources report `user@host:port/database`.
+#[cfg(not(target_arch = "wasm32"))]
+fn postgres_conninfo(s: &Session, command: &str, params: &Json) -> EngineResult<String> {
+    match params.get("saved").and_then(Json::as_str) {
+        Some(name) => Ok(s.with_connections(|c| c.conninfo(name))?),
+        None => str_param(command, params, "connection")
+            .map(str::to_owned)
+            .map_err(|_| bad(command, "`connection` or `saved` (a saved connection) is required")),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_connections(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    s.with_connections(|c| {
+        let mut list = Vec::new();
+        for conn in c.list() {
+            list.push(json!({
+                "name": conn.name,
+                "kind": conn.target.kind(),
+                "target": conn.target.describe(),
+                "description": conn.description,
+                "password": c.has_password(&conn.name).unwrap_or(false),
+            }));
+        }
+        Ok(json!({"connections": list, "settings": c.settings_path().map(|p| p.display().to_string())}))
+    })
+    .map_err(Into::into)
+}
+
+/// A connection from the parameters (`name`, `kind` and the kind's fields).
+#[cfg(not(target_arch = "wasm32"))]
+fn connection_of(params: &Json) -> EngineResult<reportcraft_connections::Connection> {
+    const CMD: &str = "data.saveConnection";
+    let text = |k: &str| str_param(CMD, params, k).map(str::to_owned);
+    let target = match str_param(CMD, params, "kind")? {
+        "sqlite" => reportcraft_connections::Target::Sqlite { path: text("path")? },
+        "postgres" => reportcraft_connections::Target::Postgres {
+            host: text("host")?,
+            port: match params.get("port") {
+                None | Some(Json::Null) => 5432,
+                Some(p) => p.as_u64().and_then(|p| u16::try_from(p).ok()).ok_or_else(|| bad(CMD, "`port` must be a port number"))?,
+            },
+            user: text("user")?,
+            database: text("database")?,
+        },
+        other => return Err(bad(CMD, format!("`kind` is sqlite or postgres, not `{other}`"))),
+    };
+    Ok(reportcraft_connections::Connection {
+        name: text("name")?,
+        target,
+        description: params.get("description").and_then(Json::as_str).unwrap_or_default().to_owned(),
+    })
+}
+
+/// Saves a connection (its password to the keychain) with `"confirm": true`; otherwise says what
+/// would be saved.
+#[cfg(not(target_arch = "wasm32"))]
+fn data_save_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    let connection = connection_of(params)?;
+    connection.check()?;
+    let password = params.get("password").and_then(Json::as_str);
+    let summary = json!({"name": connection.name, "kind": connection.target.kind(), "target": connection.target.describe()});
+    if params.get("confirm").and_then(Json::as_bool) != Some(true) {
+        return Ok(json!({"saved": false, "connection": summary, "password": password.map(|p| !p.is_empty())}));
+    }
+    s.with_connections(|c| c.save(connection, password))?;
+    Ok(json!({"saved": true, "connection": summary, "password": password.map(|p| !p.is_empty())}))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_delete_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.deleteConnection";
+    let name = str_param(CMD, params, "name")?.to_owned();
+    if params.get("confirm").and_then(Json::as_bool) != Some(true) {
+        let exists = s.with_connections(|c| Ok(c.get(&name).is_some()))?;
+        return Ok(json!({"deleted": false, "exists": exists}));
+    }
+    let deleted = s.with_connections(|c| c.delete(&name))?;
+    Ok(json!({"deleted": deleted}))
+}
+
+/// Opens a saved connection and reads its schema: whether it works, and what it holds.
+#[cfg(not(target_arch = "wasm32"))]
+fn data_test_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.testConnection";
+    let name = str_param(CMD, params, "name")?;
+    let kind = s.with_connections(|c| {
+        c.get(name).map(|conn| conn.target.kind()).ok_or_else(|| reportcraft_core::Error::NotFound(format!("connection `{name}`")))
+    })?;
+    let saved = json!({"saved": name});
+    let schema = if kind == "sqlite" {
+        reportcraft_data::SchemaSource::schema(&reportcraft_sqlite::SqliteSource::database(&sqlite_path(s, CMD, &saved)?))?
+    } else {
+        reportcraft_data::SchemaSource::schema(&reportcraft_postgres::PostgresSource::database(&postgres_conninfo(s, CMD, &saved)?))?
+    };
+    Ok(json!({"ok": true, "kind": kind, "tables": schema.tables.len()}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_connections(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Ok(json!({"connections": [], "settings": null}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_save_connection(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("saved connections are not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_delete_connection(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("saved connections are not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_test_connection(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("saved connections are not available in the web build".into()).into())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn data_load_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.loadSqlite";
-    let path = str_param(CMD, params, "path")?;
+    let path = &sqlite_path(s, CMD, params)?;
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Sqlite)?;
@@ -297,16 +441,16 @@ fn hand_over(s: &mut Session, dataset: Option<String>, rows: std::sync::Arc<RowS
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn data_describe_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
-    let path = str_param("data.describeSqlite", params, "path")?;
-    describe(&reportcraft_sqlite::SqliteSource::database(path), params)
+fn data_describe_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    let path = sqlite_path(s, "data.describeSqlite", params)?;
+    describe(&reportcraft_sqlite::SqliteSource::database(&path), params)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn data_preview_sqlite(_: &mut Session, params: &Json) -> EngineResult<Json> {
+fn data_preview_sqlite(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.previewSqlite";
-    let path = str_param(CMD, params, "path")?;
-    preview(&reportcraft_sqlite::SqliteSource::database(path), CMD, params)
+    let path = sqlite_path(s, CMD, params)?;
+    preview(&reportcraft_sqlite::SqliteSource::database(&path), CMD, params)
 }
 
 /// The schema, or one table of it, as JSON.
@@ -405,7 +549,7 @@ fn limits_of(params: &Json) -> (Option<usize>, std::time::Duration) {
 #[cfg(not(target_arch = "wasm32"))]
 fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.loadPostgres";
-    let connection = str_param(CMD, params, "connection")?;
+    let connection = &postgres_conninfo(s, CMD, params)?;
     let query = str_param(CMD, params, "query")?;
     let (limit, timeout) = limits_of(params);
     let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::Postgres)?;
@@ -419,16 +563,16 @@ fn data_load_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn data_describe_postgres(_: &mut Session, params: &Json) -> EngineResult<Json> {
-    let connection = str_param("data.describePostgres", params, "connection")?;
-    describe(&reportcraft_postgres::PostgresSource::database(connection), params)
+fn data_describe_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    let connection = postgres_conninfo(s, "data.describePostgres", params)?;
+    describe(&reportcraft_postgres::PostgresSource::database(&connection), params)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn data_preview_postgres(_: &mut Session, params: &Json) -> EngineResult<Json> {
+fn data_preview_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.previewPostgres";
-    let connection = str_param(CMD, params, "connection")?;
-    preview(&reportcraft_postgres::PostgresSource::database(connection), CMD, params)
+    let connection = postgres_conninfo(s, CMD, params)?;
+    preview(&reportcraft_postgres::PostgresSource::database(&connection), CMD, params)
 }
 
 #[cfg(target_arch = "wasm32")]

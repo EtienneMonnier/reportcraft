@@ -1,0 +1,21 @@
+[package]
+name = "reportcraft-connections"
+description = "Named database connections: definitions in the settings file, passwords in the OS keychain (L3, native only)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+serde.workspace = true
+craft-settings.workspace = true
+keyring.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+serde_json.workspace = true
+
+[lints]
+workspace = true

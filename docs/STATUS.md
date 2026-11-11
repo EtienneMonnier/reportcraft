@@ -11,6 +11,14 @@
   batches, statement timeout, row cap; schema discovery across schemas (only what the user may
   read) and previews (`data.loadPostgres`, `data.describePostgres`, `data.previewPostgres`,
   `--postgres CONN` in `render`, `validate` and `schema`). Plain connections only (no TLS yet).
+- Saved connections: a SQLite file or a PostgreSQL host, port, user and database saved by name in
+  the suite's settings file (craft-settings, `reportcraft/config.toml`, or `REPORTCRAFT_CONFIG_DIR`),
+  the password in the system keychain (Secret Service, macOS Keychain, Windows Credential Manager),
+  never in a file, a result or the query log. `data.connections`, `data.saveConnection` and
+  `data.deleteConnection` (both change nothing without `"confirm": true`), `data.testConnection`;
+  every SQLite and PostgreSQL command takes `"saved": NAME` instead of a path or connection string.
+  CLI: `reportcraft-cli connections [list|save|delete|test]` (`--password-stdin`), and
+  `--connection NAME` in `render`, `validate`, `print` and `schema`.
 - SQLite schema discovery: tables, views, columns (declared and ReportCraft types, nullability,
   primary keys) and foreign keys, plus table previews (`data.describeSqlite`, `data.previewSqlite`,
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
@@ -101,7 +109,7 @@
   doesn't; an error never hides a band or element and never breaks a page. Hidden rows still count
   in their group's totals. A hidden page header takes no room, a hidden page footer keeps its room.
   `report.validate` checks the conditions as formulas.
-- CLI and MCP server reaching every command. 138 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 142 tests (plus 8 live PostgreSQL tests run on demand), including 14 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, no designer UI (see `ROADMAP.md`).

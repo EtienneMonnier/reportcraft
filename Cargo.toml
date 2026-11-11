@@ -21,6 +21,7 @@ reportcraft-postgres = { path = "crates/postgres" }
 reportcraft-layout = { path = "crates/layout" }
 reportcraft-pdf = { path = "crates/pdf" }
 reportcraft-office = { path = "crates/office" }
+reportcraft-connections = { path = "crates/connections" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
 
@@ -40,6 +41,10 @@ postgres = "0.19"
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # Printing: the suite's spooler (CUPS `lp`, the Windows XPS print API), same craft-libs revision.
 craft-print = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
+# Named connections: the suite's settings file, and the OS keychain for passwords (pure-Rust
+# backends by default: Secret Service over zbus, macOS Keychain, Windows Credential Manager).
+craft-settings = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
+keyring = "4.2"
 # Office export (decided: crates.io writers, MIT/Apache-2.0; GridCraft and WordCraft writers are
 # tied to their apps' models). No image support: barcodes are written as text for now.
 rust_xlsxwriter = { version = "0.102", default-features = false, features = ["chrono"] }
