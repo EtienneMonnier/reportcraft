@@ -276,3 +276,28 @@ share-of-group in the detail band costs one sum per group, not one per row. Host
 bounded: formulas are at most 8 KiB and 100 levels deep (checked while parsing, so evaluation
 recursion is bounded too), 255 arguments, 256 named formulas, 32 KiB of text per result.
 
+## Office export: lines of text, typed cells, tab stops (R2.7)
+
+Both writers read the laid-out `Document`, as the HTML and PDF writers do, so an export shows
+what the report shows. Items whose tops line up (within 0.25 mm) form a line. The layout now
+keeps, next to an item's text, the typed value behind it and its format (`Item::cell`), and the
+document records its margin, so a writer can keep a number a number.
+
+A spreadsheet is for working on the figures, not for looking at pages: XLSX is written from a
+continuous layout (`render_continuous`: one endless page as wide as the body, page header once,
+no page footer or page breaks, one column), a row per line and a column per distinct left edge,
+column widths from the gaps between edges. Numbers, booleans and dates are typed cells with the
+element format turned into an Excel code (`#,##0.00 "€"`, `0.0%`, a `strftime` pattern as
+`dd/mm/yyyy`); a pattern Excel can't express is written as text. Excel shows the codes with the
+reader's own separators.
+
+A Word document is for sending or editing a page: DOCX keeps the pages and margins. Absolute
+frames would be faithful but awkward to edit, so each line is a paragraph with an exact height
+that puts its text where the layout did (the text sits at the bottom of the line, so the
+paragraph ends one text line below the items' top), and each item sits on a tab stop at its
+position: left, right or centred as it is aligned. Rendered by WordCraft, the sample matches the
+PDF to a couple of pixels. The bottom margin keeps 3 mm of slack so rounding never pushes a
+footer onto a page of its own. Both files carry a fixed creation date, so the same report gives
+the same bytes. Lines, boxes and barcodes are left out with a warning for now. The office crate
+is a native-only dependency of the engine, like the database sources.
+

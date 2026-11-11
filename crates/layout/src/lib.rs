@@ -24,6 +24,9 @@ pub struct Document {
     pub title: String,
     pub width_mm: f64,
     pub height_mm: f64,
+    /// The page margin the layout used (items are already placed inside it).
+    #[serde(default)]
+    pub margin_mm: f64,
     pub pages: Vec<Page>,
 }
 
@@ -44,6 +47,18 @@ pub struct Item {
     /// A line or rectangle over the item's box instead of text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shape: Option<Shape>,
+    /// The number, boolean or date behind the text, with its format, for writers that keep
+    /// values typed (a spreadsheet cell). `None` for fixed text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<Cell>,
+}
+
+/// A typed value and the format its text was written with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Cell {
+    pub value: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<reportcraft_model::Format>,
 }
 
 /// A drawn shape. Colours are validated `#rgb`/`#rrggbb` strings.
@@ -104,6 +119,35 @@ pub fn render(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Para
     let ctx = Context { datasets, params, cancel, depth: 0 };
     let computed = formula::with_formulas(report, rows, params, cancel)?;
     Ok(run(report, computed.as_ref().unwrap_or(rows), &ctx)?.into_document())
+}
+
+/// `render`, on one endless page as wide as the report's body, for writers that don't paginate
+/// (a spreadsheet): the page header once at the top, no page footer, one column, no page breaks.
+/// Items are placed from the page's corner (no margin).
+pub fn render_continuous(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Params, cancel: &Cancel) -> Result<Document> {
+    report.validate()?;
+    let page = reportcraft_model::PageSetup {
+        paper: None,
+        orientation: reportcraft_model::Orientation::Portrait,
+        width_mm: report.page.body_width(),
+        height_mm: SUBREPORT_PAGE_MM,
+        margin_mm: 0.0,
+        columns: 1,
+        column_gap_mm: 0.0,
+        column_order: reportcraft_model::ColumnOrder::Down,
+    };
+    let groups = report
+        .groups
+        .iter()
+        .map(|g| reportcraft_model::Group { keep_together: false, page_break_before: false, repeat_header: false, ..g.clone() })
+        .collect();
+    let endless = Report { page, groups, page_footer: Band::default(), ..report.clone() };
+    let ctx = Context { datasets, params, cancel, depth: 0 };
+    let computed = formula::with_formulas(&endless, rows, params, cancel)?;
+    let mut doc = run(&endless, computed.as_ref().unwrap_or(rows), &ctx)?.into_document();
+    // Nothing goes below the last item.
+    doc.height_mm = doc.pages.iter().flat_map(|p| &p.items).map(|i| i.y_mm + i.height_mm).fold(0.0, f64::max);
+    Ok(doc)
 }
 
 /// The values of `expression` for the first `limit` rows of `rows` (in data order), with the
@@ -682,7 +726,7 @@ impl<'a> Writer<'a> {
                     .entry(std::ptr::from_ref(&el.content) as usize)
                     .or_insert_with(|| reportcraft_expr::parse(expression).ok().map(Box::new));
             }
-            let text = self.eval(&el.content, el.format.as_ref(), scope);
+            let (text, cell) = self.eval(&el.content, el.format.as_ref(), scope);
             let shape = match &el.content {
                 Content::Line { thickness_mm, color } => Some(Shape::Line { thickness_mm: *thickness_mm, color: color.clone() }),
                 Content::Rect { border_mm, border_color, fill } => {
@@ -698,6 +742,7 @@ impl<'a> Writer<'a> {
                 height_mm: el.height_mm,
                 style: el.style,
                 text,
+                cell,
             });
         }
     }
@@ -723,6 +768,7 @@ impl<'a> Writer<'a> {
             style: el.style,
             text,
             shape,
+            cell: None,
         };
         if value.trim().is_empty() {
             return;
@@ -747,22 +793,24 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn eval(&self, content: &Content, format: Option<&reportcraft_model::Format>, scope: Scope<'_>) -> String {
+    /// The text an element shows, and the typed value behind it when there is one.
+    fn eval(&self, content: &Content, format: Option<&reportcraft_model::Format>, scope: Scope<'_>) -> (String, Option<Cell>) {
         let column = |field: &str| self.rows.column_index(field);
+        let none = || (String::new(), None);
         match content {
-            Content::Text { text } => text.clone(),
+            Content::Text { text } => (text.clone(), None),
             Content::Field { field } => match (column(field), scope.current) {
-                (Some(c), Some(r)) => format::write(self.rows.value(row_of(self.rows, r), c), format, &self.locale),
-                _ => String::new(),
+                (Some(c), Some(r)) => self.typed(self.rows.value(row_of(self.rows, r), c).clone(), format),
+                _ => none(),
             },
             Content::Aggregate { function, field } => match column(field) {
                 Some(c) => {
                     let total = aggregate(*function, scope.rows.iter().map(|&r| self.rows.value(row_of(self.rows, r), c)));
                     // A count is a count: a currency or date format on the field doesn't apply to it.
                     let format = if *function == AggregateFn::Count { None } else { format };
-                    format::write(&total, format, &self.locale)
+                    self.typed(total, format)
                 }
-                None => String::new(),
+                None => none(),
             },
             Content::Parameter { name } => {
                 let raw = self
@@ -770,11 +818,11 @@ impl<'a> Writer<'a> {
                     .get(name)
                     .cloned()
                     .or_else(|| self.report.parameters.iter().find(|p| &p.name == name).and_then(|p| p.default.clone()));
-                raw.map(|r| format::write(&Value::Text(r), format, &self.locale)).unwrap_or_default()
+                raw.map(|r| self.typed(Value::Text(r), format)).unwrap_or_else(none)
             }
             Content::Formula { .. } => {
                 // Parsed by `draw`; a report that passed validation always parses.
-                let Some(Some(expr)) = self.formulas.get(&(std::ptr::from_ref(content) as usize)) else { return String::new() };
+                let Some(Some(expr)) = self.formulas.get(&(std::ptr::from_ref(content) as usize)) else { return none() };
                 let env = formula::BandEnv {
                     report: self.report,
                     rows: self.rows,
@@ -784,18 +832,27 @@ impl<'a> Writer<'a> {
                     now: self.now,
                     memo: &self.memo,
                 };
-                format::write(&formula::to_value(reportcraft_expr::evaluate(expr, &env)), format, &self.locale)
+                self.typed(formula::to_value(reportcraft_expr::evaluate(expr, &env)), format)
             }
             Content::RefreshedAt | Content::PrintedAt => {
                 let key = if matches!(content, Content::RefreshedAt) { REFRESHED_AT } else { PRINTED_AT };
                 let default = reportcraft_model::Format::Date { pattern: Some(format!("{} %H:%M", self.locale.date_pattern)) };
-                self.params
-                    .get(key)
-                    .map(|t| format::write(&Value::Text(t.clone()), Some(format.unwrap_or(&default)), &self.locale))
-                    .unwrap_or_default()
+                self.params.get(key).map(|t| self.typed(Value::Text(t.clone()), Some(format.unwrap_or(&default)))).unwrap_or_else(none)
             }
-            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } | Content::Subreport { .. } => String::new(),
+            Content::PageNumber | Content::Line { .. } | Content::Rect { .. } | Content::Barcode { .. } | Content::Subreport { .. } => none(),
         }
+    }
+
+    /// A value's text with `format`, keeping numbers, booleans and dates (text under a date
+    /// format) typed.
+    fn typed(&self, value: Value, format: Option<&reportcraft_model::Format>) -> (String, Option<Cell>) {
+        let text = format::write(&value, format, &self.locale);
+        let keep = match &value {
+            Value::Int(_) | Value::Number(_) | Value::Bool(_) => true,
+            Value::Text(_) => matches!(format, Some(reportcraft_model::Format::Date { .. })),
+            Value::Null => false,
+        };
+        (text, keep.then(|| Cell { value, format: format.cloned() }))
     }
 
     fn into_document(mut self) -> Document {
@@ -806,7 +863,7 @@ impl<'a> Writer<'a> {
             }
         }
         let (width_mm, height_mm) = self.report.page.size();
-        Document { title: self.report.title.clone(), width_mm, height_mm, pages: self.pages }
+        Document { title: self.report.title.clone(), width_mm, height_mm, margin_mm: self.report.page.margin_mm, pages: self.pages }
     }
 }
 
@@ -997,6 +1054,26 @@ mod tests {
         assert_eq!(v, [Value::Number(0.571428571428571), Value::Number(0.285714285714286)]);
         assert_eq!(evaluate_formula(&r, &RowSet::default(), &Params::new(), "SUM([x]) + 1", 5).unwrap(), [Value::Text("#NAME?".into())]);
         assert!(matches!(evaluate_formula(&r, &rows(), &Params::new(), "1 +", 5), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn continuous_layout_is_one_page_without_breaks_or_footers() {
+        let mut r = Report::new("t");
+        r.page.height_mm = 60.0;
+        r.page.columns = 2;
+        r.page_header = Band { height_mm: 5.0, elements: vec![el(Content::Text { text: "Amount".into() })] };
+        r.page_footer = Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)] };
+        let number = reportcraft_model::Format::Number { decimals: 1, grouping: true };
+        r.detail =
+            Band { height_mm: 15.0, elements: vec![Element { format: Some(number.clone()), ..el(Content::Field { field: "amount".into() }) }] };
+        let doc = render_continuous(&r, &rows(), &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
+        assert_eq!(doc.pages.len(), 1);
+        assert_eq!(texts(&doc), ["Amount", "10.0", "5.0", "2.5"]);
+        let first = doc.pages.first().and_then(|p| p.items.get(1)).unwrap();
+        assert_eq!((first.x_mm, first.y_mm), (0.0, 5.0), "no margin, one column");
+        assert_eq!(first.cell, Some(Cell { value: Value::Number(10.0), format: Some(number) }));
+        assert!((doc.height_mm - 40.0).abs() < 1e-9, "down to the last item");
+        assert_eq!(layout(&r, &rows(), &Params::new()).unwrap().pages.len(), 2, "paginated, for comparison");
     }
 
     #[test]

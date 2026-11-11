@@ -131,8 +131,8 @@ mod tests {
         assert_eq!(r["bytes"], json!(bytes.len()));
         assert_eq!(r["pages"], json!(1));
         assert!(r["fonts"]["regular"].as_str().is_some_and(|f| !f.is_empty()));
-        let err = s.execute("report.render", &json!({"format": "docx"})).unwrap_err().to_string();
-        assert!(err.contains("html, pdf or json"), "{err}");
+        let err = s.execute("report.render", &json!({"format": "rtf"})).unwrap_err().to_string();
+        assert!(err.contains("html, pdf, xlsx, docx or json"), "{err}");
     }
 
     #[test]
@@ -359,5 +359,20 @@ mod tests {
         let checked = s.execute("report.validate", &json!({})).unwrap();
         assert_eq!(checked["valid"], json!(false));
         assert!(checked["diagnostics"].to_string().contains("unknown field `dailly`"), "{checked}");
+    }
+
+    #[test]
+    fn renders_xlsx_and_docx_as_base64() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        for (format, key) in [("xlsx", "xlsxBase64"), ("docx", "docxBase64")] {
+            let r = s.execute("report.render", &json!({"format": format})).unwrap();
+            let bytes = base64::decode(r[key].as_str().unwrap()).unwrap();
+            assert!(bytes.starts_with(b"PK"), "{format} is a zip package");
+            assert_eq!(r["bytes"], json!(bytes.len()));
+            assert_eq!(r["pages"], json!(1));
+        }
+        let unknown = s.execute("report.render", &json!({"format": "odt"})).unwrap_err().to_string();
+        assert!(unknown.contains("xlsx, docx"), "{unknown}");
     }
 }

@@ -19,6 +19,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `postgres` | Read-only PostgreSQL source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `layout` | Banded layout to `Document` (pages of positioned text), named formulas as computed columns, formula elements; HTML writer |
+| L4 | `office` | XLSX (`rust_xlsxwriter`) and DOCX (`docx-rs`) writers over `Document`: lines of text, typed cells, tab stops |
 | L4 | `pdf` | PDF writer over `Document` through craft-libs' `craft-pdf` (Krilla): embedded font subsets, shaped text, vector shapes and barcodes |
 | L5 | `engine` | `Session`, the command registry (`cmd.rs`), built-in samples |
 | L6 | `mcp` | MCP server over stdio (hand-written JSON-RPC), one tool per command |
