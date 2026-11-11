@@ -16,6 +16,10 @@ use reportcraft_engine::{Access, Session, find_command};
 use reportcraft_layout::Document;
 use serde_json::{Value as Json, json};
 
+const UNDO: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+const REDO: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::Z);
+const REDO_Y: egui::KeyboardShortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
+
 /// Where the designer asks for files.
 pub trait Dialogs {
     /// A file to open, of one of these extensions (without dots).
@@ -273,9 +277,17 @@ impl Designer {
             egui::ScrollArea::vertical().show(ui, |ui| self.properties(ui));
         });
         egui::Panel::left("fields").resizable(true).default_size(170.0).show(ui, |ui| self.fields(ui));
-        // Delete removes the selected element, unless a text box has the keyboard.
-        if !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
-            self.delete_selected();
+        // Delete removes the selected element, and Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo and redo,
+        // unless a text box has the keyboard (it undoes its own typing).
+        if !ui.ctx().egui_wants_keyboard_input() {
+            if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+                self.delete_selected();
+            }
+            if ui.input_mut(|i| i.consume_shortcut(&REDO) || i.consume_shortcut(&REDO_Y)) {
+                self.redo();
+            } else if ui.input_mut(|i| i.consume_shortcut(&UNDO)) {
+                self.undo();
+            }
         }
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -327,6 +339,14 @@ impl Designer {
                 }
             });
             ui.menu_button("Edit", |ui| {
+                let (undo, redo) = self.session.history();
+                if ui.add_enabled(undo > 0, egui::Button::new("Undo").shortcut_text(ui.ctx().format_shortcut(&UNDO))).clicked() {
+                    self.undo();
+                }
+                if ui.add_enabled(redo > 0, egui::Button::new("Redo").shortcut_text(ui.ctx().format_shortcut(&REDO))).clicked() {
+                    self.redo();
+                }
+                ui.separator();
                 if ui.add_enabled(self.selected.is_some(), egui::Button::new("Delete element")).clicked() {
                     self.delete_selected();
                 }
@@ -456,6 +476,20 @@ impl Designer {
             let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0);
             self.selected = Some((band, index));
             self.selected_band = None;
+        }
+    }
+
+    /// Puts back the report as it was before the last change.
+    pub fn undo(&mut self) {
+        if self.run("edit.undo", json!({})).is_some() {
+            self.status = "undone".into();
+        }
+    }
+
+    /// Does again what was undone.
+    pub fn redo(&mut self) {
+        if self.run("edit.redo", json!({})).is_some() {
+            self.status = "redone".into();
         }
     }
 

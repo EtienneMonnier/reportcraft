@@ -131,9 +131,11 @@
   properties panel edits the selected element (position, size, content, style, colours, format,
   conditions), band (height, conditions, keep with next) or the report (title, language, paper,
   orientation, margins); previews the rendered pages live after every change; saves the report and
-  exports PDF, HTML, XLSX and DOCX. `--screenshot FILE.ppm` saves the window and quits.
-- CLI and MCP server reaching every command. 168 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+  exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
+  every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
+  `--screenshot FILE.ppm` saves the window and quits.
+- CLI and MCP server reaching every command. 170 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No ODBC source yet; no undo in the designer yet (R3.4) (see `ROADMAP.md`).
+- No ODBC source yet (see `ROADMAP.md`).
 - Not yet built or tested on Windows, macOS, BSD or wasm.

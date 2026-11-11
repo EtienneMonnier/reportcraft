@@ -161,6 +161,8 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "data.clearQueryLog", label: "Clear query log", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_query_log },
     CommandSpec { id: "data.clearCache", label: "Clear query cache", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_cache },
     CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", access: Access::Read, run: report_parameters },
+    CommandSpec { id: "edit.undo", label: "Undo", menu: "Edit", params: "{}", access: Access::Edit, run: edit_undo },
+    CommandSpec { id: "edit.redo", label: "Redo", menu: "Edit", params: "{}", access: Access::Edit, run: edit_redo },
     CommandSpec {
         id: "report.setProperties",
         label: "Report properties",
@@ -784,6 +786,20 @@ fn report_evaluate_formula(s: &mut Session, params: &Json) -> EngineResult<Json>
     let limit = usize::try_from(limit).unwrap_or(1_000);
     let results = reportcraft_layout::evaluate_formula(&s.report, &s.rows, &values, expression, limit)?;
     Ok(json!({"values": results, "rows": s.rows.rows.len()}))
+}
+
+/// Puts back the report as it was before the last change to it.
+fn edit_undo(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    let previous = s.undo.pop().ok_or_else(|| bad("edit.undo", "nothing to undo"))?;
+    s.redo.push(std::mem::replace(&mut s.report, previous));
+    Ok(json!({"undo": s.undo.len(), "redo": s.redo.len()}))
+}
+
+/// Does again the last change undone.
+fn edit_redo(s: &mut Session, _: &Json) -> EngineResult<Json> {
+    let next = s.redo.pop().ok_or_else(|| bad("edit.redo", "nothing to redo"))?;
+    s.undo.push(std::mem::replace(&mut s.report, next));
+    Ok(json!({"undo": s.undo.len(), "redo": s.redo.len()}))
 }
 
 /// Applies `f` to a copy of the report and keeps it only if it is still a valid report.
