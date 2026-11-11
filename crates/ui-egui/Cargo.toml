@@ -15,6 +15,7 @@ reportcraft-engine.workspace = true
 egui = { workspace = true, features = ["default_fonts"] }
 serde_json.workspace = true
 log.workspace = true
+craft-i18n.workspace = true
 
 [lints]
 workspace = true

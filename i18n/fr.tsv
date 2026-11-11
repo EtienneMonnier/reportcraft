@@ -1,0 +1,95 @@
+# Français (fr): ReportCraft's own interface strings, on top of craft-i18n's shared catalog.
+# Columns, separated by a TAB:  context <TAB> English source text <TAB> translation
+#   (craft-i18n's format; to be synced to locales/fr/reportcraft.tsv with its tools/sync_app.py).
+#
+# Clean room: every entry was written from the plain meaning of the English text in ordinary
+# computing vocabulary. No other product's localisation, string table or translated UI was
+# consulted or copied; add entries the same way.
+
+	Background formula	Formule du fond
+	Band	Bande
+	Barcode	Code-barres
+	Box	Cadre
+	Click an element or a band's name to edit it; drag fields from the list onto a band.	Cliquez sur un élément ou sur le nom d'une bande pour le modifier ; faites glisser les champs de la liste sur une bande.
+	Colour formula	Formule de la couleur
+	Connection	Connexion
+	Delete element	Supprimer l'élément
+	Detail	Détail
+	Element	Élément
+	Export Excel…	Exporter en Excel…
+	Export HTML…	Exporter en HTML…
+	Export PDF…	Exporter en PDF…
+	Export Word…	Exporter en Word…
+	Formula	Formule
+	Formulas	Formules
+	Group {n} footer ({field})	Pied du groupe {n} ({field})
+	Group {n} header ({field})	En-tête du groupe {n} ({field})
+	Load	Charger
+	Load CSV…	Charger un CSV…
+	Load data (Data menu) to list its fields.	Chargez des données (menu Données) pour voir leurs champs.
+	Load from a saved connection	Charger depuis une connexion enregistrée
+	Load from a saved connection…	Charger depuis une connexion enregistrée…
+	New page if	Nouvelle page si
+	New report	Nouveau rapport
+	No saved connection yet: save one with `reportcraft-cli connections save`.	Aucune connexion enregistrée : enregistrez-en une avec `reportcraft-cli connections save`.
+	Open report…	Ouvrir un rapport…
+	Open sample	Ouvrir l'exemple
+	Other languages come with the craft-i18n catalogs (CRAFT_I18N_DIR at build time).	Les autres langues viennent des catalogues craft-i18n (CRAFT_I18N_DIR à la compilation).
+	Page footer	Pied de page
+	Page header	En-tête de page
+	Page number	Numéro de page
+	Parameter	Paramètre
+	Parameters	Paramètres
+	Printed at	Imprimé le
+	Query	Requête
+	Refreshed at	Actualisé le
+	Report footer	Pied de rapport
+	Report header	En-tête de rapport
+	Save report…	Enregistrer le rapport…
+	Show only if	Afficher seulement si
+	Shows	Affiche
+	Subreport	Sous-rapport
+	background	fond
+	bold	gras
+	border	bordure
+	centre	centré
+	colour	couleur
+	currency	monétaire
+	date	date
+	decimals	décimales
+	fill	remplissage
+	formula, e.g. [amount] < 0	formule, par exemple [amount] < 0
+	height	hauteur
+	keep with next	garder avec la suivante
+	landscape	paysage
+	left	gauche
+	loaded {file}	{file} chargé
+	margins	marges
+	no data	aucune donnée
+	number	nombre
+	of	de
+	opened the sample `{name}`	exemple « {name} » ouvert
+	opened {file}	{file} ouvert
+	percent	pourcentage
+	plain	brut
+	redone	rétabli
+	right	droite
+	saved {file}	{file} enregistré
+	size	taille
+	the locale's date, or %d/%m/%Y	la date de la langue, ou %d/%m/%Y
+	thickness	épaisseur
+	undone	annulé
+	unsaved report	rapport non enregistré
+	width	largeur
+	x	x
+	y	y
+	zoom	zoom
+	{n} page(s)	{n} page(s)
+	text	texte
+	integer	entier
+	yes/no	oui/non
+	sample `{name}`, {n} rows	exemple « {name} », {n} lignes
+	{file}, {n} rows	{file}, {n} lignes
+	connection `{name}`, {n} rows	connexion « {name} », {n} lignes
+	loaded {n} rows from `{name}`	{n} lignes chargées depuis « {name} »
+	custom	personnalisé

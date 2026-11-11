@@ -477,3 +477,16 @@ token is a program, not the person at the screen. The server is plain std (a thr
 connection, at most eight, lines up to 16 MiB, a reply within ten minutes); the network code is in
 the app (L7), the token helpers in the engine so `reportcraft-cli send` shares them.
 
+## The designer speaks the suite's languages through craft-i18n (R3.5)
+
+Interface text goes through craft-libs' craft-i18n, wired as its recipe says: the catalogs are an
+optional build input (`CRAFT_I18N_DIR`, a checkout of storytold/craft-i18n), embedded by the
+designer's `build.rs` with `include_str!`; without it the interface is English, and
+`CRAFT_I18N_REQUIRED=1` makes a missing checkout an error for releases. Every visible string is
+English source text in `tl!` (or `tf!` with `{placeholders}`), so shared words (File, Undo, Paper…)
+come translated from craft-i18n's common catalog. ReportCraft's own strings have no catalog in
+craft-i18n yet, so they live in this repository (`i18n/fr.tsv`, craft-i18n's format and clean-room
+rule) until they are synced there; the build takes craft-i18n's `reportcraft.tsv` when it exists,
+else ours, and only offers a language that has one. The language is the system's, or `--lang`, or
+View ▸ Language; offered languages are left-to-right ones for now. Engine messages stay English.
+

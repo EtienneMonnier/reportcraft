@@ -6,9 +6,13 @@
 //! desktop app implements with the system's dialogs and tests with fixed answers.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[macro_use]
+mod i18n;
 mod canvas;
 mod preview;
 mod props;
+
+pub use i18n::{language, set_language};
 
 use std::path::{Path, PathBuf};
 
@@ -192,8 +196,8 @@ impl Designer {
         if let Some(r) = self.run("file.openSample", json!({"name": name})) {
             self.path = None;
             self.selected = None;
-            self.data = format!("sample `{name}`, {} rows", r["rows"]);
-            self.status = format!("opened the sample `{name}`");
+            self.data = tf!("sample `{name}`, {n} rows", name = name, n = r["rows"]);
+            self.status = tf!("opened the sample `{name}`", name = name);
         }
     }
 
@@ -204,7 +208,7 @@ impl Designer {
                 if self.run("report.load", json!({"json": text})).is_some() {
                     self.path = Some(path.to_owned());
                     self.selected = None;
-                    self.status = format!("opened {}", path.display());
+                    self.status = tf!("opened {file}", file = path.display());
                 }
             }
             Err(e) => self.status = format!("{}: {e}", path.display()),
@@ -216,8 +220,8 @@ impl Designer {
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 if let Some(r) = self.run("data.loadCsv", json!({"csv": text})) {
-                    self.data = format!("{}, {} rows", path.display(), r["rows"]);
-                    self.status = format!("loaded {}", path.display());
+                    self.data = tf!("{file}, {n} rows", file = path.display(), n = r["rows"]);
+                    self.status = tf!("loaded {file}", file = path.display());
                 }
             }
             Err(e) => self.status = format!("{}: {e}", path.display()),
@@ -238,8 +242,8 @@ impl Designer {
             }
         };
         if let Some(r) = self.run(command, json!({"saved": name, "query": query})) {
-            self.data = format!("connection `{name}`, {} rows", r["rows"]);
-            self.status = format!("loaded {} rows from `{name}`", r["rows"]);
+            self.data = tf!("connection `{name}`, {n} rows", name = name, n = r["rows"]);
+            self.status = tf!("loaded {n} rows from `{name}`", name = name, n = r["rows"]);
         }
     }
 
@@ -256,7 +260,7 @@ impl Designer {
         match std::fs::write(path, text) {
             Ok(()) => {
                 self.path = Some(path.to_owned());
-                self.status = format!("saved {}", path.display());
+                self.status = tf!("saved {file}", file = path.display());
             }
             Err(e) => self.status = format!("{}: {e}", path.display()),
         }
@@ -308,7 +312,7 @@ impl Designer {
         egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::right("preview").resizable(true).default_size(420.0).show(ui, |ui| {
-            ui.heading("Preview");
+            ui.heading(tl!("Preview"));
             self.refresh_preview();
             match (&self.preview.document, &self.preview.error) {
                 (_, Some(e)) => {
@@ -337,7 +341,7 @@ impl Designer {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(self.session.report.title.clone());
-                ui.add(egui::Slider::new(&mut self.zoom, 1.0..=5.0).text("zoom"));
+                ui.add(egui::Slider::new(&mut self.zoom, 1.0..=5.0).text(tl!("zoom")));
             });
             let events = canvas::show(ui, &self.session.report, self.zoom, self.selected.as_ref(), &mut self.canvas);
             for e in events {
@@ -349,21 +353,21 @@ impl Designer {
 
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("New report").clicked() {
+            ui.menu_button(tl!("File"), |ui| {
+                if ui.button(tl!("New report")).clicked() {
                     self.run("file.new", json!({}));
                     self.path = None;
                     self.selected = None;
                 }
-                if ui.button("Open sample").clicked() {
+                if ui.button(tl!("Open sample")).clicked() {
                     self.open_sample("rentals");
                 }
-                if ui.button("Open report…").clicked()
+                if ui.button(tl!("Open report…")).clicked()
                     && let Some(p) = self.dialogs.open("Open report", &["json"])
                 {
                     self.open_report(&p);
                 }
-                if ui.button("Save report…").clicked() {
+                if ui.button(tl!("Save report…")).clicked() {
                     let name = self
                         .path
                         .as_ref()
@@ -376,40 +380,53 @@ impl Designer {
                 ui.separator();
                 for (label, format) in [("Export PDF…", "pdf"), ("Export HTML…", "html"), ("Export Excel…", "xlsx"), ("Export Word…", "docx")]
                 {
-                    if ui.button(label).clicked()
-                        && let Some(p) = self.dialogs.save(label.trim_end_matches('…'), format, &format!("report.{format}"))
+                    if ui.button(tl!(label)).clicked()
+                        && let Some(p) = self.dialogs.save(tl!(label).trim_end_matches('…'), format, &format!("report.{format}"))
                     {
                         self.export(format, &p);
                     }
                 }
             });
-            ui.menu_button("Edit", |ui| {
+            ui.menu_button(tl!("Edit"), |ui| {
                 let (undo, redo) = self.session.history();
-                if ui.add_enabled(undo > 0, egui::Button::new("Undo").shortcut_text(ui.ctx().format_shortcut(&UNDO))).clicked() {
+                if ui.add_enabled(undo > 0, egui::Button::new(tl!("Undo")).shortcut_text(ui.ctx().format_shortcut(&UNDO))).clicked() {
                     self.undo();
                 }
-                if ui.add_enabled(redo > 0, egui::Button::new("Redo").shortcut_text(ui.ctx().format_shortcut(&REDO))).clicked() {
+                if ui.add_enabled(redo > 0, egui::Button::new(tl!("Redo")).shortcut_text(ui.ctx().format_shortcut(&REDO))).clicked() {
                     self.redo();
                 }
                 ui.separator();
-                if ui.add_enabled(self.selected.is_some(), egui::Button::new("Delete element")).clicked() {
+                if ui.add_enabled(self.selected.is_some(), egui::Button::new(tl!("Delete element"))).clicked() {
                     self.delete_selected();
                 }
             });
-            ui.menu_button("Insert", |ui| {
+            ui.menu_button(tl!("Insert"), |ui| {
                 for kind in ["Text", "Field", "Formula", "Total", "Page number", "Line", "Box"] {
-                    if ui.button(kind).clicked() {
+                    if ui.button(tl!(kind)).clicked() {
                         self.insert(kind);
                     }
                 }
             });
-            ui.menu_button("Data", |ui| {
-                if ui.button("Load CSV…").clicked()
+            ui.menu_button(tl!("View"), |ui| {
+                ui.menu_button(tl!("Language"), |ui| {
+                    let current = i18n::language();
+                    for (code, name) in i18n::languages() {
+                        if ui.selectable_label(code == current, name).clicked() {
+                            i18n::set_language(&code);
+                        }
+                    }
+                    if i18n::languages().len() == 1 {
+                        ui.label(tl!("Other languages come with the craft-i18n catalogs (CRAFT_I18N_DIR at build time)."));
+                    }
+                });
+            });
+            ui.menu_button(tl!("Data"), |ui| {
+                if ui.button(tl!("Load CSV…")).clicked()
                     && let Some(p) = self.dialogs.open("Load CSV", &["csv", "txt"])
                 {
                     self.load_csv(&p);
                 }
-                if ui.button("Load from a saved connection…").clicked() {
+                if ui.button(tl!("Load from a saved connection…")).clicked() {
                     self.saved_query = Some(SavedQuery::default());
                 }
             });
@@ -418,10 +435,10 @@ impl Designer {
 
     fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let file = self.path.as_ref().map_or_else(|| "unsaved report".to_owned(), |p| p.display().to_string());
+            let file = self.path.as_ref().map_or_else(|| tl!("unsaved report").to_owned(), |p| p.display().to_string());
             ui.label(file);
             ui.separator();
-            ui.label(if self.data.is_empty() { "no data" } else { &self.data });
+            ui.label(if self.data.is_empty() { tl!("no data") } else { &self.data });
             ui.separator();
             // Shortened to the window's width (hover shows it all), so it never squeezes the panels.
             ui.add(egui::Label::new(&self.status).truncate());
@@ -436,9 +453,9 @@ impl Designer {
 
     /// The field list: drag a field or a parameter onto a band.
     fn fields(&self, ui: &mut egui::Ui) {
-        ui.heading("Fields");
+        ui.heading(tl!("Fields"));
         if self.session.rows.columns.is_empty() {
-            ui.label("Load data (Data menu) to list its fields.");
+            ui.label(tl!("Load data (Data menu) to list its fields."));
         }
         let drag = |ui: &mut egui::Ui, key: &str, text: String, what: canvas::FieldDrop| {
             ui.dnd_drag_source(ui.make_persistent_id(("field", key)), what, |ui| {
@@ -446,18 +463,24 @@ impl Designer {
             });
         };
         for c in &self.session.rows.columns {
-            drag(ui, &c.name, format!("{}  ·  {:?}", c.name, c.field_type).to_lowercase(), canvas::FieldDrop::Field(c.name.clone()));
+            let kind = match c.field_type {
+                reportcraft_core::FieldType::Text => tl!("text"),
+                reportcraft_core::FieldType::Integer => tl!("integer"),
+                reportcraft_core::FieldType::Number => tl!("number"),
+                reportcraft_core::FieldType::Bool => tl!("yes/no"),
+            };
+            drag(ui, &c.name, format!("{}  ·  {kind}", c.name), canvas::FieldDrop::Field(c.name.clone()));
         }
         if !self.session.report.formulas.is_empty() {
             ui.separator();
-            ui.label("Formulas");
+            ui.label(tl!("Formulas"));
             for f in &self.session.report.formulas {
                 drag(ui, &f.name, format!("{} = {}", f.name, f.expression), canvas::FieldDrop::Field(f.name.clone()));
             }
         }
         if !self.session.report.parameters.is_empty() {
             ui.separator();
-            ui.label("Parameters");
+            ui.label(tl!("Parameters"));
             for p in &self.session.report.parameters {
                 drag(ui, &format!("param:{}", p.name), p.name.clone(), canvas::FieldDrop::Parameter(p.name.clone()));
             }
@@ -528,14 +551,14 @@ impl Designer {
     /// Puts back the report as it was before the last change.
     pub fn undo(&mut self) {
         if self.run("edit.undo", json!({})).is_some() {
-            self.status = "undone".into();
+            self.status = tl!("undone").to_owned();
         }
     }
 
     /// Does again what was undone.
     pub fn redo(&mut self) {
         if self.run("edit.redo", json!({})).is_some() {
-            self.status = "redone".into();
+            self.status = tl!("redone").to_owned();
         }
     }
 
@@ -587,13 +610,13 @@ impl Designer {
         let command = match draft {
             Draft::Element(band, index, el) => {
                 ui.horizontal(|ui| {
-                    ui.heading("Element");
+                    ui.heading(tl!("Element"));
                     ui.label(format!("{} · {index}", canvas::band_title(report, band)));
                 });
                 props::element(ui, el, &fields).then(|| ("report.setElement", json!({"band": band, "index": index, "element": el})))
             }
             Draft::Band(band, b) => {
-                ui.heading(format!("Band · {}", canvas::band_title(report, band)));
+                ui.heading(format!("{} · {}", tl!("Band"), canvas::band_title(report, band)));
                 props::band(ui, b).then(|| {
                     let formula = |f: &Option<String>| f.clone().unwrap_or_default();
                     (
@@ -603,8 +626,8 @@ impl Designer {
                 })
             }
             Draft::Report(r) => {
-                ui.heading("Report");
-                ui.label("Click an element or a band's name to edit it; drag fields from the list onto a band.");
+                ui.heading(tl!("Report"));
+                ui.label(tl!("Click an element or a band's name to edit it; drag fields from the list onto a band."));
                 props::report(ui, r).then(|| {
                     let mut page = json!({"orientation": if r.landscape { "landscape" } else { "portrait" }, "margin_mm": r.margin_mm});
                     if r.paper != "custom" {
@@ -630,19 +653,19 @@ impl Designer {
         };
         let mut open = true;
         let mut load = false;
-        egui::Window::new("Load from a saved connection").open(&mut open).show(ui.ctx(), |ui| {
+        egui::Window::new(tl!("Load from a saved connection")).open(&mut open).show(ui.ctx(), |ui| {
             if names.is_empty() {
-                ui.label("No saved connection yet: save one with `reportcraft-cli connections save`.");
+                ui.label(tl!("No saved connection yet: save one with `reportcraft-cli connections save`."));
                 return;
             }
-            egui::ComboBox::from_label("Connection").selected_text(form.name.clone()).show_ui(ui, |ui| {
+            egui::ComboBox::from_label(tl!("Connection")).selected_text(form.name.clone()).show_ui(ui, |ui| {
                 for n in &names {
                     ui.selectable_value(&mut form.name, n.clone(), n);
                 }
             });
-            ui.label("Query");
+            ui.label(tl!("Query"));
             ui.add(egui::TextEdit::multiline(&mut form.query).code_editor().desired_rows(4));
-            load = ui.button("Load").clicked();
+            load = ui.button(tl!("Load")).clicked();
         });
         if load {
             let (name, query) = (form.name.clone(), form.query.clone());

@@ -12,6 +12,7 @@ in the spirit of Crystal Reports and Power BI.** Built to sit beside the ArtCraf
 
 ```sh
 cargo run -p reportcraft                                                # the designer, on the sample
+CRAFT_I18N_DIR=$PWD/../craft-i18n cargo run -p reportcraft -- --lang fr   # in French (craft-i18n checkout)
 cargo run -p reportcraft-cli -- render --sample rentals --param period="October 2026" --out rentals.html
 cargo run -p reportcraft-cli -- render --sample rentals --format pdf --out rentals.pdf
 cargo run -p reportcraft-cli -- render --sample rentals --format xlsx --out rentals.xlsx  # or docx

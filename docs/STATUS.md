@@ -133,11 +133,14 @@
   orientation, margins); previews the rendered pages live after every change; saves the report and
   exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
   every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
-  `--screenshot FILE.ppm` saves the window and quits. `--control PORT` lets scripts and agents drive
+  The interface follows the system's language or `--lang CODE` (View ▸ Language), through
+  craft-i18n's catalogs embedded at build time (`CRAFT_I18N_DIR=…/craft-i18n`; English without
+  them); French is complete (ReportCraft's own strings in `i18n/fr.tsv`, the shared ones in
+  craft-i18n). `--screenshot FILE.ppm` saves the window and quits. `--control PORT` lets scripts and agents drive
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 174 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 175 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet (see `ROADMAP.md`).

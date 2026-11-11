@@ -134,6 +134,7 @@ struct Args {
     sample: Option<String>,
     screenshot: Option<PathBuf>,
     control: Option<u16>,
+    lang: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
@@ -144,12 +145,15 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--data" => out.data = Some(PathBuf::from(it.next().ok_or("`--data` needs a CSV file")?)),
             "--sample" => out.sample = Some(it.next().ok_or("`--sample` needs a name")?.clone()),
             "--screenshot" => out.screenshot = Some(PathBuf::from(it.next().ok_or("`--screenshot` needs a file")?)),
+            "--lang" => out.lang = Some(it.next().ok_or("`--lang` needs a language code (fr, de…)")?.clone()),
             "--control" => {
                 let port = it.next().ok_or("`--control` needs a port")?;
                 out.control = Some(port.parse().map_err(|_| format!("`{port}` is not a port number"))?);
             }
             "--help" | "-h" => {
-                return Err("reportcraft [REPORT.rcr.json] [--data FILE.csv] [--sample NAME] [--screenshot FILE.ppm] [--control PORT]".into());
+                return Err(
+                    "reportcraft [REPORT.rcr.json] [--data FILE.csv] [--sample NAME] [--screenshot FILE.ppm] [--control PORT] [--lang CODE]".into()
+                );
             }
             path if !path.starts_with("--") => out.report = Some(PathBuf::from(path)),
             other => return Err(format!("unknown option `{other}`")),
@@ -186,6 +190,8 @@ fn main() -> eframe::Result<()> {
     };
     let viewport = egui::ViewportBuilder::default().with_title("ReportCraft").with_inner_size([1400.0, 900.0]).with_app_id("reportcraft");
     let options = eframe::NativeOptions { viewport, ..Default::default() };
+    // The interface's language: `--lang`, else the system's.
+    reportcraft_ui_egui::set_language(args.lang.as_deref().unwrap_or("auto"));
     let designer = designer(&args);
     let screenshot = args.screenshot.clone().map(|path| Screenshot { path, frames: 0, requested: false, done: Default::default() });
     let control_port = args.control;
@@ -224,7 +230,7 @@ mod tests {
         assert_eq!(a(&[]), Ok(Args::default()));
         assert_eq!(
             a(&["r.rcr.json", "--data", "d.csv"]),
-            Ok(Args { report: Some("r.rcr.json".into()), data: Some("d.csv".into()), sample: None, screenshot: None, control: None })
+            Ok(Args { report: Some("r.rcr.json".into()), data: Some("d.csv".into()), sample: None, screenshot: None, control: None, lang: None })
         );
         assert_eq!(a(&["--sample", "rentals"]).map(|x| x.sample), Ok(Some("rentals".into())));
         assert_eq!(a(&["--control", "7979"]).map(|x| x.control), Ok(Some(7979)));

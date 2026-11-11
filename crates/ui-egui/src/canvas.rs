@@ -122,14 +122,15 @@ pub(crate) fn band_title(report: &Report, name: &str) -> String {
         && let Some((i, part)) = rest.split_once("].")
         && let Some((n, field)) = group(i)
     {
-        return format!("Group {n} {part} ({field})");
+        let template = if part == "header" { "Group {n} header ({field})" } else { "Group {n} footer ({field})" };
+        return tf!(template, n = n, field = field);
     }
     match name {
-        "report_header" => "Report header",
-        "page_header" => "Page header",
-        "detail" => "Detail",
-        "page_footer" => "Page footer",
-        "report_footer" => "Report footer",
+        "report_header" => tl!("Report header"),
+        "page_header" => tl!("Page header"),
+        "detail" => tl!("Detail"),
+        "page_footer" => tl!("Page footer"),
+        "report_footer" => tl!("Report footer"),
         other => other,
     }
     .to_owned()
