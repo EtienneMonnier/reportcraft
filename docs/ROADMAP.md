@@ -20,14 +20,15 @@ Anything marked **decision** waits for a maintainer.
   - [x] Pick the database file through a named connection (R1.3: `"saved": NAME`)
   - [x] Restrict MCP agents to saved connections (specification §11; see R1.3)
 - [x] R1.2 PostgreSQL source (read-only role, statement timeout, row cap) — first target: Odoo databases (#2)
-  - [ ] TLS connections (`sslmode=require`): only plain connections today — **decision**: rustls-based connector
+  - [x] TLS connections (`sslmode` disable / prefer / require / verify-full) through rustls — decided 2026-11-11: pure Rust
+  - [ ] Client certificates (`sslcert`, `sslkey`) and a CA file of the connection's own (`sslrootcert`; today the system's, or `SSL_CERT_FILE`)
   - [ ] Read `~/.pgpass` / `PGPASSFILE` as libpq does (PGPASSWORD works today)
   - [ ] Run the live PostgreSQL tests in CI (needs a PostgreSQL service in craft-common-actions or a local job)
 - [x] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports (#3)
   - [x] Let an MCP session use saved connections only (no raw file path or connection string), as §11 asks
   - [ ] Saved connections in report files by name (`"connection": "odoo-prod"`), so a report knows where its data lives
   - [ ] A connections panel in the designer (R3), with a password field that never shows the kept one
-- [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — **decision**: pure-Rust driver availability
+- [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — decided 2026-11-11: pure Rust for now, so SQL Server through a Rust driver (tiberius) and no ODBC yet; ODBC (Advantage, others) waits, as it needs the system's driver manager and the vendor's C driver
 - [x] R1.5 Report parameters passed to queries as bound parameters (never string-spliced) (#5)
 - [x] R1.6 Query log (what ran, when, how many rows) (#6)
   - [ ] Show the log in the designer's data panel (R3)

@@ -117,6 +117,8 @@ pub(crate) struct Connections {
     pub user: String,
     pub database: String,
     pub password: String,
+    /// `""`: libpq's default (`prefer`).
+    pub sslmode: String,
 }
 
 /// What the Connections window asks for.
@@ -138,7 +140,7 @@ impl Connections {
     /// The `data.saveConnection` parameters (a password only when one was typed).
     pub(crate) fn params(&self) -> Json {
         let mut p = if self.postgres {
-            json!({"name": self.name, "kind": "postgres", "host": self.host, "port": self.port, "user": self.user, "database": self.database})
+            json!({"name": self.name, "kind": "postgres", "host": self.host, "port": self.port, "user": self.user, "database": self.database, "sslmode": self.sslmode})
         } else {
             json!({"name": self.name, "kind": "sqlite", "path": self.path})
         };
@@ -176,6 +178,15 @@ pub(crate) fn connections(ctx: &egui::Context, c: &mut Connections) -> Manage {
     if open { ask } else { Manage::Close }
 }
 
+fn sslmode_name(m: &str) -> &'static str {
+    match m {
+        "disable" => tl!("none"),
+        "require" => tl!("encrypted"),
+        "verify-full" => tl!("encrypted, certificate checked"),
+        _ => tl!("encrypted when the server offers it"),
+    }
+}
+
 fn form(ui: &mut Ui, c: &mut Connections, ask: &mut Manage) {
     egui::Grid::new("connection").num_columns(2).show(ui, |ui| {
         ui.label(tl!("Name"));
@@ -199,6 +210,13 @@ fn form(ui: &mut Ui, c: &mut Connections, ask: &mut Manage) {
             ui.end_row();
             ui.label(tl!("Database name"));
             ui.text_edit_singleline(&mut c.database);
+            ui.end_row();
+            ui.label(tl!("Encryption"));
+            egui::ComboBox::from_id_salt("sslmode").selected_text(sslmode_name(&c.sslmode)).show_ui(ui, |ui| {
+                for m in ["", "disable", "require", "verify-full"] {
+                    ui.selectable_value(&mut c.sslmode, m.to_owned(), sslmode_name(m));
+                }
+            });
             ui.end_row();
             ui.label(tl!("Password"));
             ui.add(egui::TextEdit::singleline(&mut c.password).password(true).hint_text(tl!("kept in the system keychain")));

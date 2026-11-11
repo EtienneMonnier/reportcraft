@@ -33,6 +33,9 @@ pub enum Target {
         port: u16,
         user: String,
         database: String,
+        /// libpq's `sslmode`: `disable`, `prefer` (when unset), `require` or `verify-full`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sslmode: Option<String>,
     },
 }
 
@@ -52,7 +55,7 @@ impl Target {
     pub fn describe(&self) -> String {
         match self {
             Target::Sqlite { path } => path.clone(),
-            Target::Postgres { host, port, user, database } => format!("{user}@{host}:{port}/{database}"),
+            Target::Postgres { host, port, user, database, .. } => format!("{user}@{host}:{port}/{database}"),
         }
     }
 }
@@ -83,7 +86,12 @@ impl Connection {
         };
         match &self.target {
             Target::Sqlite { path } => field(path, "the database file")?,
-            Target::Postgres { host, port, user, database } => {
+            Target::Postgres { host, port, user, database, sslmode } => {
+                if let Some(m) = sslmode
+                    && !["disable", "prefer", "require", "verify-ca", "verify-full"].contains(&m.as_str())
+                {
+                    return Err(Error::Invalid(format!("connection `{n}`: sslmode is disable, prefer, require or verify-full, not `{m}`")));
+                }
                 field(host, "the host")?;
                 field(user, "the user")?;
                 field(database, "the database")?;
@@ -261,10 +269,13 @@ impl Connections {
     /// (else the driver's own `PGPASSWORD` applies). Hand it to the driver; never show it.
     pub fn conninfo(&self, name: &str) -> Result<String> {
         let c = self.get(name).ok_or_else(|| self.unknown(name))?;
-        let Target::Postgres { host, port, user, database } = &c.target else {
+        let Target::Postgres { host, port, user, database, sslmode } = &c.target else {
             return Err(Error::Invalid(format!("connection `{name}` is a {} database, not PostgreSQL", c.target.kind())));
         };
         let mut out = format!("host={} port={port} user={} dbname={}", quote(host), quote(user), quote(database));
+        if let Some(m) = sslmode {
+            out.push_str(&format!(" sslmode={m}"));
+        }
         if let Some(p) = self.secrets.get(name)? {
             out.push_str(" password=");
             out.push_str(&quote(&p));
@@ -303,7 +314,7 @@ mod tests {
     fn pg(name: &str) -> Connection {
         Connection {
             name: name.into(),
-            target: Target::Postgres { host: "db.example".into(), port: 5433, user: "report's".into(), database: "odoo".into() },
+            target: Target::Postgres { host: "db.example".into(), port: 5433, user: "report's".into(), database: "odoo".into(), sslmode: None },
             description: String::new(),
         }
     }
@@ -349,13 +360,28 @@ mod tests {
         for name in ["", "a b", "x/y", &"n".repeat(65)] {
             assert!(c.save(Connection { name: name.into(), ..pg("x") }, None).is_err(), "{name:?}");
         }
-        let empty_host = Connection { target: Target::Postgres { host: " ".into(), port: 5432, user: "u".into(), database: "d".into() }, ..pg("x") };
+        let empty_host = Connection {
+            target: Target::Postgres { host: " ".into(), port: 5432, user: "u".into(), database: "d".into(), sslmode: None },
+            ..pg("x")
+        };
         assert!(c.save(empty_host, None).is_err());
         let newline = Connection { target: Target::Sqlite { path: "a\nb".into() }, ..pg("x") };
         assert!(c.save(newline, None).is_err());
         assert!(c.list().is_empty());
+        let bad_mode = Connection {
+            target: Target::Postgres { host: "h".into(), port: 1, user: "u".into(), database: "d".into(), sslmode: Some("maybe".into()) },
+            ..pg("x")
+        };
+        assert!(c.save(bad_mode, None).is_err());
+        let tls = Connection {
+            target: Target::Postgres { host: "h".into(), port: 1, user: "u".into(), database: "d".into(), sslmode: Some("verify-full".into()) },
+            ..pg("t")
+        };
+        c.save(tls, None).unwrap();
+        assert!(c.conninfo("t").unwrap().ends_with(" sslmode=verify-full"));
+        c.delete("t").unwrap();
         // The port defaults to 5432 (JSON exercises the same serde derive as the settings file).
         let read: Connection = serde_json::from_str(r#"{"name":"n","kind":"postgres","host":"h","user":"u","database":"d"}"#).unwrap();
-        assert_eq!(read.target, Target::Postgres { host: "h".into(), port: 5432, user: "u".into(), database: "d".into() });
+        assert_eq!(read.target, Target::Postgres { host: "h".into(), port: 5432, user: "u".into(), database: "d".into(), sslmode: None });
     }
 }

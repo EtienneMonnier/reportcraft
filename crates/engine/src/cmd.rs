@@ -73,7 +73,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.saveConnection",
         label: "Save connection",
         menu: "Data",
-        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432), "user"?: string, "database"?: string (postgres), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
+        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432), "user"?: string, "database"?: string, "sslmode"?: "disable" | "prefer" | "require" | "verify-full" (postgres), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
         access: Access::External,
         run: data_save_connection,
     },
@@ -419,6 +419,7 @@ fn connection_of(params: &Json) -> EngineResult<reportcraft_connections::Connect
             },
             user: text("user")?,
             database: text("database")?,
+            sslmode: params.get("sslmode").and_then(Json::as_str).filter(|m| !m.is_empty()).map(str::to_owned),
         },
         other => return Err(bad(CMD, format!("`kind` is sqlite or postgres, not `{other}`"))),
     };
