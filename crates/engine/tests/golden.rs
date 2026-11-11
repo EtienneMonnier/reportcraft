@@ -52,6 +52,11 @@ fn snapshot(doc: &Document) -> String {
                 align,
                 it.text
             );
+            // Colours only when set, so reports without them keep their snapshots.
+            if it.style.color.is_some() || it.style.background.is_some() {
+                let c = |c: Option<reportcraft_model::Color>| c.map_or_else(|| "-".to_owned(), |c| c.to_string());
+                let _ = writeln!(out, "          colour {} on {}", c(it.style.color), c(it.style.background));
+            }
         }
     }
     out
@@ -84,7 +89,18 @@ fn check_doc(name: &str, doc: &Document) {
 }
 
 fn el(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style, content, format: None, visible_if: None }
+    Element {
+        x_mm: x,
+        y_mm: 0.5,
+        width_mm: w,
+        height_mm: 5.0,
+        style,
+        content,
+        format: None,
+        visible_if: None,
+        background_formula: None,
+        color_formula: None,
+    }
 }
 
 fn field(name: &str) -> Content {
@@ -398,6 +414,8 @@ fn lines_and_boxes() {
         content,
         format: None,
         visible_if: None,
+        background_formula: None,
+        color_formula: None,
     };
     let line = |color: &str| Content::Line { thickness_mm: 0.3, color: color.into() };
     let mut r = Report::new("Shapes");
@@ -499,6 +517,8 @@ fn barcodes() {
         format: None,
         content: Content::Barcode { symbology, field: Some(field_name.into()), text: None, show_text: true, ec_level: EcLevel::M },
         visible_if: None,
+        background_formula: None,
+        color_formula: None,
     };
     r.report_header = Band {
         height_mm: 22.0,
@@ -519,6 +539,8 @@ fn barcodes() {
                     ec_level: EcLevel::Q,
                 },
                 visible_if: None,
+                background_formula: None,
+                color_formula: None,
             },
         ],
         page_break_before_if: None,
@@ -622,6 +644,8 @@ fn subreports() {
                     hide_when_empty: true,
                 },
                 visible_if: None,
+                background_formula: None,
+                color_formula: None,
             },
         ],
         page_break_before_if: None,
@@ -785,4 +809,31 @@ fn conditions() {
         ..Band::default()
     };
     check("conditions", &r, &rentals(24), &Params::new());
+}
+
+/// Colours (R2.4): a coloured header on a background, and amounts below 100 in red by formula.
+#[test]
+fn colours() {
+    use reportcraft_model::Color;
+    let header = TextStyle { bold: true, color: Some(Color(0xff, 0xff, 0xff)), background: Some(Color(0x33, 0x55, 0x99)), ..TextStyle::default() };
+    let right = TextStyle { align: Align::Right, ..TextStyle::default() };
+    let mut r = Report::new("Colours");
+    r.page_header = Band {
+        height_mm: 7.0,
+        elements: vec![el(0.0, 60.0, Content::Text { text: "Item".into() }, header), el(60.0, 40.0, Content::Text { text: "Amount".into() }, header)],
+        ..Band::default()
+    };
+    r.detail = Band {
+        height_mm: 5.5,
+        elements: vec![
+            el(0.0, 60.0, field("item"), TextStyle::default()),
+            Element {
+                color_formula: Some("IF([amount] < 100, \"#c00\", \"\")".into()),
+                background_formula: Some("IF([days] >= 10, \"#ffeecc\", \"\")".into()),
+                ..el(60.0, 40.0, field("amount"), right)
+            },
+        ],
+        ..Band::default()
+    };
+    check("colours", &r, &rentals(8), &Params::new());
 }

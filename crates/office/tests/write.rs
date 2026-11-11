@@ -8,7 +8,18 @@ use reportcraft_model::{Align, Band, Content, Element, Format, Report, TextStyle
 use reportcraft_office::{to_docx, to_xlsx};
 
 fn el(x: f64, w: f64, content: Content, format: Option<Format>, align: Align) -> Element {
-    Element { x_mm: x, y_mm: 0.5, width_mm: w, height_mm: 5.0, style: TextStyle { align, ..TextStyle::default() }, content, format, visible_if: None }
+    Element {
+        x_mm: x,
+        y_mm: 0.5,
+        width_mm: w,
+        height_mm: 5.0,
+        style: TextStyle { align, ..TextStyle::default() },
+        content,
+        format,
+        visible_if: None,
+        background_formula: None,
+        color_formula: None,
+    }
 }
 
 fn report() -> (Report, RowSet) {
@@ -32,7 +43,10 @@ fn report() -> (Report, RowSet) {
         elements: vec![
             el(0.0, 60.0, Content::Field { field: "item".into() }, None, Align::Left),
             el(60.0, 30.0, Content::Field { field: "since".into() }, Some(Format::Date { pattern: Some("%d/%m/%Y".into()) }), Align::Left),
-            el(90.0, 40.0, Content::Field { field: "amount".into() }, Some(money), Align::Right),
+            Element {
+                color_formula: Some("IF([amount] < 1240, \"#c00\", \"\")".into()),
+                ..el(90.0, 40.0, Content::Field { field: "amount".into() }, Some(money), Align::Right)
+            },
             el(140.0, 20.0, Content::Line { thickness_mm: 0.2, color: "#000".into() }, None, Align::Left),
         ],
         page_break_before_if: None,
@@ -79,6 +93,7 @@ fn xlsx_keeps_numbers_and_dates_typed() {
     assert!(sheet.contains("<v>46296</v>"), "dates are dates: {sheet}");
     assert!(styles.contains("formatCode=\"#,##0.00 &quot;€&quot;\""), "{styles}");
     assert!(styles.contains("formatCode=\"dd/mm/yyyy\""), "{styles}");
+    assert!(styles.contains("rgb=\"FFCC0000\""), "red amounts: {styles}");
     assert!(strings.contains("Scaffold &amp; tower &lt;0&gt;") && !strings.contains("1 / 1"), "{strings}");
     assert_eq!(to_xlsx(&doc, &Cancel::default()).unwrap().bytes, out.bytes, "the same report gives the same file");
 }
@@ -96,6 +111,7 @@ fn docx_keeps_the_pages_and_positions() {
     assert!(xml.contains("<w:tab w:val=\"right\" w:leader=\"none\" w:pos=\"7370\""), "{xml}");
     assert!(xml.contains("<w:spacing w:before=\"0\" w:after=\"0\" w:line=\""), "{xml}");
     assert!(xml.contains("w:lineRule=\"exact\""));
+    assert!(xml.contains("<w:color w:val=\"cc0000\""), "red amounts: {xml}");
     let section = xml.rsplit("<w:sectPr").next().unwrap();
     assert!(section.contains("w:w=\"11906\"") && section.contains("w:h=\"4535\""), "page size: {section}");
     assert_eq!(out.warnings.len(), 1);

@@ -390,3 +390,15 @@ The evaluator gets these from the caller (`Env::locale`), like everything else i
 expression crate stays free of the report model. A code it doesn't support gives `#VALUE!`
 rather than a guess.
 
+## Colours are style values; conditional colours are formulas that return one (R2.4)
+
+A text element's style can carry a colour and a background (`#rgb` or `#rrggbb`, saved as
+`#rrggbb`), held as a small `Color` value so the style stays a plain copyable value and every
+writer gets validated bytes, never a string it would have to trust. A conditional colour is not a
+new rule language: `color_formula` and `background_formula` are formulas whose result, when it is
+a colour, replaces the style's for that row (`IF([amount] < 0, "#c00", "")`), so one formula
+engine covers visibility, page breaks and colours. Anything else (blank, text, an error) keeps
+the style's colour. HTML writes CSS, PDF fills the glyphs and a rectangle behind the box, DOCX
+sets the run's colour and shading, XLSX the cell's font and fill. Golden snapshots print colours
+only when set, so reports without them keep their snapshots.
+

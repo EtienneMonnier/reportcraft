@@ -24,7 +24,7 @@ fn text(x: f64, y: f64, text: &str, align: Align, bold: bool) -> Item {
         y_mm: y,
         width_mm: 60.0,
         height_mm: 5.0,
-        style: TextStyle { size_pt: 10.0, bold, align },
+        style: TextStyle { size_pt: 10.0, bold, align, background: None, color: None },
         text: text.into(),
         shape: None,
         cell: None,

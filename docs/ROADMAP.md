@@ -53,7 +53,7 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code) (#8)
   - [x] `TEXT(value, format)` and numbers turned into text in the report's locale (`10,8` in French)
   - [ ] Totals in named formulas (a computed field that reads its group's sum), and running totals (`RUNNINGSUM`-style, page totals)
-  - [x] Formulas on element properties: visibility and page breaks (R2.10); conditional colour waits for text colour (R2.4)
+  - [x] Formulas on element properties: visibility and page breaks (R2.10), colour and background (R2.4)
   - [ ] `PAGENUMBER()` / `TOTALPAGES()` in formulas (needs a second pass, as "page N / M" does)
   - [ ] A formula editor in the designer with the function list, field names and live errors (R3)
 - [x] R2.3 Keep-together, repeat group header on new page, page break before group (#9)
@@ -61,7 +61,7 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
 - [x] R2.4 Lines and boxes in bands (#10)
   - [ ] Images in bands: from a field (blob or path) or embedded in the report, with size limits and ATTRIBUTION rules
-  - [ ] Text colour and background on text elements
+  - [x] Text colour and background on text elements, fixed or from a formula
 - [x] R2.5 Sub-reports (#11)
   - [ ] Repeat a subreport's header on the pages it continues on
   - [ ] Expose a subreport's totals to the parent (§8 "results to the parent")
@@ -90,7 +90,8 @@ Anything marked **decision** waits for a maintainer.
 - [x] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2 (#31)
   - [ ] Hide a band whose elements all come out blank (no formula needed)
   - [ ] `keep_together` and the space estimate of a group that count only the bands that will show
-  - [ ] Conditional colour, bold and format on elements (with R2.4's text colour)
+  - [x] Conditional colour and background on elements (`color_formula`, `background_formula`)
+  - [ ] Conditional bold and format
   - [ ] Page break after a band, and "new page after N rows"
 - [x] R2.11 Barcodes and QR codes (§4 FR-PRINT-003) (#32)
   - [ ] More symbologies on demand: Code 39, EAN-8, UPC-A, GS1-128 (FNC1), DataMatrix

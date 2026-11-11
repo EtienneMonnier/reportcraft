@@ -1,0 +1,26 @@
+document "Colours" 210.00x297.00mm, 1 page(s)
+page 1 (18 items)
+    15.00   15.50  60.00x5.00  10.0ptBL "Item"
+          colour #ffffff on #335599
+    75.00   15.50  40.00x5.00  10.0ptBL "Amount"
+          colour #ffffff on #335599
+    15.00   22.50  60.00x5.00  10.0pt L "Generator"
+    75.00   22.50  40.00x5.00  10.0pt R "37.5"
+          colour #cc0000 on -
+    15.00   28.00  60.00x5.00  10.0pt L "Mini excavator"
+    75.00   28.00  40.00x5.00  10.0pt R "300.25"
+    15.00   33.50  60.00x5.00  10.0pt L "Scaffold tower"
+    75.00   33.50  40.00x5.00  10.0pt R "75.5"
+          colour #cc0000 on -
+    15.00   39.00  60.00x5.00  10.0pt L "Scissor lift"
+    75.00   39.00  40.00x5.00  10.0pt R "338.25"
+    15.00   44.50  60.00x5.00  10.0pt L "Pressure washer"
+    75.00   44.50  40.00x5.00  10.0pt R "112.5"
+    15.00   50.00  60.00x5.00  10.0pt L "Generator"
+    75.00   50.00  40.00x5.00  10.0pt R "375.25"
+          colour - on #ffeecc
+    15.00   55.50  60.00x5.00  10.0pt L "Mini excavator"
+    75.00   55.50  40.00x5.00  10.0pt R "150.5"
+    15.00   61.00  60.00x5.00  10.0pt L "Scaffold tower"
+    75.00   61.00  40.00x5.00  10.0pt R "413.25"
+          colour - on #ffeecc
