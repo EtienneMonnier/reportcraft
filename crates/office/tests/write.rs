@@ -193,3 +193,35 @@ fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
     assert!(xml.contains("on blue"));
     assert_eq!(to_docx(&doc, &Cancel::default()).unwrap().bytes, out.bytes, "still the same bytes for the same report");
 }
+
+#[test]
+fn docx_draws_chart_wedges_as_pictures() {
+    let (mut r, rows) = report();
+    r.detail.elements.retain(|e| !matches!(e.content, Content::Line { .. }));
+    r.report_footer = Band {
+        height_mm: 50.0,
+        elements: vec![Element {
+            content: Content::Chart {
+                chart: reportcraft_model::ChartKind::Pie,
+                category: "since".into(),
+                value: "amount".into(),
+                function: reportcraft_model::AggregateFn::Sum,
+                title: None,
+            },
+            ..el(0.0, 120.0, Content::Text { text: String::new() }, None, Align::Left)
+        }],
+        page_break_before_if: None,
+        visible_if: None,
+        keep_with_next: false,
+    };
+    if let Some(e) = r.report_footer.elements.first_mut() {
+        e.height_mm = 45.0;
+    }
+    r.page.height_mm = 297.0;
+    let doc = layout(&r, &rows, &Params::new()).unwrap();
+    let out = to_docx(&doc, &Cancel::default()).unwrap();
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let xml = part(&out.bytes, "word/document.xml");
+    // 12 wedges and their 12 legend squares that fit (as many as rows of the legend fit).
+    assert!(xml.matches("<wp:anchor ").count() >= 12, "{}", xml.matches("<wp:anchor ").count());
+}

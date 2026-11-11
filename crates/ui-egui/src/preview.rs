@@ -62,16 +62,18 @@ fn draw(painter: &egui::Painter, origin: Pos2, it: &Item, scale: f32) {
         }
         Some(Shape::Barcode { columns, rows, quiet, modules }) => barcode(painter, rect, *columns, *rows, *quiet, modules),
         Some(Shape::Polygon { points, fill }) => {
-            // A fan of triangles from the first corner: each one convex, as egui fills them.
-            let to_px = |[x, y]: [f64; 2]| origin + Vec2::new(x as f32 * scale, y as f32 * scale);
+            // One mesh, a fan of triangles from the first corner: no edges inside the wedge, where
+            // separately smoothed triangles would show seams.
+            let mut mesh = egui::Mesh::default();
             let colour = colour(fill);
-            if let Some((&first, rest)) = points.split_first() {
-                for pair in rest.windows(2) {
-                    if let [a, b] = pair {
-                        painter.add(egui::Shape::convex_polygon(vec![to_px(first), to_px(*a), to_px(*b)], colour, Stroke::NONE));
-                    }
-                }
+            for [x, y] in points {
+                mesh.colored_vertex(origin + Vec2::new(*x as f32 * scale, *y as f32 * scale), colour);
             }
+            let n = u32::try_from(points.len()).unwrap_or(0);
+            for k in 1..n.saturating_sub(1) {
+                mesh.add_triangle(0, k, k + 1);
+            }
+            painter.add(egui::Shape::mesh(mesh));
         }
         None => text(painter, rect, it, scale),
     }

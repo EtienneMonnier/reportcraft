@@ -40,7 +40,8 @@ pub(crate) fn series(el: &Element, rows: &RowSet, summary: &[usize]) -> Vec<(Str
         .collect()
 }
 
-fn text(x: f64, y: f64, w: f64, h: f64, size_pt: f64, align: Align, bold: bool, t: String) -> Item {
+/// A text item in the box `(x, y, w, h)`, styled `(size, alignment, bold)`.
+fn text((x, y, w, h): (f64, f64, f64, f64), (size_pt, align, bold): (f64, Align, bool), t: String) -> Item {
     Item {
         x_mm: x,
         y_mm: y,
@@ -68,7 +69,7 @@ pub(crate) fn draw(el: &Element, rows: &RowSet, summary: &[usize], origin: (f64,
     let (w, bottom) = (el.width_mm, origin.1 + el.height_mm);
     let mut items = Vec::new();
     if let Some(t) = title.as_ref().filter(|t| !t.is_empty()) {
-        items.push(text(x0, top, w, TITLE_MM - 1.0, 9.0, Align::Center, true, t.clone()));
+        items.push(text((x0, top, w, TITLE_MM - 1.0), (9.0, Align::Center, true), t.clone()));
         top += TITLE_MM;
     }
     let data = series(el, rows, summary);
@@ -115,8 +116,8 @@ fn axes(items: &mut Vec<Item>, values: &[(String, f64, String)], kind: ChartKind
             }
         }
         let value_y = if *v >= 0.0 { y - LABEL_MM + 0.5 } else { y + 0.5 };
-        items.push(text(x0 + slot * i as f64, value_y, slot, LABEL_MM - 0.5, 6.5, Align::Center, false, shown.clone()));
-        items.push(text(x0 + slot * i as f64, plot_bottom + 0.5, slot, LABEL_MM - 0.5, 7.0, Align::Center, false, label.clone()));
+        items.push(text((x0 + slot * i as f64, value_y, slot, LABEL_MM - 0.5), (6.5, Align::Center, false), shown.clone()));
+        items.push(text((x0 + slot * i as f64, plot_bottom + 0.5, slot, LABEL_MM - 0.5), (7.0, Align::Center, false), label.clone()));
     }
 }
 
@@ -147,7 +148,7 @@ fn pie(items: &mut Vec<Item>, values: &[(String, f64, String)], (x0, top, w, h):
         if row_y + 4.0 <= top + h {
             items.push(filled(legend_x, row_y + 0.8, 2.6, 2.6, colour));
             let share = format!("{label}  {:.1} %", v / total * 100.0);
-            items.push(text(legend_x + 3.6, row_y, (x0 + w - legend_x - 3.6).max(0.0), 4.0, 7.0, Align::Left, false, share));
+            items.push(text((legend_x + 3.6, row_y, (x0 + w - legend_x - 3.6).max(0.0), 4.0), (7.0, Align::Left, false), share));
         }
     }
 }

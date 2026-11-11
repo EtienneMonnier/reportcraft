@@ -490,3 +490,15 @@ rule) until they are synced there; the build takes craft-i18n's `reportcraft.tsv
 else ours, and only offers a language that has one. The language is the system's, or `--lang`, or
 View ▸ Language; offered languages are left-to-right ones for now. Engine messages stay English.
 
+## Charts are laid out as shapes and text, not by a chart library (R5.1)
+
+A chart element totals a field by category over the rows its band summarises, as formulas and
+totals do, and the layout draws it with the primitives every writer already has: rectangles for
+bars and markers, segments for lines and axes, text for titles, values and legends, plus one new
+primitive, a filled polygon, for pie wedges (arcs in steps of at most 5 degrees). So HTML (SVG),
+PDF (paths), DOCX (pictures anchored behind the text; the wedge is a transparent PNG) and the
+designer's preview (one mesh per wedge, so no seams) draw charts without knowing what a chart is,
+and golden snapshots check their geometry. Categories keep the order they first appear in (the
+report's sort), at most 60. Colours come from a fixed palette of eight with contrast on white.
+Several series, axes with ticks and native Excel charts are next steps.
+
