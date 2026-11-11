@@ -5,11 +5,13 @@ in the spirit of Crystal Reports and Power BI.** Built to sit beside the ArtCraf
 (GridCraft, DeckCraft, WordCraft…), with the same conventions, a CLI and an MCP server.
 
 > Status: **pre-alpha**. Paginated reports from CSV, SQLite or PostgreSQL data, with Excel-style
-> formulas, to HTML, PDF, XLSX and DOCX work today; the designer is on the [roadmap](docs/ROADMAP.md).
+> formulas, to HTML, PDF, XLSX and DOCX work today; the designer shows and previews reports (editing
+> is next on the [roadmap](docs/ROADMAP.md)).
 
 ## Try it
 
 ```sh
+cargo run -p reportcraft                                                # the designer, on the sample
 cargo run -p reportcraft-cli -- render --sample rentals --param period="October 2026" --out rentals.html
 cargo run -p reportcraft-cli -- render --sample rentals --format pdf --out rentals.pdf
 cargo run -p reportcraft-cli -- render --sample rentals --format xlsx --out rentals.xlsx  # or docx

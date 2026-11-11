@@ -425,3 +425,18 @@ the same drawing id; the writer adjusts the built XML before packing it (behind 
 wrapping, one id per drawing) and names the pictures itself, so the same report still gives the
 same bytes. Diagonal lines are not drawn yet.
 
+## The designer starts small, on the suite's egui fork, and only runs commands (R3.1)
+
+The designer is `reportcraft-ui-egui` (L6) and the `reportcraft` app (L7), on egui and eframe 0.37
+from the suite's fork at the revisions craft-libs pins (root `[patch.crates-io]`, as GridCraft
+does), rendering through wgpu. The first version is deliberately small so the engine can be
+tried by hand: a banded canvas drawn to scale from the report model, a live preview drawn from the
+same `Document` the writers read, menus for files, data and exports, and a read-only properties
+panel. Every action is an engine command (`Session::execute`), so the designer can't do anything
+the CLI and MCP can't, and the preview renders again only after a command that edits the
+session (`Access::Edit`). File dialogs are behind a `Dialogs` trait: the app answers with rfd, tests
+with fixed paths, so the designer is tested headless by running egui frames without a window.
+craft-ui's controls and craft-menu come next, with editing (R3.2); starting with plain egui kept
+this first step independent of craft-libs' UI revision, which is newer in GridCraft than ours.
+`--screenshot` lets agents and CI look at the window without a screen grabber.
+

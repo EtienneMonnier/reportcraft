@@ -1,0 +1,20 @@
+[package]
+name = "reportcraft-ui-egui"
+description = "The ReportCraft designer: banded canvas and live preview, in egui (L6)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+reportcraft-layout.workspace = true
+reportcraft-engine.workspace = true
+egui = { workspace = true, features = ["default_fonts"] }
+serde_json.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

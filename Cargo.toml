@@ -22,6 +22,7 @@ reportcraft-layout = { path = "crates/layout" }
 reportcraft-pdf = { path = "crates/pdf" }
 reportcraft-office = { path = "crates/office" }
 reportcraft-connections = { path = "crates/connections" }
+reportcraft-ui-egui = { path = "crates/ui-egui" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
 
@@ -49,6 +50,11 @@ keyring = "4.2"
 # tied to their apps' models). No image support: barcodes are written as text for now.
 rust_xlsxwriter = { version = "0.102", default-features = false, features = ["chrono"] }
 docx-rs = { version = "0.4.22", default-features = false }
+# The designer (L6 and up only): egui on the suite's fork, the revisions craft-libs pins (patched
+# below), and native file dialogs.
+egui = { version = "0.37", default-features = false }
+eframe = { version = "0.37", default-features = false }
+rfd = "0.17"
 # All date/time conversion goes through chrono (AGENTS.md).
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde", "unstable-locales"] }
 
@@ -65,6 +71,17 @@ todo = "warn"
 # Cargo ignores a dependency's own patches: the patched Krilla that craft-pdf requires comes from
 # the same craft-libs revision (unwind cleanup, print colour, optional content).
 [patch.crates-io]
+# The suite's egui fork and its native event bridge, at the revisions craft-libs c5a1cbf pins.
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
 krilla = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.8.2" }
 
 [profile.dev.package."*"]
