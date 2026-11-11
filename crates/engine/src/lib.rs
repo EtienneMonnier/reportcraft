@@ -634,4 +634,31 @@ mod tests {
         }
         assert_eq!(s.history().0, MAX_UNDO);
     }
+
+    #[test]
+    fn groups_sort_formulas_and_parameters_are_replaced_and_checked() {
+        let mut s = Session::default();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let mut groups = serde_json::to_value(&s.report.groups).unwrap();
+        groups[0]["page_break_before"] = json!(true);
+        let r = s
+            .execute(
+                "report.setStructure",
+                &json!({
+                    "groups": groups,
+                    "sort": [{"field": "amount", "descending": true}],
+                    "formulas": [{"name": "daily", "expression": "[amount] / [days]"}],
+                    "parameters": [{"name": "min", "type": "number", "default": "100"}]
+                }),
+            )
+            .unwrap();
+        assert_eq!(r, json!({"groups": 1, "sort": 1, "formulas": 1, "parameters": 1}));
+        assert!(s.report.groups[0].page_break_before && !s.report.groups[0].header.elements.is_empty(), "the bands came along");
+        let before = s.report.clone();
+        assert!(s.execute("report.setStructure", &json!({"formulas": [{"name": "a", "expression": "[a] + 1"}]})).is_err(), "a circle");
+        assert!(s.execute("report.setStructure", &json!({"sort": "amount"})).is_err());
+        assert_eq!(s.report, before);
+        s.execute("report.setStructure", &json!({"groups": []})).unwrap();
+        assert!(s.report.groups.is_empty());
+    }
 }

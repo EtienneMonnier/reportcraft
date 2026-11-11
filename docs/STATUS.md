@@ -130,7 +130,9 @@
   Delete, inserted from the Insert menu (text, field, formula, total, page number, line, box); the
   properties panel edits the selected element (position, size, content, style, colours, format,
   conditions), band (height, conditions, keep with next) or the report (title, language, paper,
-  orientation, margins); previews the rendered pages live after every change; saves the report and
+  orientation, margins); a window edits the groups, sort, named formulas and parameters
+  (`report.setStructure`), the field list takes values for the parameters, and Report ▸ Check lists
+  `report.validate`'s findings; previews the rendered pages live after every change; saves the report and
   exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
   every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
   The interface follows the system's language or `--lang CODE` (View ▸ Language), through
@@ -140,7 +142,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 175 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 177 tests (plus 8 live PostgreSQL tests run on demand), including 15 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet (see `ROADMAP.md`).

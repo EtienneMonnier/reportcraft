@@ -93,3 +93,21 @@
 	connection `{name}`, {n} rows	connexion « {name} », {n} lignes
 	loaded {n} rows from `{name}`	{n} lignes chargées depuis « {name} »
 	custom	personnalisé
+	Add formula	Ajouter une formule
+	Add group	Ajouter un groupe
+	Add parameter	Ajouter un paramètre
+	Add sort key	Ajouter un tri
+	Check the report	Vérifier le rapport
+	Groups, sort, formulas and parameters	Groupes, tri, formules et paramètres
+	Groups, sort, formulas and parameters…	Groupes, tri, formules et paramètres…
+	date range	période
+	default	par défaut
+	descending	décroissant
+	keep together	garder ensemble
+	label	libellé
+	name	nom
+	new page	nouvelle page
+	no problem found	aucun problème trouvé
+	repeat header	répéter l'en-tête
+	required	obligatoire
+	structure applied	structure appliquée
