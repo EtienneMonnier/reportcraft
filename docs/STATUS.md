@@ -32,6 +32,14 @@
   every SQLite, PostgreSQL and SQL Server command takes `"saved": NAME` instead of a path or connection string.
   CLI: `reportcraft-cli connections [list|save|delete|test]` (`--sqlserver`, `--password-stdin`), and
   `--connection NAME` in `render`, `validate`, `print` and `schema`.
+- Reports that name their data: `data` holds a saved connection's name (never its address or
+  password) and the report's query, plus queries for subreport datasets (`report.setData`).
+  `data.loadReportData` runs them through that connection, all or nothing (`"connection"` runs them
+  on another saved one); `report.validate` warns when the name isn't saved on this computer.
+  `reportcraft-cli render REPORT.json` loads it without data options (`--connection NAME` alone
+  swaps the connection; `--data`, `--sqlite`… still take precedence); the designer loads it when it
+  opens the report, keeps the connection and query chosen in Data ▸ Load from a saved connection,
+  and reloads it from the Data menu.
 - SQLite schema discovery: tables, views, columns (declared and ReportCraft types, nullability,
   primary keys) and foreign keys, plus table previews (`data.describeSqlite`, `data.previewSqlite`,
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
@@ -167,7 +175,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 186 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 17 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 189 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 17 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

@@ -526,6 +526,69 @@ mod tests {
     }
 
     #[test]
+    fn a_report_keeps_its_connection_by_name_and_loads_its_own_data() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-bound-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("shop.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE rentals (branch TEXT, item TEXT, days INTEGER, amount REAL);
+             INSERT INTO rentals VALUES ('Lyon', 'Lift', 3, 90), ('Paris', 'Saw', 1, 20), ('Paris', 'Drill', 2, 30);
+             CREATE TABLE notes (branch TEXT, note TEXT); INSERT INTO notes VALUES ('Paris', 'closed on Monday');",
+        )
+        .unwrap();
+        drop(conn);
+        let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
+        s.execute("data.saveConnection", &json!({"name": "shop", "kind": "sqlite", "path": db.display().to_string(), "confirm": true})).unwrap();
+        s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
+        let sample_rows = s.rows.rows.len();
+        assert!(s.execute("data.loadReportData", &json!({})).unwrap_err().to_string().contains("no `data`"));
+
+        let set = json!({"connection": "shop", "query": "SELECT * FROM rentals WHERE branch <> :period", "datasets": [{"name": "notes", "query": "SELECT * FROM notes"}]});
+        assert_eq!(s.execute("report.setData", &set).unwrap()["saved"], json!(true));
+        let loaded = s.execute("data.loadReportData", &json!({"params": {"period": "Lyon"}})).unwrap();
+        assert_eq!((loaded["rows"].clone(), loaded["kind"].clone()), (json!(2), json!("sqlite")));
+        assert_eq!(loaded["datasets"], json!([{"dataset": "notes", "rows": 1}]));
+        assert_eq!(s.datasets.get("notes").map(|d| d.rows.len()), Some(1));
+        // The file names the connection, never where it points.
+        let file = s.execute("report.get", &json!({})).unwrap().to_string();
+        assert!(file.contains("\"connection\":\"shop\"") && !file.contains("shop.db"), "{file}");
+        let reopened = Report::from_json(&file).unwrap();
+        assert_eq!(reopened.data.as_ref().map(|d| d.datasets.len()), Some(1));
+        assert!(s.execute("report.render", &json!({"format": "html"})).is_ok());
+
+        // A failing dataset query leaves the rows and datasets as they were.
+        let broken =
+            json!({"connection": "shop", "query": "SELECT * FROM rentals", "datasets": [{"name": "notes", "query": "SELECT * FROM missing"}]});
+        s.execute("report.setData", &broken).unwrap();
+        assert!(s.execute("data.loadReportData", &json!({})).is_err());
+        assert_eq!(s.rows.rows.len(), 2, "rows from the last good load");
+        assert_eq!(s.datasets.get("notes").map(|d| d.rows.len()), Some(1));
+
+        // Another computer's name: a warning, and an error that says what to do; another saved
+        // connection can stand in.
+        s.execute("report.setData", &json!({"connection": "erp-prod", "query": "SELECT * FROM rentals"})).unwrap();
+        let checked = s.execute("report.validate", &json!({})).unwrap().to_string();
+        assert!(checked.contains("data.connection") && checked.contains("not saved on this computer"), "{checked}");
+        assert!(s.execute("data.loadReportData", &json!({})).unwrap_err().to_string().contains("save it under that name"));
+        assert_eq!(s.execute("data.loadReportData", &json!({"connection": "shop"})).unwrap()["rows"], json!(3));
+
+        // An agent may load it (saved connections only); bad bindings are refused; undo and clear.
+        s.policy = Policy::AGENT;
+        assert!(s.execute("data.loadReportData", &json!({"connection": "shop"})).is_ok());
+        for bad in [json!({"connection": "a b", "query": "SELECT 1"}), json!({"connection": "shop", "query": " "})] {
+            assert!(s.execute("report.setData", &bad).is_err(), "{bad}");
+        }
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.report.data.as_ref().map(|d| d.connection.as_str()), Some("shop"));
+        s.execute("report.setData", &json!({"clear": true})).unwrap();
+        assert!(s.report.data.is_none());
+        assert!(sample_rows > 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn sqlserver_connections_are_saved_and_never_show_their_password() {
         let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
         let mssql = json!({"name": "erp", "kind": "sqlserver", "host": "127.0.0.1", "user": "rc", "database": "rent", "password": "hunter2", "confirm": true});

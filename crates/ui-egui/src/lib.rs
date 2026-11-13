@@ -55,11 +55,22 @@ struct Preview {
     error: Option<String>,
 }
 
-/// Loading rows from a saved connection: which one, and the query.
+/// Loading rows from a saved connection: which one, the query, and whether the report keeps them.
 #[derive(Default)]
 struct SavedQuery {
     name: String,
     query: String,
+    keep: bool,
+}
+
+impl SavedQuery {
+    /// The form, filled with the report's own connection and query when it has them.
+    fn of(report: &reportcraft_model::Report) -> Self {
+        match &report.data {
+            Some(d) => Self { name: d.connection.clone(), query: d.query.clone(), keep: true },
+            None => Self { keep: true, ..Self::default() },
+        }
+    }
 }
 
 /// The designer window's state.
@@ -168,7 +179,7 @@ impl Designer {
         if method == "ui.window" {
             match params.get("name").and_then(Json::as_str) {
                 Some("structure") => self.structure = Some(structure::Draft::of(&self.session.report)),
-                Some("saved_query") => self.saved_query = Some(SavedQuery::default()),
+                Some("saved_query") => self.saved_query = Some(SavedQuery::of(&self.session.report)),
                 Some("print") => self.open_print(),
                 Some("connections") => self.open_connections(),
                 other => return Err(format!("ui.window: unknown window {other:?} (structure, saved_query)")),
@@ -230,7 +241,13 @@ impl Designer {
                 if self.run("report.load", json!({"json": text})).is_some() {
                     self.path = Some(path.to_owned());
                     self.selected = None;
-                    self.status = tf!("opened {file}", file = path.display());
+                    // A report that names its data brings it along.
+                    if self.session.report.data.is_some() && !self.load_report_data() {
+                        let error = std::mem::take(&mut self.status);
+                        self.status = tf!("opened {file}; its data was not loaded: {error}", file = path.display(), error = error);
+                    } else {
+                        self.status = tf!("opened {file}", file = path.display());
+                    }
                 }
             }
             Err(e) => self.status = format!("{}: {e}", path.display()),
@@ -250,8 +267,19 @@ impl Designer {
         }
     }
 
-    /// Loads rows through a saved connection (its kind decides SQLite, PostgreSQL or SQL Server).
-    pub fn load_saved(&mut self, name: &str, query: &str) {
+    /// Loads the rows the report names (its saved connection and queries), with the parameters'
+    /// values. False, with the reason in the status line, when they couldn't be loaded.
+    pub fn load_report_data(&mut self) -> bool {
+        let Some(name) = self.session.report.data.as_ref().map(|d| d.connection.clone()) else { return false };
+        let Some(r) = self.run("data.loadReportData", json!({"params": self.param_values})) else { return false };
+        self.data = tf!("connection `{name}`, {n} rows", name = name, n = r["rows"]);
+        self.status = tf!("loaded {n} rows from `{name}`", name = name, n = r["rows"]);
+        true
+    }
+
+    /// Loads rows through a saved connection (its kind decides SQLite, PostgreSQL or SQL Server);
+    /// with `keep`, the report then names that connection and query as its data.
+    pub fn load_saved(&mut self, name: &str, query: &str, keep: bool) {
         let kind = self
             .run("data.connections", json!({}))
             .and_then(|r| r["connections"].as_array()?.iter().find(|c| c["name"] == json!(name))?["kind"].as_str().map(str::to_owned));
@@ -264,9 +292,17 @@ impl Designer {
                 return;
             }
         };
-        if let Some(r) = self.run(command, json!({"saved": name, "query": query})) {
+        if let Some(r) = self.run(command, json!({"saved": name, "query": query, "params": self.param_values})) {
             self.data = tf!("connection `{name}`, {n} rows", name = name, n = r["rows"]);
             self.status = tf!("loaded {n} rows from `{name}`", name = name, n = r["rows"]);
+            if keep {
+                // Subreport queries stay with the report.
+                let datasets = self.session.report.data.as_ref().map(|d| d.datasets.clone()).unwrap_or_default();
+                let status = self.status.clone();
+                if self.run("report.setData", json!({"connection": name, "query": query, "datasets": datasets})).is_some() {
+                    self.status = status;
+                }
+            }
         }
     }
 
@@ -584,8 +620,12 @@ impl Designer {
                 {
                     self.load_csv(&p);
                 }
+                let bound = self.session.report.data.is_some();
+                if ui.add_enabled(bound, egui::Button::new(tl!("Reload the report's data"))).clicked() {
+                    self.load_report_data();
+                }
                 if ui.button(tl!("Load from a saved connection…")).clicked() {
-                    self.saved_query = Some(SavedQuery::default());
+                    self.saved_query = Some(SavedQuery::of(&self.session.report));
                 }
                 if ui.button(tl!("Connections…")).clicked() {
                     self.open_connections();
@@ -850,11 +890,12 @@ impl Designer {
             });
             ui.label(tl!("Query"));
             ui.add(egui::TextEdit::multiline(&mut form.query).code_editor().desired_rows(4));
+            ui.checkbox(&mut form.keep, tl!("Keep in the report (the connection's name and the query)"));
             load = ui.button(tl!("Load")).clicked();
         });
         if load {
-            let (name, query) = (form.name.clone(), form.query.clone());
-            self.load_saved(&name, &query);
+            let (name, query, keep) = (form.name.clone(), form.query.clone(), form.keep);
+            self.load_saved(&name, &query, keep);
             self.saved_query = None;
         } else if !open {
             self.saved_query = None;

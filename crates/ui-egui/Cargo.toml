@@ -23,3 +23,4 @@ workspace = true
 [dev-dependencies]
 reportcraft-connections.workspace = true
 reportcraft-pdf.workspace = true
+rusqlite.workspace = true

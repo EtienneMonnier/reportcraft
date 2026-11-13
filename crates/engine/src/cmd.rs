@@ -165,6 +165,14 @@ static COMMANDS: &[CommandSpec] = &[
         access: Access::Read,
         run: data_preview_sqlserver,
     },
+    CommandSpec {
+        id: "data.loadReportData",
+        label: "Load the report's data",
+        menu: "Data",
+        params: r#"{"connection"?: string (a saved connection to use instead of the report's), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer, "maxMegabytes"?: integer, "cacheSeconds"?: integer} (runs the report's `data` query, then its dataset queries, through the saved connection it names)"#,
+        access: Access::Edit,
+        run: data_load_report_data,
+    },
     CommandSpec { id: "data.datasets", label: "Datasets", menu: "Data", params: "{}", access: Access::Read, run: data_datasets },
     CommandSpec {
         id: "data.preview",
@@ -202,6 +210,14 @@ static COMMANDS: &[CommandSpec] = &[
         params: r#"{"groups"?: [{"field", "keep_together"?, "repeat_header"?, "page_break_before"?, "header"?, "footer"?}], "sort"?: [{"field", "descending"?}], "formulas"?: [{"name", "expression"}], "parameters"?: [{"name", "label"?, "type"?, "default"?, "choices"?, "multiple"?, "required"?}]} (each given list replaces the report's; a group keeps the bands you give it)"#,
         access: Access::Edit,
         run: report_set_structure,
+    },
+    CommandSpec {
+        id: "report.setData",
+        label: "Report data",
+        menu: "Report",
+        params: r#"{"connection": string (a saved connection's name; its address and password stay on each computer), "query": string, "datasets"?: [{"name": string, "query": string}] (subreport datasets, same connection)} or {"clear": true} (the data is then given when the report runs)"#,
+        access: Access::Edit,
+        run: report_set_data,
     },
     CommandSpec {
         id: "report.setBand",
@@ -788,6 +804,69 @@ fn data_preview_sqlserver(s: &mut Session, params: &Json) -> EngineResult<Json> 
     preview(&sqlserver_database(s, CMD, params)?, CMD, params)
 }
 
+/// The load command of a kind of saved connection.
+#[cfg(not(target_arch = "wasm32"))]
+fn loader(kind: &str) -> fn(&mut Session, &Json) -> EngineResult<Json> {
+    match kind {
+        "sqlite" => data_load_sqlite,
+        "sqlserver" => data_load_sqlserver,
+        _ => data_load_postgres,
+    }
+}
+
+/// Runs the report's own query and dataset queries through the saved connection it names. All or
+/// nothing: if one query fails, the rows and datasets stay as they were.
+#[cfg(not(target_arch = "wasm32"))]
+fn data_load_report_data(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.loadReportData";
+    let binding = s
+        .report
+        .data
+        .clone()
+        .ok_or_else(|| bad(CMD, "the report has no `data`: set it with report.setData, or load rows with data.loadCsv or a database command"))?;
+    let name = params.get("connection").and_then(Json::as_str).unwrap_or(&binding.connection).to_owned();
+    let kind = s.with_connections(|c| {
+        c.get(&name).map(|conn| conn.target.kind()).ok_or_else(|| {
+            reportcraft_core::Error::NotFound(format!(
+                "connection `{name}` is not saved on this computer: save it under that name (Data ▸ Connections, or `reportcraft-cli connections save {name} …`)"
+            ))
+        })
+    })?;
+    let load = loader(kind);
+    let mut p = params.as_object().cloned().unwrap_or_default();
+    p.remove("connection");
+    p.remove("dataset");
+    p.insert("saved".into(), Json::String(name.clone()));
+    p.insert("query".into(), Json::String(binding.query.clone()));
+    let before = (std::sync::Arc::clone(&s.rows), s.refreshed_at.clone(), s.datasets.clone());
+    let restore = |s: &mut Session, e: EngineError| {
+        (s.rows, s.refreshed_at, s.datasets) = before.clone();
+        e
+    };
+    let main = load(s, &Json::Object(p.clone())).map_err(|e| restore(s, e))?;
+    let mut datasets = Vec::new();
+    for d in &binding.datasets {
+        p.insert("query".into(), Json::String(d.query.clone()));
+        p.insert("dataset".into(), Json::String(d.name.clone()));
+        let r = load(s, &Json::Object(p.clone())).map_err(|e| restore(s, e))?;
+        datasets.push(json!({"dataset": d.name, "rows": r["rows"]}));
+    }
+    Ok(json!({
+        "connection": name,
+        "kind": kind,
+        "columns": main["columns"],
+        "rows": main["rows"],
+        "refreshedAt": main["refreshedAt"],
+        "fromCache": main["fromCache"],
+        "datasets": datasets,
+    }))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_load_report_data(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("saved connections are not available in the web build".into()).into())
+}
+
 #[cfg(target_arch = "wasm32")]
 fn data_load_sqlserver(_: &mut Session, _: &Json) -> EngineResult<Json> {
     Err(reportcraft_core::Error::Unsupported("SQL Server is not available in the web build".into()).into())
@@ -871,6 +950,20 @@ fn report_validate(s: &mut Session, params: &Json) -> EngineResult<Json> {
         },
         None => s.report.check_with_datasets(columns, &datasets),
     };
+    let mut diagnostics = diagnostics;
+    let checked = match params.get("json").and_then(Json::as_str) {
+        Some(text) => Report::from_json(text).ok().and_then(|r| r.data),
+        None => s.report.data.clone(),
+    };
+    if let Some(data) = checked
+        && !connection_is_saved(s, &data.connection)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            location: "data.connection".into(),
+            message: format!("connection `{}` is not saved on this computer: save it under that name to load the report's data", data.connection),
+        });
+    }
     let errors = diagnostics.iter().filter(|d| d.severity == Severity::Error).count();
     Ok(json!({
         "valid": errors == 0,
@@ -958,6 +1051,43 @@ fn report_set_structure(s: &mut Session, params: &Json) -> EngineResult<Json> {
         }
         Ok(json!({"groups": r.groups.len(), "sort": r.sort.len(), "formulas": r.formulas.len(), "parameters": r.parameters.len()}))
     })
+}
+
+/// Sets where the report's rows come from (a saved connection's name and the queries), or clears it.
+fn report_set_data(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "report.setData";
+    let data = if params.get("clear").and_then(Json::as_bool) == Some(true) {
+        None
+    } else {
+        let datasets = match params.get("datasets") {
+            None | Some(Json::Null) => Vec::new(),
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad(CMD, format!("datasets: {e}")))?,
+        };
+        Some(reportcraft_model::DataBinding {
+            connection: str_param(CMD, params, "connection")?.to_owned(),
+            query: str_param(CMD, params, "query")?.to_owned(),
+            datasets,
+        })
+    };
+    let saved = match &data {
+        Some(d) => connection_is_saved(s, &d.connection),
+        None => false,
+    };
+    edit_report(s, CMD, |r| {
+        r.data = data;
+        Ok(json!({"data": r.data, "saved": saved}))
+    })
+}
+
+/// Whether this computer has a saved connection of that name.
+#[cfg(not(target_arch = "wasm32"))]
+fn connection_is_saved(s: &Session, name: &str) -> bool {
+    s.with_connections(|c| Ok(c.get(name).is_some())).unwrap_or(false)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn connection_is_saved(_: &Session, _: &str) -> bool {
+    false
 }
 
 fn report_set_properties(s: &mut Session, params: &Json) -> EngineResult<Json> {

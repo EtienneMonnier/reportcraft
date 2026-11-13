@@ -92,6 +92,9 @@
 	{file}, {n} rows	{file}, {n} lignes
 	connection `{name}`, {n} rows	connexion « {name} », {n} lignes
 	loaded {n} rows from `{name}`	{n} lignes chargées depuis « {name} »
+	Reload the report's data	Recharger les données du rapport
+	Keep in the report (the connection's name and the query)	Garder dans le rapport (le nom de la connexion et la requête)
+	opened {file}; its data was not loaded: {error}	{file} ouvert ; ses données n'ont pas été chargées : {error}
 	custom	personnalisé
 	Add formula	Ajouter une formule
 	Add group	Ajouter un groupe
