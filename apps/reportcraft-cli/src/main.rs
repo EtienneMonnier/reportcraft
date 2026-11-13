@@ -29,7 +29,9 @@ reportcraft-cli <subcommand>
                                             (PostgreSQL unless --sqlserver; ports 5432 and 1433 by default)
   connections delete NAME | connections test NAME
   (--connection NAME --query SQL loads from a saved connection in render, validate and print;
-   schema takes --connection NAME too)
+   schema takes --connection NAME too. A report that names its data (`data`: a saved connection and
+   its queries, set with `report.setData`) loads it by itself; --connection NAME alone runs its
+   queries on another saved connection)
   schema (--sqlite FILE | --postgres CONN | --sqlserver CONN) [--table NAME] [--preview N] [--json]
                                             tables, columns and keys; rows with --preview
   (--postgres CONN is a libpq connection string or postgresql:// URL, the password in PGPASSWORD;
@@ -121,15 +123,18 @@ fn read(path: &str) -> Result<String, String> {
 type Loaded = (Session, serde_json::Map<String, Json>, Option<u64>);
 
 /// Loads the report and data named by the shared options (`REPORT.json`, `--sample`, `--data`,
-/// `--sqlite` with `--query`) and hands every other option to `other`.
+/// `--sqlite` with `--query`) and hands every other option to `other`. A report that names its
+/// data (`data`: a saved connection and queries) loads it when no data option says otherwise;
+/// with `data_optional`, a failure there is only reported (to check a report on another computer).
 fn load_inputs<'a>(
     args: &'a [String],
+    data_optional: bool,
     mut other: impl FnMut(&'a str, &mut std::slice::Iter<'a, String>) -> Result<(), String>,
 ) -> Result<Loaded, String> {
     let mut s = Session::default();
     let (mut timeout, mut max_memory) = (None, None);
     let number = |v: &str, flag: &str| v.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{flag}` expects a positive whole number"));
-    let (mut database, mut query, mut show_log): (Option<Database>, _, _) = (None, None, false);
+    let (mut database, mut query, mut show_log, mut csv): (Option<Database>, _, _, _) = (None, None, false, false);
     let mut sub_queries: Vec<(String, String)> = Vec::new();
     let named =
         |v: &str, flag: &str| v.split_once('=').map(|(n, x)| (n.to_owned(), x.to_owned())).ok_or_else(|| format!("`{flag}` expects NAME=VALUE"));
@@ -154,6 +159,7 @@ fn load_inputs<'a>(
             }
             "--data" => {
                 exec(&mut s, "data.loadCsv", json!({"csv": read(flag_value(&mut it, a)?)?}))?;
+                csv = true;
             }
             "--sqlite" | "--postgres" | "--sqlserver" | "--connection" => {
                 if database.is_some() {
@@ -176,18 +182,27 @@ fn load_inputs<'a>(
             flag => other(flag, &mut it)?,
         }
     }
+    // The parameters and limits every load takes.
+    let mut shared = json!({"params": params, "timeoutSeconds": timeout, "maxMegabytes": max_memory});
+    if let Some(map) = shared.as_object_mut() {
+        map.retain(|_, v| !v.is_null());
+    }
     let load = |source: (&str, String), query: String| {
-        let mut p = json!({"query": query, "params": params, "timeoutSeconds": timeout, "maxMegabytes": max_memory});
+        let mut p = shared.clone();
         if let Some(map) = p.as_object_mut() {
             map.insert(source.0.to_owned(), Json::String(source.1));
-            map.retain(|_, v| !v.is_null());
+            map.insert("query".to_owned(), Json::String(query));
         }
         p
     };
+    let bound = s.report.data.is_some();
     let mut loaded = match (&database, query) {
         (Some(db), Some(query)) => exec(&mut s, db.kind.load, load((db.key, db.value.clone()), query)).map(drop),
+        // The report's own queries, on its connection or on the one `--connection` names.
+        (None, None) if bound && !csv => report_data(&mut s, shared.clone(), None, data_optional),
+        (Some(db), None) if bound && db.key == "saved" => report_data(&mut s, shared.clone(), Some(&db.value), data_optional),
         (None, None) => Ok(()),
-        (Some(_), None) => Err("the database needs `--query SQL`".to_owned()),
+        (Some(_), None) => Err("the database needs `--query SQL` (or a report that names its data)".to_owned()),
         (None, Some(_)) => Err("`--query` goes with `--sqlite FILE`, `--postgres CONN`, `--sqlserver CONN` or `--connection NAME`".to_owned()),
     };
     for (name, sql) in sub_queries {
@@ -214,6 +229,22 @@ fn load_inputs<'a>(
     loaded.map(|()| (s, params, timeout))
 }
 
+/// Runs `data.loadReportData` with the shared parameters and limits, on `connection` instead of
+/// the report's when given.
+fn report_data(s: &mut Session, shared: Json, connection: Option<&str>, optional: bool) -> Result<(), String> {
+    let mut p = shared;
+    if let (Some(map), Some(c)) = (p.as_object_mut(), connection) {
+        map.insert("connection".into(), Json::String(c.to_owned()));
+    }
+    match exec(s, "data.loadReportData", p) {
+        Err(e) if optional => {
+            eprintln!("reportcraft-cli: the report's data was not loaded: {e}");
+            Ok(())
+        }
+        other => other.map(drop),
+    }
+}
+
 /// One line per query: when, where, how long, how many rows (or the error), then the SQL and its values.
 fn query_log_text(log: &Json) -> String {
     let mut out = String::new();
@@ -237,7 +268,7 @@ fn query_log_text(log: &Json) -> String {
 
 fn render(args: &[String]) -> Result<(), String> {
     let (mut format, mut out) = ("html".to_owned(), None);
-    let (mut s, params, timeout) = load_inputs(args, |a, it| {
+    let (mut s, params, timeout) = load_inputs(args, false, |a, it| {
         match a {
             "--format" => format = flag_value(it, a)?.to_owned(),
             "--out" => out = Some(flag_value(it, a)?.to_owned()),
@@ -448,7 +479,7 @@ fn send(args: &[String]) -> Result<(), String> {
 fn print(args: &[String]) -> Result<(), String> {
     let mut job = serde_json::Map::new();
     let mut dry_run = false;
-    let (mut s, params, timeout) = load_inputs(args, |a, it| {
+    let (mut s, params, timeout) = load_inputs(args, false, |a, it| {
         match a {
             "--printer" | "--duplex" | "--pages" => {
                 job.insert(a.trim_start_matches("--").to_owned(), json!(flag_value(it, a)?));
@@ -608,7 +639,7 @@ fn preview_text(rows: &Json) -> String {
 
 fn validate(args: &[String]) -> Result<(), String> {
     let mut as_json = false;
-    let (mut s, _, _) = load_inputs(args, |a, _| {
+    let (mut s, _, _) = load_inputs(args, true, |a, _| {
         if a == "--json" {
             as_json = true;
             Ok(())

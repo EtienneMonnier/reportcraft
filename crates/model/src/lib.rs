@@ -50,6 +50,69 @@ pub struct Report {
     pub page_footer: Band,
     #[serde(default)]
     pub report_footer: Band,
+    /// Where the rows come from: a saved connection, by name, and its queries. Absent, the data is
+    /// given when the report runs (a CSV file, a query on the command line…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<DataBinding>,
+}
+
+/// A report's data: the name of a saved connection (its address and password stay on each
+/// computer, never in the report) and the queries run on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataBinding {
+    /// A saved connection's name (`odoo-prod`): each computer saves its own under that name.
+    pub connection: String,
+    /// The report's query, in the database's own SQL; parameters as `:name`.
+    pub query: String,
+    /// Queries for the datasets subreports read, on the same connection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datasets: Vec<DatasetQuery>,
+}
+
+/// The query of one named dataset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatasetQuery {
+    pub name: String,
+    pub query: String,
+}
+
+/// Most dataset queries one report may hold.
+pub const MAX_DATASET_QUERIES: usize = 32;
+/// Longest query a report may hold, in bytes.
+pub const MAX_QUERY_BYTES: usize = 1024 * 1024;
+
+impl DataBinding {
+    /// Problems that make the binding unusable: a bad connection name, an empty or huge query, a
+    /// dataset named twice.
+    pub fn validate(&self) -> Result<()> {
+        let c = &self.connection;
+        if c.is_empty() || c.len() > 64 || !c.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.') {
+            return Err(Error::Invalid(format!("data: connection name `{c}` must be 1 to 64 letters, digits, `_`, `-` or `.`")));
+        }
+        let query = |q: &str, what: &str| {
+            if q.trim().is_empty() {
+                Err(Error::Invalid(format!("data: {what} is empty")))
+            } else if q.len() > MAX_QUERY_BYTES {
+                Err(Error::TooLarge(format!("data: {what} is longer than 1 MiB")))
+            } else {
+                Ok(())
+            }
+        };
+        query(&self.query, "the query")?;
+        if self.datasets.len() > MAX_DATASET_QUERIES {
+            return Err(Error::TooLarge(format!("data: more than {MAX_DATASET_QUERIES} dataset queries")));
+        }
+        for (i, d) in self.datasets.iter().enumerate() {
+            if d.name.trim().is_empty() || !d.name.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-') {
+                return Err(Error::Invalid(format!("data: dataset `{}` must be letters, digits, `_` or `-`", d.name)));
+            }
+            if self.datasets.iter().take(i).any(|o| o.name == d.name) {
+                return Err(Error::Invalid(format!("data: dataset `{}` has two queries", d.name)));
+            }
+            query(&d.query, &format!("the query of dataset `{}`", d.name))?;
+        }
+        Ok(())
+    }
 }
 
 /// Whether a `strftime`-style pattern only uses known directives.
@@ -546,6 +609,7 @@ impl Report {
             detail: Band::default(),
             page_footer: Band::default(),
             report_footer: Band::default(),
+            data: None,
         }
     }
 
@@ -627,6 +691,9 @@ impl Report {
             return Err(Error::Invalid(problem));
         }
         self.validate_formulas()?;
+        if let Some(data) = &self.data {
+            data.validate()?;
+        }
         if self.groups.len() > limits::MAX_GROUPS {
             return Err(Error::TooLarge(format!("more than {} groups", limits::MAX_GROUPS)));
         }
@@ -1023,6 +1090,12 @@ impl Report {
                         out.push(Diagnostic::error(format!("{at}.links[{k}]"), format!("unknown field `{}` in dataset `{dataset}`", link.child)));
                     }
                 }
+                if report.data.is_some() {
+                    out.push(Diagnostic::warning(
+                        &at,
+                        format!("a subreport's own `data` is not used: put its query in the main report's `data.datasets`, named `{dataset}`"),
+                    ));
+                }
                 for d in report.check_inner(child, datasets) {
                     out.push(Diagnostic { location: format!("{at}.report.{}", d.location), ..d });
                 }
@@ -1059,6 +1132,27 @@ mod tests {
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn data_bindings_name_a_connection_and_are_checked() {
+        let mut r = Report::new("Bound");
+        assert!(!r.to_json().unwrap().contains("\"data\""), "absent, not null");
+        let query = |name: &str| DatasetQuery { name: name.into(), query: "SELECT 1".into() };
+        r.data = Some(DataBinding { connection: "odoo-prod".into(), query: "SELECT * FROM sale_order".into(), datasets: vec![query("lines")] });
+        let back = Report::from_json(&r.to_json().unwrap()).unwrap();
+        assert_eq!(back, r);
+        let bad = |d: DataBinding| {
+            let mut r = r.clone();
+            r.data = Some(d);
+            r.validate().unwrap_err().to_string()
+        };
+        let ok = r.data.clone().unwrap();
+        assert!(bad(DataBinding { connection: "host=db password=x".into(), ..ok.clone() }).contains("connection name"));
+        assert!(bad(DataBinding { query: "  ".into(), ..ok.clone() }).contains("empty"));
+        assert!(bad(DataBinding { datasets: vec![query("lines"), query("lines")], ..ok.clone() }).contains("two queries"));
+        assert!(bad(DataBinding { datasets: vec![query("a b")], ..ok.clone() }).contains("letters"));
+        assert!(bad(DataBinding { query: "x".repeat(MAX_QUERY_BYTES + 1), ..ok }).contains("1 MiB"));
     }
 
     #[test]

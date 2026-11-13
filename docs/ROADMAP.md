@@ -26,7 +26,9 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Run the live PostgreSQL tests in CI (needs a PostgreSQL service in craft-common-actions or a local job)
 - [x] R1.3 Named connections stored through craft-settings; secrets in the OS keychain, never in reports (#3)
   - [x] Let an MCP session use saved connections only (no raw file path or connection string), as §11 asks
-  - [ ] Saved connections in report files by name (`"connection": "odoo-prod"`), so a report knows where its data lives
+  - [x] Saved connections in report files by name (`"data": {"connection": "odoo-prod", "query": …}`), so a report knows where its data lives
+    - [ ] Edit the subreport dataset queries in the designer (today in the file or with `report.setData`)
+    - [ ] Keep load options with the report's data (time limit, cache time)
   - [ ] A connections panel in the designer (R3), with a password field that never shows the kept one
 - [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — decided 2026-11-11: pure Rust for now, so SQL Server through a Rust driver (tiberius) and no ODBC yet; ODBC (Advantage, others) waits, as it needs the system's driver manager and the vendor's C driver (#4)
   - [x] SQL Server source in pure Rust (tiberius): read-only query, schema discovery and previews, saved connections, CLI `--sqlserver`, designer

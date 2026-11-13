@@ -394,3 +394,47 @@ fn reportcraft_connections_in_memory() -> reportcraft_connections::Connections {
 fn reportcraft_has_fonts() -> bool {
     reportcraft_pdf::Fonts::find().is_ok()
 }
+
+#[test]
+fn a_report_that_names_its_data_loads_it_when_opened() {
+    let dir = std::env::temp_dir().join(format!("reportcraft-designer-bound-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap_or_default();
+    let db = dir.join("shop.db");
+    if let Ok(c) = rusqlite::Connection::open(&db) {
+        let _ = c.execute_batch(
+            "CREATE TABLE rentals (branch TEXT, item TEXT, days INTEGER, amount REAL);
+             INSERT INTO rentals VALUES ('Lyon', 'Lift', 3, 90), ('Paris', 'Saw', 1, 20);",
+        );
+    }
+    let session = Session::with_saved_connections(reportcraft_connections_in_memory());
+    let mut d = Designer::new(session, Box::new(NoDialogs));
+    assert!(
+        d.run("data.saveConnection", serde_json::json!({"name": "shop", "kind": "sqlite", "path": db.display().to_string(), "confirm": true}))
+            .is_some()
+    );
+    // Loading through the form keeps the connection's name and the query in the report.
+    d.open_sample("rentals");
+    let form = crate::SavedQuery::of(&d.session().report);
+    assert!(form.keep && form.name.is_empty());
+    d.load_saved("shop", "SELECT * FROM rentals", true);
+    assert_eq!(d.session().rows.rows.len(), 2, "{}", d.status());
+    assert_eq!(d.session().report.data.as_ref().map(|b| b.connection.as_str()), Some("shop"));
+    let form = crate::SavedQuery::of(&d.session().report);
+    assert_eq!((form.name.as_str(), form.query.as_str()), ("shop", "SELECT * FROM rentals"));
+    let file = dir.join("bound.rcr.json");
+    d.save_report(&file);
+    // Opened again in a fresh window, it brings its rows.
+    let mut e = Designer::new(Session::with_saved_connections(reportcraft_connections_in_memory()), Box::new(NoDialogs));
+    e.open_report(&file);
+    assert!(e.status().contains("not loaded"), "connection unknown here: {}", e.status());
+    assert!(
+        e.run("data.saveConnection", serde_json::json!({"name": "shop", "kind": "sqlite", "path": db.display().to_string(), "confirm": true}))
+            .is_some()
+    );
+    e.open_report(&file);
+    assert_eq!(e.session().rows.rows.len(), 2, "{}", e.status());
+    assert!(e.load_report_data());
+    assert!(frames(&mut e, 2) > 50, "the report draws with its data");
+    let _ = std::fs::remove_dir_all(&dir);
+}

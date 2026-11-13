@@ -540,3 +540,18 @@ attention, which stops the statement on the server. Values follow the column typ
 times come as ISO text, as PostgreSQL's and SQLite's do, so formats and formulas treat them alike.
 In the CLI, the database options became one table of kinds (`--sqlite`, `--postgres`,
 `--sqlserver`, `--connection`), so a new database adds a row, not a branch in every match.
+
+## A report names its connection, never where it points (R1.3)
+
+A report's `data` holds the name of a saved connection and the queries run on it, nothing else:
+the host, file, user and password stay in each computer's settings and keychain, so a report can
+be shared without its credentials (specification §12) and each person runs it through their own
+connection saved under the same name, with their own database rights. A name that isn't saved
+here is a warning in `report.validate`, and loading says how to save it, rather than an error when
+the file is opened. Subreport datasets get their queries in the main report's `data.datasets`, on
+the same connection, so one name covers the whole report; a subreport's own `data` is ignored with
+a warning. Loading is all or nothing: if a dataset query fails, the rows already loaded stay as
+they were. Options such as the time limit stay with the run (CLI flags, command parameters), not
+the report, for now. The CLI loads a report's data only when no data option was given, so
+`--data` and `--query` keep overriding it, and `validate` reports a failed load instead of
+stopping. The field is optional, so older files read unchanged and `format_version` stays 1.

@@ -4229,6 +4229,7 @@ dependencies = [
  "reportcraft-layout",
  "reportcraft-model",
  "reportcraft-pdf",
+ "rusqlite",
  "serde_json",
 ]
 

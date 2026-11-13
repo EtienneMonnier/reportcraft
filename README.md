@@ -22,6 +22,7 @@ cargo run -p reportcraft-cli -- render rentals.rcr.json --sqlite shop.db --query
 PGPASSWORD=… cargo run -p reportcraft-cli -- render rentals.rcr.json --postgres "host=db user=report dbname=erp" --query "SELECT …"
 SQLCMDPASSWORD=… cargo run -p reportcraft-cli -- render rentals.rcr.json --sqlserver "Server=tcp:db,1433;User Id=report;Database=erp" --query "SELECT …"
 cargo run -p reportcraft-cli -- schema --postgres "host=db user=report dbname=erp"  # tables, columns, keys
+cargo run -p reportcraft-cli -- render sales.rcr.json --out sales.pdf --format pdf  # a report that names its saved connection loads its own data
 cargo run -p reportcraft-cli -- validate rentals.rcr.json --data mydata.csv          # errors and warnings
 cargo run -p reportcraft-cli -- commands                               # every command
 cargo run -p reportcraft-cli -- mcp                                    # MCP server on stdio
