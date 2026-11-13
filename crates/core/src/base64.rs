@@ -1,5 +1,5 @@
 //! Standard base64 with padding (RFC 4648 §4), for binary results such as a PDF inside a JSON
-//! command result.
+//! command result, or a picture embedded in a report file.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -14,6 +14,18 @@ pub fn encode(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+fn sextet(b: u8) -> Option<u32> {
+    let v = match b {
+        b'A'..=b'Z' => b - b'A',
+        b'a'..=b'z' => b - b'a' + 26,
+        b'0'..=b'9' => b - b'0' + 52,
+        b'+' => 62,
+        b'/' => 63,
+        _ => return None,
+    };
+    Some(u32::from(v))
 }
 
 /// The bytes, or `None` when `text` isn't padded standard base64 (whitespace is ignored).
@@ -31,7 +43,7 @@ pub fn decode(text: &str) -> Option<Vec<u8>> {
         }
         let mut n = 0u32;
         for &b in chunk.get(..4 - pad)? {
-            n = n << 6 | u32::try_from(ALPHABET.iter().position(|&a| a == b)?).ok()?;
+            n = n << 6 | sextet(b)?;
         }
         n <<= 6 * pad;
         let bytes = [(n >> 16) as u8, (n >> 8) as u8, n as u8];

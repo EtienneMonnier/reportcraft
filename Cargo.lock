@@ -4078,6 +4078,7 @@ name = "reportcraft-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -4127,11 +4128,13 @@ name = "reportcraft-layout"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "png",
  "reportcraft-barcode",
  "reportcraft-core",
  "reportcraft-expr",
  "reportcraft-model",
  "serde",
+ "zune-jpeg",
 ]
 
 [[package]]

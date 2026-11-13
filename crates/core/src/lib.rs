@@ -7,6 +7,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub mod base64;
+pub mod image;
+
 /// Hard caps on input-sized work. Input-derived numbers are hostile (AGENTS.md).
 pub mod limits {
     /// Most rows one data source may hand to a report.
@@ -23,6 +26,10 @@ pub mod limits {
     pub const DEFAULT_DATA_BYTES: usize = 1 << 30;
     /// Most memory a caller may allow a data source's rows to take.
     pub const MAX_DATA_BYTES: usize = 16 << 30;
+    /// Largest picture (PNG or JPEG file) a report may embed or read from a field.
+    pub const MAX_IMAGE_BYTES: usize = 16 << 20;
+    /// Most pixels in one picture (width × height), so decoding one can't exhaust memory.
+    pub const MAX_IMAGE_PIXELS: u64 = 50_000_000;
 }
 
 /// Stops long work (a query, a render): a flag another thread raises, plus an optional deadline.

@@ -35,6 +35,9 @@ fn snapshot(doc: &Document) -> String {
                         let first = points.first().map_or_else(String::new, |[x, y]| format!(" from {x:.2},{y:.2}"));
                         format!("polygon {} corners{first} fill {fill}", points.len())
                     }
+                    Shape::Image { format, width_px, height_px, data } => {
+                        format!("image {format:?} {width_px}x{height_px} px, {} bytes", data.0.len())
+                    }
                 };
                 let _ = writeln!(out, "  {:>7.2} {:>7.2} {:>6.2}x{:<5.2} {what}", it.x_mm, it.y_mm, it.width_mm, it.height_mm);
                 continue;
@@ -668,6 +671,63 @@ fn barcodes() {
         .collect(),
     };
     check("barcodes", &r, &rows, &Params::new());
+}
+
+#[test]
+fn pictures() {
+    use reportcraft_core::image::ImageData;
+    use reportcraft_layout::pixels::{Rgba, encode_png};
+    use reportcraft_model::ImageFit;
+    let plain = TextStyle::default();
+    // Pictures made here: a 60 × 20 banner, and photos of 30 × 40 and 40 × 30 pixels.
+    let picture = |w: u32, h: u32, rgb: [u8; 3]| {
+        encode_png(&Rgba { width: w, height: h, pixels: [rgb[0], rgb[1], rgb[2], 255].repeat((w * h) as usize) }).unwrap()
+    };
+    let image = |x: f64, w: f64, h: f64, data: Option<Vec<u8>>, field: Option<&str>, fit| Element {
+        x_mm: x,
+        y_mm: 1.0,
+        width_mm: w,
+        height_mm: h,
+        style: plain,
+        format: None,
+        content: Content::Image { data: data.map(|d| ImageData(d.into())), field: field.map(str::to_owned), fit },
+        visible_if: None,
+        background_formula: None,
+        color_formula: None,
+    };
+    let mut r = Report::new("Delivery note");
+    r.page.height_mm = 120.0;
+    r.page_header = Band {
+        height_mm: 24.0,
+        elements: vec![
+            // Proportions kept: 60 × 20 in a 40 × 20 box comes out 40 × 13.33, centred vertically.
+            image(0.0, 40.0, 20.0, Some(picture(60, 20, [0x1f, 0x4e, 0x79])), None, ImageFit::Contain),
+            el(60.0, 100.0, Content::Text { text: "Delivery note".into() }, TextStyle { bold: true, size_pt: 14.0, ..plain }),
+        ],
+        ..Band::default()
+    };
+    r.detail = Band {
+        height_mm: 32.0,
+        elements: vec![
+            image(0.0, 30.0, 30.0, None, Some("photo"), ImageFit::Contain),
+            image(35.0, 30.0, 30.0, None, Some("photo"), ImageFit::Stretch),
+            el(70.0, 80.0, field("item"), plain),
+        ],
+        ..Band::default()
+    };
+    let col = |name: &str| Column { name: name.into(), field_type: FieldType::Text };
+    let uri = |bytes: Vec<u8>| Value::Text(reportcraft_core::image::Picture::read(&bytes).unwrap().data_uri());
+    let rows = RowSet {
+        columns: vec![col("item"), col("photo")],
+        rows: vec![
+            vec![Value::Text("Scaffold tower".into()), uri(picture(30, 40, [200, 120, 40]))],
+            vec![Value::Text("Mini excavator".into()), Value::Text(reportcraft_core::base64::encode(&picture(40, 30, [240, 200, 0])))],
+            // No photo, or a value that isn't one: nothing drawn, the text still is.
+            vec![Value::Text("Generator 6 kVA".into()), Value::Null],
+            vec![Value::Text("Pallet truck".into()), Value::Text("photo to come".into())],
+        ],
+    };
+    check("pictures", &r, &rows, &Params::new());
 }
 
 #[test]

@@ -10,6 +10,7 @@
 mod i18n;
 mod canvas;
 mod forms;
+mod pictures;
 mod preview;
 mod props;
 mod structure;
@@ -751,6 +752,40 @@ impl Designer {
         self.session.report.bands().into_iter().find(|(n, _)| n == band).and_then(|(_, b)| b.elements.get(index).cloned())
     }
 
+    /// Asks for a picture file and reads it; `None` (with the reason in the status line) when
+    /// none was chosen or it isn't a PNG or JPEG picture within the limits.
+    fn choose_picture(&mut self) -> Option<reportcraft_model::ImageData> {
+        let path = self.dialogs.open(tl!("Choose a picture"), &["png", "jpg", "jpeg"])?;
+        let too_large = || reportcraft_core::image::PictureError::TooLarge.to_string();
+        let read = std::fs::metadata(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|m| if m.len() > reportcraft_core::limits::MAX_IMAGE_BYTES as u64 { Err(too_large()) } else { Ok(()) })
+            .and_then(|()| std::fs::read(&path).map_err(|e| e.to_string()))
+            .and_then(|bytes| reportcraft_core::image::Picture::read(&bytes).map_err(|e| e.to_string()));
+        match read {
+            Ok(p) => Some(p.data),
+            Err(e) => {
+                self.status = format!("{}: {e}", path.display());
+                None
+            }
+        }
+    }
+
+    /// Embeds a chosen picture in the selected image element.
+    fn embed_picture(&mut self) {
+        let Some((band, index)) = self.selected.clone() else { return };
+        let Some(mut el) = self.element(&band, index) else { return };
+        if !matches!(el.content, reportcraft_model::Content::Image { .. }) {
+            return;
+        }
+        let Some(data) = self.choose_picture() else { return };
+        if let reportcraft_model::Content::Image { data: slot, field, .. } = &mut el.content {
+            *slot = Some(data);
+            *field = None;
+        }
+        self.run("report.setElement", json!({"band": band, "index": index, "element": el}));
+    }
+
     /// Adds an element of `kind` to the selected band (the detail band when none is).
     pub fn insert(&mut self, kind: &str) {
         let band = self.selected.as_ref().map(|(b, _)| b.clone()).or_else(|| self.selected_band.clone()).unwrap_or_else(|| "detail".to_owned());
@@ -765,6 +800,14 @@ impl Designer {
         }
         if matches!(el.content, reportcraft_model::Content::Barcode { .. }) {
             (el.width_mm, el.height_mm) = (50.0, 15.0);
+        }
+        if let reportcraft_model::Content::Image { data, field, .. } = &mut el.content {
+            // A picture file first; with none chosen, the picture comes from the first field.
+            (el.width_mm, el.height_mm) = (40.0, 20.0);
+            if let Some(chosen) = self.choose_picture() {
+                *data = Some(chosen);
+                *field = None;
+            }
         }
         if let Some(r) = self.run("report.addElement", json!({"band": band, "element": el})) {
             let index = r["index"].as_u64().and_then(|i| usize::try_from(i).ok()).unwrap_or(0);
@@ -867,6 +910,9 @@ impl Designer {
         {
             // Refused (an invalid value): show the report as it is.
             self.draft = None;
+        }
+        if props::take_picture_request(ui.ctx()) {
+            self.embed_picture();
         }
     }
 

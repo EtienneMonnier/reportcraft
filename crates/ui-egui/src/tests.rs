@@ -438,3 +438,46 @@ fn a_report_that_names_its_data_loads_it_when_opened() {
     assert!(frames(&mut e, 2) > 50, "the report draws with its data");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Answers every "open" with one file.
+struct OpenWith(PathBuf);
+
+impl crate::Dialogs for OpenWith {
+    fn open(&self, _: &str, _: &[&str]) -> Option<PathBuf> {
+        Some(self.0.clone())
+    }
+
+    fn save(&self, _: &str, _: &str, _: &str) -> Option<PathBuf> {
+        None
+    }
+}
+
+#[test]
+fn an_inserted_image_embeds_the_chosen_picture_and_shows_it() {
+    let dir = std::env::temp_dir().join(format!("reportcraft-ui-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("logo.png");
+    let rgba = reportcraft_layout::pixels::Rgba { width: 4, height: 2, pixels: [10, 90, 200, 255].repeat(8) };
+    std::fs::write(&file, reportcraft_layout::pixels::encode_png(&rgba).unwrap()).unwrap();
+    let mut d = Designer::new(Session::default(), Box::new(OpenWith(file.clone())));
+    d.open_sample("rentals");
+    d.selected_band = Some("report_header".into());
+    d.insert("Image");
+    let el = d.session().report.report_header.elements.last().cloned().unwrap();
+    assert!(matches!(&el.content, Content::Image { data: Some(data), field: None, .. } if data.0.len() > 8), "{}", d.status());
+    let pictures = |d: &mut Designer| {
+        d.preview()
+            .map(|doc| doc.pages.iter().flat_map(|p| &p.items).filter(|i| matches!(i.shape, Some(reportcraft_layout::Shape::Image { .. }))).count())
+    };
+    assert_eq!(pictures(&mut d), Ok(1));
+    assert!(frames(&mut d, 2) > 50, "the canvas and the preview paint the picture");
+    // A file that isn't a picture: nothing embedded, the reason in the status line.
+    std::fs::write(&file, b"not a picture").unwrap();
+    d.selected_band = Some("detail".into());
+    d.selected = None;
+    d.insert("Image");
+    let el = d.session().report.detail.elements.last().cloned().unwrap();
+    assert!(matches!(&el.content, Content::Image { data: None, field: Some(_), .. }), "falls back to a field");
+    assert!(d.status().contains("not a PNG or JPEG"), "{}", d.status());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

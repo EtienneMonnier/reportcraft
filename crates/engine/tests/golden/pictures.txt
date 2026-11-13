@@ -1,0 +1,15 @@
+document "Delivery note" 210.00x120.00mm, 2 page(s)
+page 1 (8 items)
+    15.00   19.33  40.00x13.33 image Png 60x20 px, 120 bytes
+    75.00   15.50 100.00x5.00  14.0ptBL "Delivery note"
+    18.75   40.00  22.50x30.00 image Png 30x40 px, 138 bytes
+    50.00   40.00  30.00x30.00 image Png 30x40 px, 138 bytes
+    85.00   39.50  80.00x5.00  10.0pt L "Scaffold tower"
+    15.00   75.75  30.00x22.50 image Png 40x30 px, 134 bytes
+    50.00   72.00  30.00x30.00 image Png 40x30 px, 134 bytes
+    85.00   71.50  80.00x5.00  10.0pt L "Mini excavator"
+page 2 (4 items)
+    15.00   19.33  40.00x13.33 image Png 60x20 px, 120 bytes
+    75.00   15.50 100.00x5.00  14.0ptBL "Delivery note"
+    85.00   39.50  80.00x5.00  10.0pt L "Generator 6 kVA"
+    85.00   71.50  80.00x5.00  10.0pt L "Pallet truck"

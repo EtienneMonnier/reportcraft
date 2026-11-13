@@ -102,6 +102,8 @@ pub(crate) fn label(content: &Content) -> String {
             format!("{symbology:?}: {}", field.as_ref().map_or_else(|| text.clone().unwrap_or_default(), |f| format!("[{f}]")))
         }
         Content::Subreport { dataset, .. } => format!("subreport over `{dataset}`"),
+        Content::Image { field: Some(f), .. } => format!("{}: [{f}]", tl!("Image")),
+        Content::Image { .. } => tl!("Image").to_owned(),
         Content::Crosstab { rows, columns, value, function, .. } => {
             format!("{}: {}([{value}]) / [{rows}] × [{columns}]", tl!("Cross-tab"), aggregate_name(*function))
         }
@@ -297,6 +299,21 @@ fn dragged_by(ui: &egui::Ui, fallback: Vec2) -> Vec2 {
 }
 
 /// An element's box on the canvas.
+/// Draws an embedded picture where the layout will put it; `false` when it can't be decoded.
+fn picture_fits(
+    painter: &egui::Painter,
+    rect: Rect,
+    el: &Element,
+    data: &reportcraft_model::ImageData,
+    fit: reportcraft_model::ImageFit,
+    zoom: f32,
+) -> bool {
+    let Ok(p) = reportcraft_core::image::Picture::of(data) else { return false };
+    let (dx, dy, w, h) = reportcraft_layout::fitted(fit, el.width_mm, el.height_mm, p.width_px, p.height_px);
+    let at = Rect::from_min_size(rect.min + Vec2::new(dx as f32 * zoom, dy as f32 * zoom), Vec2::new(w as f32 * zoom, h as f32 * zoom));
+    crate::pictures::paint(painter, at, data)
+}
+
 pub(crate) fn element_rect(band_top_left: Pos2, el: &Element, zoom: f32) -> Rect {
     Rect::from_min_size(
         band_top_left + Vec2::new(el.x_mm as f32 * zoom, el.y_mm as f32 * zoom),
@@ -316,6 +333,7 @@ fn draw_element(painter: &egui::Painter, el: &Element, rect: Rect, zoom: f32, se
             let fill = fill.as_deref().map_or(Color32::TRANSPARENT, colour);
             painter.rect(rect, CornerRadius::ZERO, fill, Stroke::new((*border_mm as f32 * zoom).max(1.0), colour(border_color)), StrokeKind::Middle);
         }
+        Content::Image { data: Some(data), fit, .. } if picture_fits(painter, rect, el, data, *fit, zoom) => {}
         content => {
             let bg = el.style.background.map_or(Color32::from_rgb(0xf4, 0xf7, 0xfb), |c| Color32::from_rgb(c.0, c.1, c.2));
             painter.rect_filled(rect, CornerRadius::ZERO, bg);

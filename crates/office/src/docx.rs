@@ -6,6 +6,7 @@ use docx_rs::{
     AlignmentType, Docx, LineSpacing, LineSpacingType, PageMargin, Paragraph, Pic, RelativeFromHType, RelativeFromVType, Run, RunFonts, Tab,
     TabLeaderType, TabValueType,
 };
+use reportcraft_core::image::{ImageFormat, Picture};
 use reportcraft_core::{Cancel, Error, Result};
 use reportcraft_layout::{Document, Item, Shape};
 use reportcraft_model::{Align, Color};
@@ -49,10 +50,11 @@ pub fn to_docx(doc: &Document, cancel: &Cancel) -> Result<Output> {
         .default_fonts(arial)
         .default_size(20);
     let mut skipped = 0;
+    let mut pngs = Pngs::new();
     for (n, page) in doc.pages.iter().enumerate() {
         cancel.check("the DOCX export")?;
         let (lines, _) = page_lines(&page.items);
-        let (pictures, undrawn) = page_pictures(&page.items, n);
+        let (pictures, undrawn) = page_pictures(&page.items, n, &mut pngs);
         skipped += undrawn;
         let mut bottom = margin;
         let mut paragraphs: Vec<Paragraph> = lines
@@ -161,9 +163,29 @@ fn placed(png: Vec<u8>, px: (u32, u32), x: f64, y: f64, w: f64, h: f64, id: Stri
         .offset_y(emu(y))
 }
 
-/// The pictures drawn behind a page's text: each element's background, lines, boxes and
-/// barcodes, in the page's order. Also how many shapes couldn't be drawn (diagonal lines).
-fn page_pictures(items: &[Item], page: usize) -> (Vec<Pic>, usize) {
+/// Image items' pictures as PNG (the only picture format docx-rs writes), by the address of
+/// their bytes: a JPEG is converted once however many pages show it; `None` when damaged.
+type Pngs = std::collections::HashMap<(usize, usize), Option<std::sync::Arc<Vec<u8>>>>;
+
+fn png_of(shape: &Shape, pngs: &mut Pngs) -> Option<std::sync::Arc<Vec<u8>>> {
+    let Shape::Image { format, width_px, height_px, data } = shape else { return None };
+    pngs.entry((data.0.as_ptr() as usize, data.0.len()))
+        .or_insert_with(|| {
+            let picture = Picture { format: *format, width_px: *width_px, height_px: *height_px, data: data.clone() };
+            // Decoded whole either way, so a damaged picture never reaches the file.
+            let pixels = reportcraft_layout::pixels::decode(&picture)?;
+            match format {
+                ImageFormat::Png => Some(data.0.to_vec()),
+                ImageFormat::Jpeg => reportcraft_layout::pixels::encode_png(&pixels),
+            }
+            .map(std::sync::Arc::new)
+        })
+        .clone()
+}
+
+/// The pictures drawn behind a page's text: each element's background, lines, boxes,
+/// barcodes and images, in the page's order. Also how many shapes couldn't be drawn (diagonal lines).
+fn page_pictures(items: &[Item], page: usize, pngs: &mut Pngs) -> (Vec<Pic>, usize) {
     let mut pics = Vec::new();
     let mut undrawn = 0;
     let add = |png: Vec<u8>, px: (u32, u32), x: f64, y: f64, w: f64, h: f64, pics: &mut Vec<Pic>| {
@@ -207,6 +229,10 @@ fn page_pictures(items: &[Item], page: usize) -> (Vec<Pic>, usize) {
                     add(png, px, x, y, w, h, &mut pics);
                 }
                 _ => undrawn += 1,
+            },
+            Some(shape @ Shape::Image { width_px, height_px, .. }) => match png_of(shape, pngs) {
+                Some(png) => add(png.to_vec(), (*width_px, *height_px), x, y, w, h, &mut pics),
+                None => undrawn += 1,
             },
             Some(Shape::Barcode { columns, rows, quiet, modules }) => match barcode_picture(*columns, *rows, *quiet, modules, w, h) {
                 Some(b) => add(b.png, b.pixels, x, y, b.width_mm, b.height_mm, &mut pics),

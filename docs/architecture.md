@@ -11,7 +11,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 
 | Layer | Crate | Job |
 |---|---|---|
-| L0 | `core` | `Value`, `FieldType`, `Column`, `RowSet`, the shared `Error`, input caps (`limits`) |
+| L0 | `core` | `Value`, `FieldType`, `Column`, `RowSet`, the shared `Error`, input caps (`limits`), base64, PNG/JPEG recognition (`image`) |
 | L0 | `barcode` | Code 128, EAN-13 and QR code encoders (module grids), written from the public standards |
 | L0 | `expr` | Excel-style formulas: parser (length and depth bounded), function catalogue, deterministic evaluator over an `Env` the caller provides |
 | L1 | `model` | The report definition (`*.rcr.json`, `format_version`): page setup, parameters, sort, groups, bands, elements |
@@ -20,7 +20,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L3 | `postgres` | Read-only PostgreSQL source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `sqlserver` | Read-only SQL Server source and schema discovery in pure Rust (tiberius; native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `connections` | Saved connections: definitions through `craft-settings`, passwords in the OS keychain (`keyring`) behind `SecretStore` (native only) |
-| L3 | `layout` | Banded layout to `Document` (pages of positioned text), named formulas as computed columns, formula elements; HTML writer |
+| L3 | `layout` | Banded layout to `Document` (pages of positioned text), named formulas as computed columns, formula elements; HTML writer; picture decoding for writers that need pixels (`pixels`) |
 | L4 | `office` | XLSX (`rust_xlsxwriter`) and DOCX (`docx-rs`) writers over `Document`: lines of text, typed cells, tab stops |
 | L4 | `pdf` | PDF writer over `Document` through craft-libs' `craft-pdf` (Krilla): embedded font subsets, shaped text, vector shapes and barcodes |
 | L5 | `engine` | `Session`, the command registry (`cmd.rs`), built-in samples |

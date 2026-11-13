@@ -8,13 +8,15 @@ mod fonts;
 
 use craft_pdf::write::backend::SerializeSettings;
 use craft_pdf::write::backend::color::rgb;
-use craft_pdf::write::backend::geom::{PathBuilder, Point, Rect};
+use craft_pdf::write::backend::geom::{PathBuilder, Point, Rect, Size, Transform};
+use craft_pdf::write::backend::image::Image;
 use craft_pdf::write::backend::num::NormalizedF32;
 use craft_pdf::write::backend::page::PageSettings;
 use craft_pdf::write::backend::paint::{Fill, FillRule, Stroke};
 use craft_pdf::write::backend::surface::Surface;
 use craft_pdf::write::backend::text::{Font, GlyphId, KrillaGlyph};
 use craft_pdf::write::{Metadata, WriteError, Writer};
+use reportcraft_core::image::ImageFormat;
 use reportcraft_core::{Cancel, Error, Result};
 use reportcraft_layout::{Document, Item, Page, Shape, color_is_valid};
 use reportcraft_model::Align;
@@ -57,10 +59,12 @@ pub fn to_pdf(doc: &Document, fonts: &Fonts, producer: &str, cancel: &Cancel) ->
         let settings =
             PageSettings::from_wh(width, height).ok_or_else(|| PdfError::App(Error::Invalid(format!("page size {width} × {height} pt"))))?;
         let mut drawn = 0usize;
+        let mut pictures = Pictures::default();
         for page in &doc.pages {
             let mut pdf_page = writer.document_mut().start_page_with(settings.clone());
             let mut surface = pdf_page.surface();
-            draw_page(&mut surface, page, &faces, &mut warnings, cancel, &mut drawn).map_err(PdfError::App)?;
+            let mut out = Out { faces: &faces, warnings: &mut warnings, pictures: &mut pictures };
+            draw_page(&mut surface, page, &mut out, cancel, &mut drawn).map_err(PdfError::App)?;
             surface.finish();
             pdf_page.finish();
         }
@@ -185,19 +189,74 @@ impl Warnings {
     }
 }
 
-fn draw_page(surface: &mut Surface<'_>, page: &Page, faces: &Faces<'_>, warnings: &mut Warnings, cancel: &Cancel, drawn: &mut usize) -> Result<()> {
+/// What drawing a page needs besides the page: the fonts, the warnings so far and the pictures
+/// already embedded.
+struct Out<'a, 'f> {
+    faces: &'a Faces<'f>,
+    warnings: &'a mut Warnings,
+    pictures: &'a mut Pictures,
+}
+
+/// Pictures embedded so far, by the address of their bytes (shared between the pages that show
+/// them): each is checked and handed to Krilla once, which writes it once.
+#[derive(Default)]
+struct Pictures {
+    seen: std::collections::HashMap<(usize, usize), Option<Image>>,
+}
+
+impl Pictures {
+    /// The picture of an image shape, or `None` (with a warning) when it can't be decoded whole:
+    /// Krilla decodes PNGs while writing the file, and one damaged picture would fail it all.
+    fn get(&mut self, shape: &Shape, warnings: &mut Warnings) -> Option<Image> {
+        let Shape::Image { format, width_px, height_px, data } = shape else { return None };
+        let key = (data.0.as_ptr() as usize, data.0.len());
+        self.seen
+            .entry(key)
+            .or_insert_with(|| {
+                let picture = reportcraft_core::image::Picture { format: *format, width_px: *width_px, height_px: *height_px, data: data.clone() };
+                let image = reportcraft_layout::pixels::decode(&picture).and_then(|_| {
+                    let bytes = craft_pdf::write::backend::Data::from(data.0.to_vec());
+                    match format {
+                        ImageFormat::Png => Image::from_png(bytes, true).ok(),
+                        ImageFormat::Jpeg => Image::from_jpeg(bytes, true).ok(),
+                    }
+                });
+                if image.is_none() {
+                    warnings.push(format!("a {} picture ({} bytes) is damaged and was left out", format.mime(), data.0.len()));
+                }
+                image
+            })
+            .clone()
+    }
+}
+
+fn draw_page(surface: &mut Surface<'_>, page: &Page, out: &mut Out<'_, '_>, cancel: &Cancel, drawn: &mut usize) -> Result<()> {
     // Shapes first, under the text, as in the HTML writer.
     for it in page.items.iter().filter(|i| i.shape.is_some()) {
         tick(cancel, drawn)?;
-        if let Some(shape) = &it.shape {
-            draw_shape(surface, it, shape);
+        match &it.shape {
+            Some(shape @ Shape::Image { .. }) => {
+                if let Some(image) = out.pictures.get(shape, out.warnings) {
+                    draw_image(surface, it, image);
+                }
+            }
+            Some(shape) => draw_shape(surface, it, shape),
+            None => {}
         }
     }
     for it in page.items.iter().filter(|i| i.shape.is_none()) {
         tick(cancel, drawn)?;
-        draw_text(surface, it, faces, warnings);
+        draw_text(surface, it, out.faces, out.warnings);
     }
     Ok(())
+}
+
+/// A picture stretched over the item's box.
+fn draw_image(surface: &mut Surface<'_>, it: &Item, image: Image) {
+    let Some(size) = Size::from_wh(mm(it.width_mm), mm(it.height_mm)) else { return };
+    surface.push_transform(&Transform::from_translate(mm(it.x_mm), mm(it.y_mm)));
+    surface.draw_image(image, size);
+    surface.pop();
 }
 
 fn tick(cancel: &Cancel, drawn: &mut usize) -> Result<()> {
@@ -305,6 +364,8 @@ fn draw_shape(surface: &mut Surface<'_>, it: &Item, shape: &Shape) {
             surface.draw_path(&path);
         }
         Shape::Barcode { columns, rows, quiet, modules } => barcode(surface, it, *columns, *rows, *quiet, modules),
+        // Drawn by `draw_image`, which needs the pictures already embedded.
+        Shape::Image { .. } => {}
         Shape::Polygon { points, fill: colour } => {
             let Some(c) = color(colour) else { return };
             let mut b = PathBuilder::new();

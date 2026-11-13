@@ -280,7 +280,7 @@ fn number(n: f64) -> Value {
 }
 
 /// A value as its column's type; dates and times as ISO text (`2026-10-01 08:30:00`), as the
-/// other databases give them; binary data as `0x…`.
+/// other databases give them; binary data as `0x…`, or a `data:` URI for a picture.
 fn to_value(data: &ColumnData<'static>) -> Value {
     match data {
         ColumnData::U8(Some(v)) => Value::Int(i64::from(*v)),
@@ -292,10 +292,13 @@ fn to_value(data: &ColumnData<'static>) -> Value {
         ColumnData::Bit(Some(b)) => Value::Bool(*b),
         ColumnData::String(Some(s)) => Value::Text(s.to_string()),
         ColumnData::Guid(Some(g)) => Value::Text(g.to_string().to_uppercase()),
-        ColumnData::Binary(Some(b)) => Value::Text(b.iter().fold("0x".to_owned(), |mut s, byte| {
-            s.push_str(&format!("{byte:02X}"));
-            s
-        })),
+        // A PNG or JPEG picture becomes a `data:` URI an image element can show.
+        ColumnData::Binary(Some(b)) => reportcraft_core::image::blob_value(b).unwrap_or_else(|| {
+            Value::Text(b.iter().fold("0x".to_owned(), |mut s, byte| {
+                s.push_str(&format!("{byte:02X}"));
+                s
+            }))
+        }),
         ColumnData::Numeric(Some(n)) => number(f64::from(*n)),
         ColumnData::Xml(Some(x)) => Value::Text(x.to_string()),
         ColumnData::DateTime(Some(_)) | ColumnData::SmallDateTime(Some(_)) | ColumnData::DateTime2(Some(_)) => text_of(NaiveDateTime::from_sql(data)),
@@ -565,6 +568,8 @@ mod tests {
         assert_eq!(to_value(&ColumnData::Bit(Some(true))), Value::Bool(true));
         assert_eq!(to_value(&ColumnData::String(None)), Value::Null);
         assert_eq!(to_value(&ColumnData::Binary(Some(vec![0x0f, 0xa0].into()))), Value::Text("0x0FA0".into()));
+        let jpeg = vec![0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x02, 0x00, 0x03, 0x01, 0x01, 0x11, 0x00];
+        assert!(matches!(to_value(&ColumnData::Binary(Some(jpeg.into()))), Value::Text(t) if t.starts_with("data:image/jpeg;base64,")));
         assert_eq!(field_type(ColumnType::Decimaln), FieldType::Number);
         assert_eq!(field_type(ColumnType::Daten), FieldType::Text);
         assert_eq!(field_type_named("smallmoney"), FieldType::Number);

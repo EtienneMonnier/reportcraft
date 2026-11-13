@@ -65,5 +65,9 @@ pub(crate) fn page_lines(items: &[Item]) -> (Vec<Vec<&Item>>, usize) {
 }
 
 pub(crate) fn skipped_warning(skipped: usize, format: &str) -> Vec<String> {
-    if skipped == 0 { Vec::new() } else { vec![format!("{skipped} line(s), box(es) or barcode(s) are not written to {format} yet")] }
+    if skipped == 0 {
+        Vec::new()
+    } else {
+        vec![format!("{skipped} line(s), box(es), barcode(s) or picture(s) are not written to {format} (not supported yet, or a damaged picture)")]
+    }
 }

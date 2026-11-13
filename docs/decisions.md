@@ -555,3 +555,32 @@ they were. Options such as the time limit stay with the run (CLI flags, command 
 the report, for now. The CLI loads a report's data only when no data option was given, so
 `--data` and `--query` keep overriding it, and `validate` reports a failed load instead of
 stopping. The field is optional, so older files read unchanged and `format_version` stays 1.
+
+## Pictures in reports (R2.4)
+
+An image element holds a PNG or JPEG picture, embedded in the report file as base64 or read from
+a field of the current row. Only these two formats, because every writer takes them without a
+conversion we would have to trust: Krilla embeds JPEG data as is and decodes PNG, rust_xlsxwriter
+and the browser read both, and docx-rs writes PNG (so a JPEG is decoded and written again as PNG
+for DOCX). A picture is recognised by its first bytes and its size read from its header in
+`reportcraft-core` (no decoding, no dependency, wasm-safe), so the layout can keep its proportions
+(`fit: contain`, the default, centred) or stretch it (`fit: stretch`) without decoding anything.
+Limits: 16 MB and 50 million pixels a picture, checked before any pixel is allocated.
+
+Decoding lives in `reportcraft_layout::pixels`, with the decoders Krilla already uses (`png`,
+`zune-jpeg`), so there is one copy of each. Writers that need pixels use it (DOCX for JPEG, the
+designer's textures, sampled down to 1,024 pixels a side), and the PDF writer decodes each distinct
+picture once before handing it to Krilla: Krilla decodes PNGs while it writes the file, and one
+damaged picture would fail the whole export. A picture damaged past its header is left out with a
+warning instead. In the layout a picture's bytes sit behind an `Arc`, so a logo in the page header
+is one copy however many pages show it, and the PDF writes it once (Krilla also deduplicates by
+content; docx-rs does the same for identical media).
+
+A field gives a picture as text: base64, or a `data:image/…;base64,` URI. That is what Odoo's API
+and CSV exports give, and it keeps `Value` without a bytes variant (one more arm in every match over
+values, for one use). Database blobs that hold a PNG or JPEG (SQLite `BLOB`, PostgreSQL `bytea`,
+SQL Server `varbinary`) now come from those sources as `data:` URIs; other blobs keep their former
+text (`<binary, N bytes>`, `0x…`). Pictures from a path in a field are left for later: the engine
+reads no file itself today, and a path would need the same allowed-paths rules as data files.
+The designer embeds a picture through its file dialog; agents and scripts pass base64 to
+`report.addElement` or `report.setElement`, so no new command reads files.

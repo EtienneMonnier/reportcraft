@@ -1,6 +1,6 @@
 # Status
 
-> **Last updated:** 2026-11-13 · Stage: foundation (pre-alpha)
+> **Last updated:** 2026-11-14 · Stage: foundation (pre-alpha)
 
 ## Works
 - Report definitions in JSON, validated, with a format version.
@@ -48,7 +48,8 @@
 - PDF output (`report.render` with `"format": "pdf"`, `reportcraft-cli render … --format pdf --out
   FILE.pdf`) through craft-libs' `craft-pdf`: selectable, searchable text with embedded font subsets
   (any script the font covers, French spaces and accents included), measured right and centre
-  alignment, lines, rectangles and barcodes as vectors. Fonts come from `REPORTCRAFT_FONT` /
+  alignment, lines, rectangles and barcodes as vectors, pictures embedded once however many pages
+  show them. Fonts come from `REPORTCRAFT_FONT` /
   `REPORTCRAFT_FONT_BOLD`, a craft-fonts checkout (`CRAFT_FONTS_DIR`, Inter) or the system
   (Liberation Sans, DejaVu Sans, Noto Sans, Arial); characters the font lacks are reported as
   warnings. The same document gives the same file (no clock in the PDF).
@@ -58,10 +59,10 @@
   booleans and dates kept typed with Excel number formats from the element formats (`#,##0.00 "€"`,
   `0.0%`, `dd/mm/yyyy`), bold, size and alignment kept. DOCX: the report's pages and margins, a
   paragraph per line at its height and a tab stop per item (left, right or centred as the item is
-  aligned), so the text stays editable; backgrounds, lines, boxes and barcodes are pictures anchored
-  behind the text at their place (diagonal lines are left out with a warning). Both open in
-  GridCraft and WordCraft; the same report gives the same file. XLSX leaves lines, boxes and
-  barcodes out with a warning.
+  aligned), so the text stays editable; backgrounds, lines, boxes, barcodes and images are pictures
+  anchored behind the text at their place (JPEG converted to PNG; diagonal lines are left out with a
+  warning). Both open in GridCraft and WordCraft; the same report gives the same file. XLSX leaves
+  lines, boxes, barcodes and images out with a warning.
 - Printing through craft-libs' `craft-print` (CUPS `lp` on Linux and macOS, the Windows print API):
   `file.printers` lists the printers, `file.print` renders the report to PDF and sends it with
   printer, copies (1–99), collation, duplex, grayscale, exact size or shrink to fit, and page ranges
@@ -88,6 +89,14 @@
   versions 1–40), from a field or a fixed text, drawn as SVG with their quiet zone; a value the
   symbology can't hold is written as text. Every symbology was checked with an independent decoder
   (zxing-cpp), from the encoder and from a rendered page.
+- Images (`"kind": "image"`): a PNG or JPEG picture embedded in the report (`data`, base64 in the
+  file) or read from a field of the current row (base64 text, a `data:` URI, or a SQLite, PostgreSQL
+  or SQL Server blob holding a PNG or JPEG, which these sources now hand over as a `data:` URI),
+  kept in proportion and centred in its box (`"fit": "contain"`, the default) or stretched
+  (`"stretch"`); at most 16 MB and 50 million pixels each. Drawn in HTML, PDF, DOCX and the
+  designer's canvas and preview; a blank or unreadable value draws nothing, and a picture damaged
+  past its header is left out of the PDF and DOCX with a warning. Insert ▸ Image asks for a file to
+  embed; the properties panel switches between an embedded picture and a field.
 - Labels: `column_order: across` fills a row of columns with detail bands, then the next row;
   group headers and footers start a new row.
 - Group pagination: a group header kept with its first row (`keep_with_next`: never alone at the
@@ -164,7 +173,7 @@
   (`report.setStructure`), the field list takes values for the parameters, and Report ▸ Check lists
   `report.validate`'s findings; File ▸ Print… prints (printer, copies, pages, two-sided, black and
   white, shrink to fit; Check shows the job without sending it); Data ▸ Connections… saves, tests
-  and deletes SQLite, PostgreSQL and SQL Server connections (the password to the keychain); barcodes and charts are inserted and
+  and deletes SQLite, PostgreSQL and SQL Server connections (the password to the keychain); barcodes, images and charts are inserted and
   edited like the rest; previews the rendered pages live after every change; saves the report and
   exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
   every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
@@ -175,7 +184,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 189 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 17 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 206 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
