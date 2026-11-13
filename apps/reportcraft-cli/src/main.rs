@@ -11,11 +11,11 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--format html|pdf|xlsx|docx|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
-  validate <report.json|--sample NAME> [--data FILE.csv | --sqlite FILE.db --query SQL | --postgres CONN --query SQL] [--json] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
+  render <report.json|--sample NAME> [--data FILE.csv | (--sqlite FILE.db | --postgres CONN | --sqlserver CONN) --query SQL] [--format html|pdf|xlsx|docx|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
+  validate <report.json|--sample NAME> [--data FILE.csv | (--sqlite FILE.db | --postgres CONN | --sqlserver CONN) --query SQL] [--json] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
                                             errors and warnings, checked against the data when given
   (--sub NAME=FILE.csv and --sub-query NAME=SQL load a dataset for subreports; --sub-query runs on
-   the --sqlite or --postgres database, after --query;
+   the same database, after --query;
    --query-log prints each query run, its time and row count, to stderr;
    --timeout SECONDS limits the query and the render, default 30 and 120;
    --max-memory MB limits the rows read, default 1024)
@@ -25,13 +25,16 @@ reportcraft-cli <subcommand>
   send PORT METHOD [JSON]                   one request to the designer started with `reportcraft --control PORT`
                                             (an engine command id, ui.state, ui.screenshot with a path to a .ppm file, app.quit)
   connections [list]                        saved connections (definitions in the settings file, passwords in the keychain)
-  connections save NAME (--sqlite FILE | --host HOST [--port N] --user USER --database DB [--sslmode MODE] [--password-stdin]) [--description TEXT]
+  connections save NAME (--sqlite FILE | [--sqlserver] --host HOST [--port N] --user USER --database DB [--sslmode MODE] [--password-stdin]) [--description TEXT]
+                                            (PostgreSQL unless --sqlserver; ports 5432 and 1433 by default)
   connections delete NAME | connections test NAME
   (--connection NAME --query SQL loads from a saved connection in render, validate and print;
    schema takes --connection NAME too)
-  schema (--sqlite FILE | --postgres CONN) [--table NAME] [--preview N] [--json]
+  schema (--sqlite FILE | --postgres CONN | --sqlserver CONN) [--table NAME] [--preview N] [--json]
                                             tables, columns and keys; rows with --preview
-  (CONN is a libpq connection string or postgresql:// URL; put the password in PGPASSWORD)
+  (--postgres CONN is a libpq connection string or postgresql:// URL, the password in PGPASSWORD;
+   --sqlserver CONN is an ADO.NET connection string, Server=tcp:HOST,1433;User Id=USER;Database=DB,
+   the password in SQLCMDPASSWORD)
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
   mcp [--allow-paths] [--allow-actions]     MCP server on stdio; an agent uses saved connections only and
@@ -126,8 +129,7 @@ fn load_inputs<'a>(
     let mut s = Session::default();
     let (mut timeout, mut max_memory) = (None, None);
     let number = |v: &str, flag: &str| v.parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{flag}` expects a positive whole number"));
-    let (mut sqlite, mut postgres, mut query, mut show_log) = (None, None, None, false);
-    let mut saved: Option<String> = None;
+    let (mut database, mut query, mut show_log): (Option<Database>, _, _) = (None, None, false);
     let mut sub_queries: Vec<(String, String)> = Vec::new();
     let named =
         |v: &str, flag: &str| v.split_once('=').map(|(n, x)| (n.to_owned(), x.to_owned())).ok_or_else(|| format!("`{flag}` expects NAME=VALUE"));
@@ -153,9 +155,12 @@ fn load_inputs<'a>(
             "--data" => {
                 exec(&mut s, "data.loadCsv", json!({"csv": read(flag_value(&mut it, a)?)?}))?;
             }
-            "--sqlite" => sqlite = Some(flag_value(&mut it, a)?.to_owned()),
-            "--postgres" => postgres = Some(flag_value(&mut it, a)?.to_owned()),
-            "--connection" => saved = Some(flag_value(&mut it, a)?.to_owned()),
+            "--sqlite" | "--postgres" | "--sqlserver" | "--connection" => {
+                if database.is_some() {
+                    return Err("give one database: `--sqlite`, `--postgres`, `--sqlserver` or `--connection`".to_owned());
+                }
+                database = Some(database_of(&mut s, a, flag_value(&mut it, a)?)?);
+            }
             "--query" => query = Some(flag_value(&mut it, a)?.to_owned()),
             "--query-log" => show_log = true,
             "--sub" => {
@@ -179,64 +184,32 @@ fn load_inputs<'a>(
         }
         p
     };
-    // A saved connection stands for `--sqlite` or `--postgres`, by its kind.
-    if let Some(name) = &saved {
-        if sqlite.is_some() || postgres.is_some() {
-            return Err("use `--connection NAME` instead of `--sqlite` or `--postgres`, not with them".to_owned());
-        }
-        if query.is_none() {
-            return Err("`--connection` needs `--query SQL`".to_owned());
-        }
-        let (command, _) = saved_commands(&mut s, name)?;
-        let database = (command, ("saved", name.clone()));
-        let mut loaded = query.map_or(Ok(()), |q| exec(&mut s, command, load(database.1.clone(), q)).map(drop));
-        for (name, sql) in std::mem::take(&mut sub_queries) {
-            if loaded.is_err() {
-                break;
-            }
-            let mut p = load(database.1.clone(), sql);
-            if let Some(map) = p.as_object_mut() {
-                map.insert("dataset".to_owned(), Json::String(name));
-            }
-            loaded = exec(&mut s, command, p).map(drop);
-        }
-        if show_log {
-            eprint!("{}", query_log_text(&exec(&mut s, "data.queryLog", json!({}))?));
-        }
-        return loaded.map(|()| (s, params, timeout));
-    }
-    let database = match (&sqlite, &postgres) {
-        (Some(path), None) => Some(("data.loadSqlite", ("path", path.clone()))),
-        (None, Some(connection)) => Some(("data.loadPostgres", ("connection", connection.clone()))),
-        _ => None,
-    };
-    let mut loaded = match (sqlite, postgres, query) {
-        (Some(path), None, Some(query)) => exec(&mut s, "data.loadSqlite", load(("path", path), query)).map(drop),
-        (None, Some(connection), Some(query)) => exec(&mut s, "data.loadPostgres", load(("connection", connection), query)).map(drop),
-        (None, None, None) => Ok(()),
-        (Some(_), Some(_), _) => Err("use either `--sqlite` or `--postgres`".to_owned()),
-        _ => Err("`--query` goes with `--sqlite FILE`, `--postgres CONNECTION` or `--connection NAME`".to_owned()),
+    let mut loaded = match (&database, query) {
+        (Some(db), Some(query)) => exec(&mut s, db.kind.load, load((db.key, db.value.clone()), query)).map(drop),
+        (None, None) => Ok(()),
+        (Some(_), None) => Err("the database needs `--query SQL`".to_owned()),
+        (None, Some(_)) => Err("`--query` goes with `--sqlite FILE`, `--postgres CONN`, `--sqlserver CONN` or `--connection NAME`".to_owned()),
     };
     for (name, sql) in sub_queries {
         if loaded.is_err() {
             break;
         }
-        let Some((command, source)) = database.clone() else {
-            loaded = Err("`--sub-query` needs `--sqlite FILE` or `--postgres CONNECTION`".to_owned());
+        let Some(db) = &database else {
+            loaded = Err("`--sub-query` needs a database (`--sqlite`, `--postgres`, `--sqlserver` or `--connection`)".to_owned());
             break;
         };
-        let mut p = load(source, sql);
+        let mut p = load((db.key, db.value.clone()), sql);
         if let Some(map) = p.as_object_mut() {
             map.insert("dataset".to_owned(), Json::String(name));
         }
-        loaded = exec(&mut s, command, p).map(drop);
+        loaded = exec(&mut s, db.kind.load, p).map(drop);
     }
     // Shown even when the query failed: that's when it helps most.
     if show_log {
         eprint!("{}", query_log_text(&exec(&mut s, "data.queryLog", json!({}))?));
     }
     if max_memory.is_some() && s.rows.columns.is_empty() && loaded.is_ok() {
-        eprintln!("reportcraft-cli: `--max-memory` applies to `--sqlite` and `--postgres` data only");
+        eprintln!("reportcraft-cli: `--max-memory` applies to database data only");
     }
     loaded.map(|()| (s, params, timeout))
 }
@@ -297,15 +270,58 @@ fn render(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// The load command and kind of a saved connection.
-fn saved_commands(s: &mut Session, name: &str) -> Result<(&'static str, &'static str), String> {
-    let list = exec(s, "data.connections", json!({}))?;
-    let kind = list["connections"].as_array().into_iter().flatten().find(|c| c["name"] == json!(name)).and_then(|c| c["kind"].as_str());
-    match kind {
-        Some("sqlite") => Ok(("data.loadSqlite", "sqlite")),
-        Some("postgres") => Ok(("data.loadPostgres", "postgres")),
-        _ => Err(format!("no saved connection `{name}` (see `reportcraft-cli connections`)")),
+/// The commands of one kind of database, and the flag that names it on the command line.
+struct Kind {
+    name: &'static str,
+    flag: &'static str,
+    /// The command parameter that holds the flag's value (file or connection string).
+    key: &'static str,
+    load: &'static str,
+    describe: &'static str,
+    preview: &'static str,
+}
+
+const KINDS: [Kind; 3] = [
+    Kind { name: "sqlite", flag: "--sqlite", key: "path", load: "data.loadSqlite", describe: "data.describeSqlite", preview: "data.previewSqlite" },
+    Kind {
+        name: "postgres",
+        flag: "--postgres",
+        key: "connection",
+        load: "data.loadPostgres",
+        describe: "data.describePostgres",
+        preview: "data.previewPostgres",
+    },
+    Kind {
+        name: "sqlserver",
+        flag: "--sqlserver",
+        key: "connection",
+        load: "data.loadSqlServer",
+        describe: "data.describeSqlServer",
+        preview: "data.previewSqlServer",
+    },
+];
+
+/// A database named on the command line: its kind, and the parameter that reaches it.
+struct Database {
+    kind: &'static Kind,
+    key: &'static str,
+    value: String,
+}
+
+/// The database a flag names: `--sqlite FILE`, `--postgres CONN`, `--sqlserver CONN`, or
+/// `--connection NAME` (a saved connection, whose kind is looked up).
+fn database_of(s: &mut Session, flag: &str, value: &str) -> Result<Database, String> {
+    if flag == "--connection" {
+        let list = exec(s, "data.connections", json!({}))?;
+        let kind = list["connections"].as_array().into_iter().flatten().find(|c| c["name"] == json!(value)).and_then(|c| c["kind"].as_str());
+        let kind = KINDS
+            .iter()
+            .find(|k| Some(k.name) == kind)
+            .ok_or_else(|| format!("no saved connection `{value}` (see `reportcraft-cli connections`)"))?;
+        return Ok(Database { kind, key: "saved", value: value.to_owned() });
     }
+    let kind = KINDS.iter().find(|k| k.flag == flag).ok_or_else(|| format!("unknown option `{flag}`"))?;
+    Ok(Database { kind, key: kind.key, value: value.to_owned() })
 }
 
 /// `connections [list]`, `connections save NAME …`, `connections delete NAME`, `connections test NAME`.
@@ -344,8 +360,14 @@ fn connections(args: &[String]) -> Result<(), String> {
                         "path"
                     }
                     "--sslmode" => "sslmode",
+                    "--sqlserver" => {
+                        p["kind"] = json!("sqlserver");
+                        continue;
+                    }
                     "--host" | "--user" | "--database" => {
-                        p["kind"] = json!("postgres");
+                        if p.get("kind").is_none() {
+                            p["kind"] = json!("postgres");
+                        }
                         a.trim_start_matches("--")
                     }
                     "--description" => "description",
@@ -504,32 +526,26 @@ fn print_sample(name: &str) -> Result<(), String> {
 }
 
 fn schema(args: &[String]) -> Result<(), String> {
-    let (mut path, mut connection, mut table, mut preview, mut as_json) = (None, None, None, None, false);
-    let mut saved: Option<String> = None;
+    let (mut database, mut table, mut preview, mut as_json): (Option<Database>, _, _, _) = (None, None, None, false);
     let mut s = Session::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--sqlite" => path = Some(flag_value(&mut it, a)?.to_owned()),
-            "--postgres" => connection = Some(flag_value(&mut it, a)?.to_owned()),
-            "--connection" => saved = Some(flag_value(&mut it, a)?.to_owned()),
+            "--sqlite" | "--postgres" | "--sqlserver" | "--connection" => {
+                if database.is_some() {
+                    return Err("give one database: `--sqlite`, `--postgres`, `--sqlserver` or `--connection`".to_owned());
+                }
+                database = Some(database_of(&mut s, a, flag_value(&mut it, a)?)?);
+            }
             "--table" => table = Some(flag_value(&mut it, a)?.to_owned()),
             "--preview" => preview = Some(flag_value(&mut it, a)?.parse::<u64>().map_err(|_| "`--preview` expects a number of rows")?),
             "--json" => as_json = true,
             other => return Err(format!("unknown option `{other}`")),
         }
     }
-    let (describe, preview_cmd, source) = match (path, connection, saved) {
-        (Some(p), None, None) => ("data.describeSqlite", "data.previewSqlite", json!({"path": p})),
-        (None, Some(c), None) => ("data.describePostgres", "data.previewPostgres", json!({"connection": c})),
-        (None, None, Some(name)) => {
-            let (_, kind) = saved_commands(&mut s, &name)?;
-            let (d, p) =
-                if kind == "sqlite" { ("data.describeSqlite", "data.previewSqlite") } else { ("data.describePostgres", "data.previewPostgres") };
-            (d, p, json!({"saved": name}))
-        }
-        _ => return Err("`schema` needs one of `--sqlite FILE`, `--postgres CONNECTION` or `--connection NAME`".to_owned()),
-    };
+    let db = database.ok_or("`schema` needs one of `--sqlite FILE`, `--postgres CONN`, `--sqlserver CONN` or `--connection NAME`")?;
+    let (describe, preview_cmd) = (db.kind.describe, db.kind.preview);
+    let source = json!({db.key: db.value});
     let with = |extra: Json| {
         let mut p = source.clone();
         if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {

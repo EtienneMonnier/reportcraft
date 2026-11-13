@@ -250,7 +250,7 @@ impl Designer {
         }
     }
 
-    /// Loads rows through a saved connection (its kind decides SQLite or PostgreSQL).
+    /// Loads rows through a saved connection (its kind decides SQLite, PostgreSQL or SQL Server).
     pub fn load_saved(&mut self, name: &str, query: &str) {
         let kind = self
             .run("data.connections", json!({}))
@@ -258,6 +258,7 @@ impl Designer {
         let command = match kind.as_deref() {
             Some("sqlite") => "data.loadSqlite",
             Some("postgres") => "data.loadPostgres",
+            Some("sqlserver") => "data.loadSqlServer",
             _ => {
                 self.status = format!("no saved connection `{name}`");
                 return;

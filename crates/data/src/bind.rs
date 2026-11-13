@@ -48,12 +48,15 @@ pub enum Dialect {
     /// PostgreSQL: values bound as text and cast to their type, `($1::text)::bigint`, so the
     /// server never has to guess a parameter's type.
     Postgres,
+    /// SQL Server: `@P1`, `@P2`… (values bound with their own type).
+    SqlServer,
 }
 
 impl Dialect {
     fn placeholder(self, n: usize, value: &BindValue, hint: Option<&ParamValue>) -> String {
         match self {
             Dialect::Sqlite => format!("?{n}"),
+            Dialect::SqlServer => format!("@P{n}"),
             Dialect::Postgres => {
                 let cast = match (value, hint) {
                     (BindValue::Integer(_), _) | (BindValue::Null, Some(ParamValue::Integer(_))) => "bigint",
@@ -101,6 +104,7 @@ pub fn bind(sql: &str, values: &BTreeMap<String, ParamValue>, declared: &[&str],
         let skip_to = match c {
             '\'' => Some(end_of_quoted(&chars, i, '\'')),
             '"' => Some(end_of_quoted(&chars, i, '"')),
+            '[' if dialect == Dialect::SqlServer => Some(end_of_quoted(&chars, i, ']')),
             '-' if at(i + 1) == Some('-') => Some(chars.iter().skip(i).position(|&c| c == '\n').map_or(chars.len(), |n| i + n)),
             '/' if at(i + 1) == Some('*') => Some(end_of_block_comment(&chars, i)),
             '$' => end_of_dollar_quote(&chars, i),
@@ -269,6 +273,13 @@ mod tests {
         let b = bind("SELECT :min, :branch, :period.to", &values(), DECLARED, Dialect::Postgres).unwrap();
         assert_eq!(b.sql, "SELECT (($1::text)::bigint), ($2::text), (($3::text)::date)");
         assert_eq!(b.values[0].as_text().as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn sql_server_placeholders_skip_bracketed_names() {
+        let b = bind("SELECT [a:branch]]:min] FROM t WHERE x = :branch AND y IN (:branches)", &values(), DECLARED, Dialect::SqlServer).unwrap();
+        assert_eq!(b.sql, "SELECT [a:branch]]:min] FROM t WHERE x = @P1 AND y IN (@P2, @P3)");
+        assert_eq!(b.values.len(), 3);
     }
 
     #[test]

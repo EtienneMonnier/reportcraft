@@ -18,6 +18,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L2 | `data` | `DataSource` and `SchemaSource` traits, schema types; `MemorySource`, `CsvSource` (wasm-safe) |
 | L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `postgres` | Read-only PostgreSQL source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
+| L3 | `sqlserver` | Read-only SQL Server source and schema discovery in pure Rust (tiberius; native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `connections` | Saved connections: definitions through `craft-settings`, passwords in the OS keychain (`keyring`) behind `SecretStore` (native only) |
 | L3 | `layout` | Banded layout to `Document` (pages of positioned text), named formulas as computed columns, formula elements; HTML writer |
 | L4 | `office` | XLSX (`rust_xlsxwriter`) and DOCX (`docx-rs`) writers over `Document`: lines of text, typed cells, tab stops |

@@ -22,6 +22,7 @@ reportcraft-layout = { path = "crates/layout" }
 reportcraft-pdf = { path = "crates/pdf" }
 reportcraft-office = { path = "crates/office" }
 reportcraft-connections = { path = "crates/connections" }
+reportcraft-sqlserver = { path = "crates/sqlserver" }
 reportcraft-ui-egui = { path = "crates/ui-egui" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
@@ -42,6 +43,12 @@ postgres = "0.19"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }
 rustls-native-certs = "0.8"
+# SQL Server source (native only), pure Rust: the TDS driver with rustls for TLS, on a small
+# tokio runtime the source runs itself (its API stays synchronous, like the other sources).
+tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "chrono"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "macros"] }
+tokio-util = { version = "0.7", default-features = false, features = ["compat"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # PDF writing: the suite's shared writer, pinned to the craft-libs revision GridCraft uses. It
 # needs the patched Krilla below (a compile-time marker rejects the crates.io one).
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }

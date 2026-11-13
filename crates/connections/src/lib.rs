@@ -1,13 +1,13 @@
 //! ReportCraft named connections (L3, native only): a database the user chose once, saved by name
 //! so reports, the CLI and MCP agents can use it without repeating where it is or how to log in.
 //!
-//! Definitions (a SQLite file, or a PostgreSQL host, port, user and database) live in the suite's
+//! Definitions (a SQLite file, or a PostgreSQL or SQL Server host, port, user and database) live in the suite's
 //! settings file through craft-libs' `craft-settings` (`reportcraft/config.toml` in the platform's
 //! config folder, or `REPORTCRAFT_CONFIG_DIR`). Passwords never go there: they go to a
 //! [`SecretStore`], the OS keychain in the application ([`Keychain`]: Secret Service, macOS
 //! Keychain, Windows Credential Manager) and memory in tests ([`MemorySecrets`]). Nothing here
 //! prints, logs or returns a password: [`Connections::conninfo`] builds the libpq string only to
-//! hand it to the driver.
+//! hand it to the driver, and [`Connections::sqlserver`] hands the password over on its own.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::collections::HashMap;
@@ -37,10 +37,25 @@ pub enum Target {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sslmode: Option<String>,
     },
+    SqlServer {
+        host: String,
+        #[serde(default = "default_sqlserver_port")]
+        port: u16,
+        user: String,
+        database: String,
+        /// The same words as PostgreSQL's: `disable` (only the login is encrypted), `prefer` or
+        /// `require` (when unset: encrypted, certificate not checked) or `verify-full` (checked).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sslmode: Option<String>,
+    },
 }
 
 fn default_port() -> u16 {
     5432
+}
+
+fn default_sqlserver_port() -> u16 {
+    1433
 }
 
 impl Target {
@@ -48,6 +63,7 @@ impl Target {
         match self {
             Target::Sqlite { .. } => "sqlite",
             Target::Postgres { .. } => "postgres",
+            Target::SqlServer { .. } => "sqlserver",
         }
     }
 
@@ -55,7 +71,9 @@ impl Target {
     pub fn describe(&self) -> String {
         match self {
             Target::Sqlite { path } => path.clone(),
-            Target::Postgres { host, port, user, database, .. } => format!("{user}@{host}:{port}/{database}"),
+            Target::Postgres { host, port, user, database, .. } | Target::SqlServer { host, port, user, database, .. } => {
+                format!("{user}@{host}:{port}/{database}")
+            }
         }
     }
 }
@@ -86,7 +104,7 @@ impl Connection {
         };
         match &self.target {
             Target::Sqlite { path } => field(path, "the database file")?,
-            Target::Postgres { host, port, user, database, sslmode } => {
+            Target::Postgres { host, port, user, database, sslmode } | Target::SqlServer { host, port, user, database, sslmode } => {
                 if let Some(m) = sslmode
                     && !["disable", "prefer", "require", "verify-ca", "verify-full"].contains(&m.as_str())
                 {
@@ -239,7 +257,7 @@ impl Connections {
         }
         match password {
             Some("") => self.secrets.delete(&connection.name)?,
-            Some(p) if matches!(connection.target, Target::Postgres { .. }) => self.secrets.set(&connection.name, p)?,
+            Some(p) if !matches!(connection.target, Target::Sqlite { .. }) => self.secrets.set(&connection.name, p)?,
             Some(_) => return Err(Error::Invalid("a SQLite file has no password".into())),
             None => {}
         }
@@ -283,6 +301,24 @@ impl Connections {
         Ok(out)
     }
 
+    /// The ADO.NET connection string of a SQL Server connection, without the password, and its kept
+    /// password if any (else the driver's `SQLCMDPASSWORD` applies). Hand both to the driver; never
+    /// show them.
+    pub fn sqlserver(&self, name: &str) -> Result<(String, Option<String>)> {
+        let c = self.get(name).ok_or_else(|| self.unknown(name))?;
+        let Target::SqlServer { host, port, user, database, sslmode } = &c.target else {
+            return Err(Error::Invalid(format!("connection `{name}` is a {} database, not SQL Server", c.target.kind())));
+        };
+        let encryption = match sslmode.as_deref() {
+            Some("disable") => "Encrypt=false",
+            Some("verify-full" | "verify-ca") => "Encrypt=true",
+            _ => "Encrypt=true;TrustServerCertificate=true",
+        };
+        let ado =
+            format!("Server={};User Id={};Database={};{encryption}", ado_quote(&format!("tcp:{host},{port}")), ado_quote(user), ado_quote(database));
+        Ok((ado, self.secrets.get(name)?))
+    }
+
     /// The database file of a SQLite connection.
     pub fn sqlite_path(&self, name: &str) -> Result<String> {
         let c = self.get(name).ok_or_else(|| self.unknown(name))?;
@@ -305,6 +341,11 @@ impl Connections {
 /// A libpq value in single quotes, `\` and `'` escaped.
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+/// An ADO.NET value in double quotes, inner quotes doubled.
+fn ado_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 #[cfg(test)]
@@ -383,5 +424,26 @@ mod tests {
         // The port defaults to 5432 (JSON exercises the same serde derive as the settings file).
         let read: Connection = serde_json::from_str(r#"{"name":"n","kind":"postgres","host":"h","user":"u","database":"d"}"#).unwrap();
         assert_eq!(read.target, Target::Postgres { host: "h".into(), port: 5432, user: "u".into(), database: "d".into(), sslmode: None });
+    }
+
+    #[test]
+    fn sql_server_connections_hand_the_password_apart() {
+        let mut c = Connections::in_memory();
+        let read: Connection =
+            serde_json::from_str(r#"{"name":"mssql","kind":"sqlserver","host":"db","user":"rc \"x\"","database":"rent"}"#).unwrap();
+        assert_eq!(read.target.describe(), "rc \"x\"@db:1433/rent", "port 1433 by default");
+        c.save(read, Some("s3;cr\"et")).unwrap();
+        let (ado, password) = c.sqlserver("mssql").unwrap();
+        assert_eq!(ado, r#"Server="tcp:db,1433";User Id="rc ""x""";Database="rent";Encrypt=true;TrustServerCertificate=true"#);
+        assert_eq!(password.as_deref(), Some("s3;cr\"et"));
+        assert!(c.conninfo("mssql").unwrap_err().to_string().contains("not PostgreSQL"));
+        c.save(pg("pg"), None).unwrap();
+        assert!(c.sqlserver("pg").unwrap_err().to_string().contains("not SQL Server"));
+        let strict = Connection {
+            target: Target::SqlServer { host: "h".into(), port: 1, user: "u".into(), database: "d".into(), sslmode: Some("verify-full".into()) },
+            ..pg("strict")
+        };
+        c.save(strict, None).unwrap();
+        assert!(c.sqlserver("strict").unwrap().0.ends_with(";Encrypt=true"));
     }
 }
