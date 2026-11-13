@@ -12,6 +12,7 @@ pub use format::{Format, LOCALES, LocaleStyle, MAX_DECIMALS, locale_or_default, 
 pub use params::{MAX_VALUES, ParamType, ParamValue, Parameter, resolve as resolve_parameters};
 
 pub use reportcraft_barcode::{EcLevel, Symbology};
+pub use reportcraft_core::image::ImageData;
 use reportcraft_core::{Column, Error, FieldType, Result, limits};
 use serde::{Deserialize, Serialize};
 
@@ -490,6 +491,17 @@ pub enum Content {
         #[serde(default)]
         ec_level: EcLevel,
     },
+    /// A PNG or JPEG picture over the element's box: embedded in the report (`data`, base64 in
+    /// the file) or read from a field of the current row (base64 text, a `data:` URI, or a
+    /// database blob holding a picture). A blank or unreadable value shows nothing.
+    Image {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<ImageData>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+        #[serde(default)]
+        fit: ImageFit,
+    },
     /// A chart of the rows the band summarises (the group in a group band, every row in the
     /// report header and footer): `value` totalled by `function` for each `category`, in the order
     /// categories first appear.
@@ -529,6 +541,17 @@ pub enum Content {
         #[serde(default = "yes")]
         hide_when_empty: bool,
     },
+}
+
+/// How a picture fills its element's box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFit {
+    /// As large as the box allows with its proportions kept, centred.
+    #[default]
+    Contain,
+    /// Stretched to the box.
+    Stretch,
 }
 
 /// How a chart draws its values.
@@ -757,6 +780,15 @@ impl Report {
                         _ => return Err(Error::Invalid(format!("{name}: a barcode encodes either a `field` or a fixed `text`"))),
                     }
                 }
+                if let Content::Image { data, field, .. } = &el.content {
+                    match (data, field) {
+                        (Some(d), None) => {
+                            reportcraft_core::image::Picture::of(d).map_err(|e| Error::Invalid(format!("{name}: image: {e}")))?;
+                        }
+                        (None, Some(_)) => {}
+                        _ => return Err(Error::Invalid(format!("{name}: an image is either embedded (`data`) or read from a `field`"))),
+                    }
+                }
                 if let Content::Formula { expression } = &el.content {
                     reportcraft_expr::parse(expression).map_err(|e| Error::Invalid(format!("{name}: formula `{expression}`: {e}")))?;
                 }
@@ -963,7 +995,7 @@ impl Report {
                     Content::Field { field } | Content::Aggregate { field, .. } if column(field) == Some(None) => {
                         out.push(Diagnostic::error(&at, unknown(field)));
                     }
-                    Content::Barcode { field: Some(field), .. } if column(field) == Some(None) => {
+                    Content::Barcode { field: Some(field), .. } | Content::Image { field: Some(field), .. } if column(field) == Some(None) => {
                         out.push(Diagnostic::error(&at, unknown(field)));
                     }
                     Content::Chart { category, value, .. } => out.extend(check_chart(&at, [category, value], columns, repeating)),
@@ -971,7 +1003,12 @@ impl Report {
                         out.extend(check_chart(&at, [rows, across], columns, repeating));
                         out.extend(check_chart(&at, [value, value], columns, false).into_iter().take(1));
                     }
-                    Content::Field { .. } | Content::Aggregate { .. } | Content::Barcode { field: Some(_), .. } if repeating => {
+                    Content::Field { .. }
+                    | Content::Aggregate { .. }
+                    | Content::Barcode { field: Some(_), .. }
+                    | Content::Image { field: Some(_), .. }
+                        if repeating =>
+                    {
                         out.push(Diagnostic::warning(&at, "page headers and footers have no current row: this shows nothing"));
                     }
                     Content::Aggregate { function: AggregateFn::Sum | AggregateFn::Avg | AggregateFn::Min | AggregateFn::Max, field } => {
@@ -1581,5 +1618,48 @@ mod tests {
         let columns = [Column { name: "asset".into(), field_type: FieldType::Text }];
         let unknown = with(read).check(Some(&columns));
         assert!(unknown.iter().any(|d| d.message.contains("unknown field `url`")), "{unknown:?}");
+    }
+
+    #[test]
+    fn images_are_embedded_pictures_or_a_field() {
+        // A JPEG start with a frame header: 3 × 2 pixels.
+        let jpeg = [0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x02, 0x00, 0x03, 0x01, 0x01, 0x11, 0x00];
+        let coded = reportcraft_core::base64::encode(&jpeg);
+        let json = format!(r#"{{"kind":"image","data":"{coded}","fit":"stretch"}}"#);
+        let read: Content = serde_json::from_str(&json).unwrap();
+        assert_eq!(read, Content::Image { data: Some(ImageData(jpeg.to_vec().into())), field: None, fit: ImageFit::Stretch });
+        assert_eq!(serde_json::to_string(&read).unwrap(), json);
+        let by_field: Content = serde_json::from_str(r#"{"kind":"image","field":"photo"}"#).unwrap();
+        assert_eq!(by_field, Content::Image { data: None, field: Some("photo".into()), fit: ImageFit::Contain });
+        assert!(serde_json::from_str::<Content>(r#"{"kind":"image","data":"%%"}"#).is_err());
+        let with = |content: Content| {
+            let mut r = Report::new("x");
+            r.detail.height_mm = 20.0;
+            r.detail.elements = vec![Element {
+                x_mm: 0.0,
+                y_mm: 0.0,
+                width_mm: 30.0,
+                height_mm: 15.0,
+                style: TextStyle::default(),
+                content,
+                format: None,
+                visible_if: None,
+                background_formula: None,
+                color_formula: None,
+            }];
+            r
+        };
+        assert!(with(read).validate().is_ok());
+        let not_a_picture = Content::Image { data: Some(ImageData(b"GIF89a".to_vec().into())), field: None, fit: ImageFit::Contain };
+        assert!(with(not_a_picture).validate().unwrap_err().to_string().contains("not a PNG or JPEG"));
+        let neither = Content::Image { data: None, field: None, fit: ImageFit::Contain };
+        assert!(with(neither).validate().unwrap_err().to_string().contains("either embedded"));
+        let columns = [Column { name: "asset".into(), field_type: FieldType::Text }];
+        let unknown = with(by_field.clone()).check(Some(&columns));
+        assert!(unknown.iter().any(|d| d.message.contains("unknown field `photo`")), "{unknown:?}");
+        let mut in_header = with(by_field);
+        in_header.page_header = std::mem::take(&mut in_header.detail);
+        let columns = [Column { name: "photo".into(), field_type: FieldType::Text }];
+        assert!(in_header.check(Some(&columns)).iter().any(|d| d.message.contains("no current row")));
     }
 }

@@ -61,6 +61,9 @@ fn draw(painter: &egui::Painter, origin: Pos2, it: &Item, scale: f32) {
             painter.rect(rect, CornerRadius::ZERO, fill, stroke, StrokeKind::Middle);
         }
         Some(Shape::Barcode { columns, rows, quiet, modules }) => barcode(painter, rect, *columns, *rows, *quiet, modules),
+        Some(Shape::Image { data, .. }) => {
+            crate::pictures::paint(painter, rect, data);
+        }
         Some(Shape::Polygon { points, fill }) => {
             // One mesh, a fan of triangles from the first corner: no edges inside the wedge, where
             // separately smoothed triangles would show seams.

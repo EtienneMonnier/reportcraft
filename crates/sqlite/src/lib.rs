@@ -366,7 +366,8 @@ fn to_value(v: ValueRef<'_>) -> Value {
         ValueRef::Real(f) if f.is_finite() => Value::Number(f),
         ValueRef::Real(_) => Value::Null,
         ValueRef::Text(t) => Value::Text(String::from_utf8_lossy(t).into_owned()),
-        ValueRef::Blob(b) => Value::Text(format!("<binary, {} bytes>", b.len())),
+        // A PNG or JPEG picture becomes a `data:` URI an image element can show.
+        ValueRef::Blob(b) => reportcraft_core::image::blob_value(b).unwrap_or_else(|| Value::Text(format!("<binary, {} bytes>", b.len()))),
     }
 }
 
@@ -404,6 +405,9 @@ mod tests {
         assert_eq!(rs.rows[0][0], Value::Text("Lyon".into()));
         assert_eq!(rs.rows[1][3], Value::Number(720.5));
         assert_eq!(rs.rows[0][5], Value::Text("<binary, 2 bytes>".into()));
+        // A blob holding a picture becomes a data: URI (here a JPEG start with a frame header).
+        let jpeg = [0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x02, 0x00, 0x03, 0x01, 0x01, 0x11, 0x00];
+        assert!(matches!(to_value(ValueRef::Blob(&jpeg)), Value::Text(t) if t.starts_with("data:image/jpeg;base64,/9j/")));
         assert!(rs.rows[2][1].is_null());
         assert_eq!(rs.rows[2][6], Value::Int(6));
     }

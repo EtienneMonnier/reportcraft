@@ -7,13 +7,15 @@ mod crosstab;
 mod format;
 mod formula;
 mod html;
+pub mod pixels;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use reportcraft_core::image::Picture;
 use reportcraft_core::{Cancel, Error, Result, RowSet, Value, limits};
-use reportcraft_model::{AggregateFn, Band, Content, Element, Report, SubreportLink, TextStyle};
+use reportcraft_model::{AggregateFn, Band, Content, Element, ImageFit, Report, SubreportLink, TextStyle};
 use serde::{Deserialize, Serialize};
 
 pub use format::write as format_value;
@@ -91,6 +93,14 @@ pub enum Shape {
     Polygon {
         points: Vec<[f64; 2]>,
         fill: String,
+    },
+    /// A PNG or JPEG picture stretched over the box (the layout has already fitted the box to
+    /// the picture's proportions when they are kept).
+    Image {
+        format: reportcraft_core::image::ImageFormat,
+        width_px: u32,
+        height_px: u32,
+        data: reportcraft_core::image::ImageData,
     },
 }
 
@@ -340,6 +350,23 @@ fn subreport_report(child: &Report, width_mm: f64) -> Report {
 /// The text a value matches on in a subreport link: `1`, `1.0` and `"1"` match.
 fn link_key(v: &Value) -> String {
     v.to_string()
+}
+
+/// Where a `px_w` × `px_h` picture goes in a `w` × `h` box: offset and size, in millimetres.
+pub fn fitted(fit: ImageFit, w: f64, h: f64, px_w: u32, px_h: u32) -> (f64, f64, f64, f64) {
+    let ratio = f64::from(px_w) / f64::from(px_h.max(1));
+    match fit {
+        ImageFit::Stretch => (0.0, 0.0, w, h),
+        ImageFit::Contain if w <= 0.0 || h <= 0.0 || !ratio.is_finite() || ratio <= 0.0 => (0.0, 0.0, w, h),
+        ImageFit::Contain if w / h > ratio => {
+            let width = h * ratio;
+            ((w - width) / 2.0, 0.0, width, h)
+        }
+        ImageFit::Contain => {
+            let height = w / ratio;
+            (0.0, (h - height) / 2.0, w, height)
+        }
+    }
 }
 
 pub(crate) fn row_of(rows: &RowSet, i: usize) -> &[reportcraft_core::Value] {
@@ -801,6 +828,10 @@ impl<'a> Writer<'a> {
                 self.barcode(el, scope, left);
                 continue;
             }
+            if let Content::Image { .. } = &el.content {
+                self.image(el, scope, left);
+                continue;
+            }
             if let Content::Crosstab { .. } = &el.content {
                 let items = crosstab::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, self.y + el.y_mm), &self.locale);
                 self.page.items.extend(items);
@@ -884,6 +915,35 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// An image element: its picture, fitted to the element's box; nothing when the value is
+    /// blank or not a picture.
+    fn image(&mut self, el: &Element, scope: Scope<'_>, left: f64) {
+        let Content::Image { data, field, fit } = &el.content else { return };
+        let picture = match (data, field) {
+            (Some(d), _) => Picture::of(d).ok(),
+            (None, Some(f)) => match (self.rows.column_index(f), scope.current) {
+                (Some(c), Some(r)) => match self.rows.value(row_of(self.rows, r), c) {
+                    Value::Text(t) if !t.trim().is_empty() => Picture::from_text(t).ok(),
+                    _ => None,
+                },
+                _ => None,
+            },
+            (None, None) => None,
+        };
+        let Some(p) = picture else { return };
+        let (dx, dy, width_mm, height_mm) = fitted(*fit, el.width_mm, el.height_mm, p.width_px, p.height_px);
+        self.page.items.push(Item {
+            x_mm: left + el.x_mm + dx,
+            y_mm: self.y + el.y_mm + dy,
+            width_mm,
+            height_mm,
+            style: el.style,
+            text: String::new(),
+            shape: Some(Shape::Image { format: p.format, width_px: p.width_px, height_px: p.height_px, data: p.data }),
+            cell: None,
+        });
+    }
+
     /// The text an element shows, and the typed value behind it when there is one.
     fn eval(&self, content: &Content, format: Option<&reportcraft_model::Format>, scope: Scope<'_>) -> (String, Option<Cell>) {
         let column = |field: &str| self.rows.column_index(field);
@@ -935,6 +995,7 @@ impl<'a> Writer<'a> {
             | Content::Line { .. }
             | Content::Rect { .. }
             | Content::Barcode { .. }
+            | Content::Image { .. }
             | Content::Subreport { .. }
             | Content::Chart { .. }
             | Content::Crosstab { .. } => none(),
@@ -1576,5 +1637,70 @@ mod tests {
         assert!(matches!(layout(&r, &rows(), &Params::new()), Err(Error::NotFound(_))));
         let doc = layout(&Report::new("t"), &RowSet::default(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 1);
+    }
+
+    /// A real PNG of `w` × `h` grey pixels.
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let n = usize::try_from(w * h * 4).unwrap();
+        pixels::encode_png(&pixels::Rgba { width: w, height: h, pixels: vec![128; n] }).unwrap()
+    }
+
+    #[test]
+    fn images_are_fitted_to_their_box_and_shared_between_pages() {
+        let mut r = Report::new("t");
+        r.page.height_mm = 40.0;
+        r.page.margin_mm = 5.0;
+        let logo = reportcraft_core::image::ImageData(png(10, 10).into());
+        let image = |data: Option<&reportcraft_core::image::ImageData>, field: Option<&str>, fit| Element {
+            width_mm: 40.0,
+            height_mm: 20.0,
+            ..el(Content::Image { data: data.cloned(), field: field.map(str::to_owned), fit })
+        };
+        r.page_header = Band { height_mm: 20.0, elements: vec![image(Some(&logo), None, ImageFit::Contain)], ..Band::default() };
+        r.detail = Band { height_mm: 10.0, elements: vec![image(None, Some("pic"), ImageFit::Stretch)], ..Band::default() };
+        let mut data = rows();
+        data.columns.push(reportcraft_core::Column { name: "pic".into(), field_type: reportcraft_core::FieldType::Text });
+        let wide = reportcraft_core::image::Picture::read(&png(4, 1)).unwrap().data_uri();
+        for (i, row) in data.rows.iter_mut().enumerate() {
+            // A data: URI, plain base64, and a value that isn't a picture (nothing drawn).
+            row.push(Value::Text(match i {
+                0 => wide.clone(),
+                1 => reportcraft_core::base64::encode(&png(1, 2)),
+                _ => "not a picture".into(),
+            }));
+        }
+        let doc = layout(&r, &data, &Params::new()).unwrap();
+        let images: Vec<(usize, &Item)> = doc
+            .pages
+            .iter()
+            .enumerate()
+            .flat_map(|(n, p)| p.items.iter().filter(|i| matches!(i.shape, Some(Shape::Image { .. }))).map(move |i| (n, i)))
+            .collect();
+        let geometry: Vec<(usize, [f64; 4])> = images.iter().map(|(n, i)| (*n, [i.x_mm, i.y_mm, i.width_mm, i.height_mm])).collect();
+        // A square picture in a 40 × 20 box: 20 × 20, centred; the rows' pictures stretched; the
+        // third row's value isn't a picture: its page has the logo only.
+        let (logo_at, row_at) = ([15.0, 5.0, 20.0, 20.0], [5.0, 25.0, 40.0, 20.0]);
+        assert_eq!(geometry, [(0, logo_at), (0, row_at), (1, logo_at), (1, row_at), (2, logo_at)]);
+        let data_of = |i: &Item| match &i.shape {
+            Some(Shape::Image { data, width_px, height_px, .. }) => (data.clone(), (*width_px, *height_px)),
+            _ => panic!("not an image"),
+        };
+        let (first, _) = data_of(images[0].1);
+        let (again, _) = data_of(images[2].1);
+        assert!(Arc::ptr_eq(&first.0, &again.0), "the logo's bytes are shared, not copied per page");
+        assert_eq!(data_of(images[1].1).1, (4, 1));
+        assert_eq!(data_of(images[3].1).1, (1, 2));
+        let html = html::to_html(&doc);
+        assert_eq!(html.matches("<image ").count(), 5);
+        assert!(html.contains("preserveAspectRatio=\"none\" href=\"data:image/png;base64,iVBOR"));
+    }
+
+    #[test]
+    fn pictures_keep_their_proportions_in_any_box() {
+        assert_eq!(fitted(ImageFit::Contain, 40.0, 20.0, 400, 100), (0.0, 5.0, 40.0, 10.0));
+        assert_eq!(fitted(ImageFit::Contain, 40.0, 20.0, 100, 400), (17.5, 0.0, 5.0, 20.0));
+        assert_eq!(fitted(ImageFit::Stretch, 40.0, 20.0, 100, 400), (0.0, 0.0, 40.0, 20.0));
+        assert_eq!(fitted(ImageFit::Contain, 0.0, 20.0, 1, 1), (0.0, 0.0, 0.0, 20.0));
+        assert_eq!(fitted(ImageFit::Contain, 10.0, 10.0, 0, 5), (0.0, 0.0, 10.0, 10.0));
     }
 }

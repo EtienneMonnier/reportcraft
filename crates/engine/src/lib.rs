@@ -6,7 +6,7 @@
 
 // The web build reads no database, so it never fills the cache.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub mod base64;
+pub use reportcraft_core::base64;
 mod cache;
 mod cmd;
 #[cfg(not(target_arch = "wasm32"))]

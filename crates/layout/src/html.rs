@@ -85,6 +85,20 @@ fn shapes(out: &mut String, page: &crate::Page, width: f64, height: f64) {
                 let pts: Vec<String> = points.iter().map(|[x, y]| format!("{x:.2},{y:.2}")).collect();
                 let _ = writeln!(out, "<polygon points=\"{}\" fill=\"{fill}\"/>", pts.join(" "));
             }
+            Shape::Image { format, data, .. } => {
+                // The bytes were checked as a picture when laid out; base64 can't break the
+                // attribute.
+                let _ = writeln!(
+                    out,
+                    "<image x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" preserveAspectRatio=\"none\" href=\"data:{};base64,{}\"/>",
+                    it.x_mm,
+                    it.y_mm,
+                    it.width_mm,
+                    it.height_mm,
+                    format.mime(),
+                    reportcraft_core::base64::encode(&data.0)
+                );
+            }
             // A colour that isn't #rgb/#rrggbb never reaches the page.
             _ => {}
         }

@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last updated:** 2026-11-13
+> **Last updated:** 2026-11-14
 
 Items have an id (`R<milestone>.<n>`), an owner (**maintainers** or **open**) and pending changes
 (`- [ ]`). Each item points to the requirement it serves in [specification.md](specification.md)
@@ -69,7 +69,12 @@ Anything marked **decision** waits for a maintainer.
   - [ ] `keep_with_next` on other bands (a detail row with the group footer, a report header with the first group)
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
 - [x] R2.4 Lines and boxes in bands (#10)
-  - [ ] Images in bands: from a field (blob or path) or embedded in the report, with size limits and ATTRIBUTION rules
+  - [x] Images in bands: PNG or JPEG embedded in the report or read from a field (base64, `data:` URI, or a database blob), kept in proportion or stretched, in HTML, PDF, DOCX and the designer (#10)
+    - [ ] Pictures from a path or URL in a field (a file next to the report), under the same allowed-paths rules as data files
+    - [ ] Odoo pictures kept in the filestore (`ir_attachment.store_fname`), not in the database
+    - [ ] Pictures in XLSX (anchored over the cells), with barcodes
+    - [ ] More formats: GIF, WebP, SVG (vector logos)
+    - [ ] Crop to fill the box ("cover") and alignment inside it
   - [x] Text colour and background on text elements, fixed or from a formula
   - [x] DOCX: fill an element's whole box with its background
 - [x] R2.5 Sub-reports (#11)

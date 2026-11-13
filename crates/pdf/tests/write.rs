@@ -101,3 +101,40 @@ fn a_page_size_of_zero_is_an_error_not_a_crash() {
     d.width_mm = 0.0;
     assert!(matches!(to_pdf(&d, &fonts, "t", &Cancel::default()), Err(Error::Invalid(_))));
 }
+
+fn picture(bytes: &[u8]) -> Shape {
+    let p = reportcraft_core::image::Picture::read(bytes).unwrap();
+    Shape::Image { format: p.format, width_px: p.width_px, height_px: p.height_px, data: p.data }
+}
+
+#[test]
+fn draws_pictures_once_however_many_pages_show_them() {
+    let Some(fonts) = fonts() else { return };
+    // Opaque, so no soft mask (another image object) comes with it.
+    let rgba = reportcraft_layout::pixels::Rgba { width: 2, height: 2, pixels: [200, 200, 200, 255].repeat(4) };
+    let logo = picture(&reportcraft_layout::pixels::encode_png(&rgba).unwrap());
+    let jpeg = picture(include_bytes!("../../layout/tests/pictures/red-blue-4x2.jpg"));
+    let mut d = doc(3);
+    for page in &mut d.pages {
+        page.items.push(shape(logo.clone()));
+        page.items.push(shape(jpeg.clone()));
+    }
+    let pdf = to_pdf(&d, &fonts, "t", &Cancel::default()).unwrap();
+    let body = String::from_utf8_lossy(&pdf.bytes);
+    assert_eq!(body.matches("/Subtype/Image").count(), 2, "one image object per picture");
+    assert!(body.contains("/DCTDecode"), "the JPEG is embedded as is");
+    assert!(pdf.warnings.iter().all(|w| !w.contains("picture")), "{:?}", pdf.warnings);
+}
+
+#[test]
+fn a_damaged_picture_is_left_out_with_a_warning() {
+    let Some(fonts) = fonts() else { return };
+    let rgba = reportcraft_layout::pixels::Rgba { width: 8, height: 8, pixels: vec![9; 256] };
+    let png = reportcraft_layout::pixels::encode_png(&rgba).unwrap();
+    // The header reads (so the layout keeps it), the pixel data is cut.
+    let mut d = doc(1);
+    d.pages[0].items.push(shape(picture(&png[..png.len() - 20])));
+    let pdf = to_pdf(&d, &fonts, "t", &Cancel::default()).unwrap();
+    assert!(pdf.warnings.iter().any(|w| w.contains("image/png picture") && w.contains("damaged")), "{:?}", pdf.warnings);
+    assert!(!String::from_utf8_lossy(&pdf.bytes).contains("/Subtype/Image"));
+}

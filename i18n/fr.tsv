@@ -161,3 +161,11 @@
 	encrypted	chiffré
 	encrypted, certificate checked	chiffré, certificat vérifié
 	encrypted when the server offers it	chiffré si le serveur le propose
+	Image	Image
+	embedded picture	image intégrée
+	Choose a picture…	Choisir une image…
+	Choose a picture	Choisir une image
+	no picture yet	pas encore d'image
+	keep proportions	garder les proportions
+	stretch to the box	étirer au cadre
+	{w} × {h} px, {kb} KB	{w} × {h} px, {kb} Ko

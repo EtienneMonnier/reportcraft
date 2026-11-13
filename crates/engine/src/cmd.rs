@@ -231,7 +231,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.addElement",
         label: "Add element",
         menu: "Insert",
-        params: r#"{"band": string, "element": {"x_mm", "y_mm", "width_mm", "height_mm": number, "content": {"kind": "text" | "field" | "formula" | "aggregate" | "parameter" | "line" | "rect" | "barcode" | …}, "style"?: {…}, "format"?: {…}}} (answers its index)"#,
+        params: r#"{"band": string, "element": {"x_mm", "y_mm", "width_mm", "height_mm": number, "content": {"kind": "text" | "field" | "formula" | "aggregate" | "parameter" | "line" | "rect" | "barcode" | "image" (with "data": base64 PNG or JPEG, or "field"; "fit"?: "contain" | "stretch") | …}, "style"?: {…}, "format"?: {…}}} (answers its index)"#,
         access: Access::Edit,
         run: report_add_element,
     },

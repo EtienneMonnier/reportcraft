@@ -59,8 +59,12 @@ craft-print = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb
 craft-i18n = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 craft-settings = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 keyring = "4.2"
+# Picture decoding (PNG, JPEG) for DOCX export, the designer's preview and checking a picture
+# before the PDF embeds it: the decoders Krilla already uses, so there is one copy of each.
+png = "0.18"
+zune-jpeg = "0.5"
 # Office export (decided: crates.io writers, MIT/Apache-2.0; GridCraft and WordCraft writers are
-# tied to their apps' models). No image support: barcodes are written as text for now.
+# tied to their apps' models). DOCX draws shapes and pictures as images; XLSX leaves them out for now.
 rust_xlsxwriter = { version = "0.102", default-features = false, features = ["chrono"] }
 docx-rs = { version = "0.4.22", default-features = false }
 # The designer (L6 and up only): egui on the suite's fork, the revisions craft-libs pins (patched

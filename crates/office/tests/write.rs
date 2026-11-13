@@ -87,7 +87,7 @@ fn xlsx_keeps_numbers_and_dates_typed() {
     let (r, rows) = report();
     let doc = render_continuous(&r, &rows, &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
     let out = to_xlsx(&doc, &Cancel::default()).unwrap();
-    assert_eq!(out.warnings, ["12 line(s), box(es) or barcode(s) are not written to XLSX yet"]);
+    assert_eq!(out.warnings, ["12 line(s), box(es), barcode(s) or picture(s) are not written to XLSX (not supported yet, or a damaged picture)"]);
     let sheet = part(&out.bytes, "xl/worksheets/sheet1.xml");
     let styles = part(&out.bytes, "xl/styles.xml");
     let strings = part(&out.bytes, "xl/sharedStrings.xml");
@@ -179,7 +179,7 @@ fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
     let doc = layout(&r, &RowSet::default(), &Params::new()).unwrap();
     let out = to_docx(&doc, &Cancel::default()).unwrap();
     // The diagonal line is the only shape left out.
-    assert_eq!(out.warnings, ["1 line(s), box(es) or barcode(s) are not written to DOCX yet"]);
+    assert_eq!(out.warnings, ["1 line(s), box(es), barcode(s) or picture(s) are not written to DOCX (not supported yet, or a damaged picture)"]);
     let xml = part(&out.bytes, "word/document.xml");
     // A line, a fill and four border edges, a barcode, a background: 8 pictures.
     assert_eq!(xml.matches("<wp:anchor ").count(), 8, "{xml}");
@@ -224,4 +224,53 @@ fn docx_draws_chart_wedges_as_pictures() {
     let xml = part(&out.bytes, "word/document.xml");
     // 12 wedges and their 12 legend squares that fit (as many as rows of the legend fit).
     assert!(xml.matches("<wp:anchor ").count() >= 12, "{}", xml.matches("<wp:anchor ").count());
+}
+
+#[test]
+fn docx_draws_pictures_with_jpeg_converted_to_png() {
+    use reportcraft_core::image::{ImageData, Picture};
+    use reportcraft_layout::pixels::{Rgba, decode, encode_png};
+    use reportcraft_model::ImageFit;
+    let png = encode_png(&Rgba { width: 3, height: 1, pixels: [0, 128, 255, 255].repeat(3) }).unwrap();
+    let jpeg = include_bytes!("../../layout/tests/pictures/red-blue-4x2.jpg");
+    let image = |x: f64, bytes: &[u8]| Element {
+        x_mm: x,
+        y_mm: 0.0,
+        width_mm: 30.0,
+        height_mm: 30.0,
+        content: Content::Image { data: Some(ImageData(bytes.into())), field: None, fit: ImageFit::Contain },
+        ..el(0.0, 1.0, Content::Text { text: String::new() }, None, Align::Left)
+    };
+    let mut r = Report::new("Pictures");
+    r.report_header = Band { height_mm: 40.0, elements: vec![image(0.0, &png), image(40.0, jpeg)], ..Band::default() };
+    let doc = layout(&r, &RowSet::default(), &Params::new()).unwrap();
+    let out = to_docx(&doc, &Cancel::default()).unwrap();
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let xml = part(&out.bytes, "word/document.xml");
+    assert_eq!(xml.matches("<wp:anchor ").count(), 2, "{xml}");
+    // 3 × 1 pixels kept in proportion in a 30 mm square: 30 × 10 mm, as EMUs.
+    assert!(xml.contains(r#"<wp:extent cx="1080000" cy="360000" />"#), "{xml}");
+    // Both media are PNG files; the JPEG's colours survive the conversion.
+    let media = media_parts(&out.bytes);
+    assert_eq!(media.len(), 2);
+    assert!(media.contains(&png));
+    let converted = media.iter().find(|m| **m != png).unwrap();
+    let pixels = decode(&Picture::read(converted).unwrap()).unwrap();
+    assert_eq!((pixels.width, pixels.height), (4, 2));
+    assert!(pixels.pixels[0] > 200 && pixels.pixels[2] < 60, "red on the left");
+}
+
+/// The files under `word/media/`.
+fn media_parts(docx: &[u8]) -> Vec<Vec<u8>> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
+    let names: Vec<String> =
+        zip.file_names().filter_map(Result::ok).filter(|n| n.starts_with("word/media/") && !n.ends_with('/')).map(|n| n.into_owned()).collect();
+    names
+        .iter()
+        .map(|n| {
+            let mut bytes = Vec::new();
+            zip.by_name(n).unwrap().read_to_end(&mut bytes).unwrap();
+            bytes
+        })
+        .collect()
 }

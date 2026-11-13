@@ -237,8 +237,19 @@ fn to_value(raw: Option<&str>, t: FieldType) -> Value {
             "f" => Value::Bool(false),
             other => Value::Text(other.to_owned()),
         },
-        FieldType::Text => Value::Text(raw.to_owned()),
+        FieldType::Text => picture(raw).unwrap_or_else(|| Value::Text(raw.to_owned())),
     }
+}
+
+/// A `bytea` value (hex text, `\x…`) holding a PNG or JPEG picture, as a `data:` URI an image
+/// element can show. Only values that start like a picture are decoded.
+fn picture(raw: &str) -> Option<Value> {
+    let hex = raw.strip_prefix("\\x")?;
+    if !(hex.starts_with("89504e47") || hex.starts_with("ffd8")) || hex.len() / 2 > reportcraft_core::limits::MAX_IMAGE_BYTES {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = hex.as_bytes().chunks(2).map(|p| std::str::from_utf8(p).ok().and_then(|p| u8::from_str_radix(p, 16).ok())).collect();
+    reportcraft_core::image::blob_value(&bytes?)
 }
 
 /// Runs one read-only statement through a cursor and collects up to `max_rows` rows.
@@ -450,6 +461,12 @@ mod tests {
         assert_eq!(to_value(Some("NaN"), FieldType::Number), Value::Text("NaN".into()));
         assert_eq!(to_value(Some("t"), FieldType::Bool), Value::Bool(true));
         assert_eq!(to_value(None, FieldType::Text), Value::Null);
+        // bytea holding a picture (here a JPEG start with a frame header) becomes a data: URI.
+        let jpeg = "\\xffd8ffc0000b080002000301011100";
+        let Value::Text(uri) = to_value(Some(jpeg), FieldType::Text) else { panic!() };
+        assert!(uri.starts_with("data:image/jpeg;base64,/9j/"), "{uri}");
+        assert_eq!(to_value(Some("\\x0001"), FieldType::Text), Value::Text("\\x0001".into()));
+        assert_eq!(to_value(Some("\\xffd8zz"), FieldType::Text), Value::Text("\\xffd8zz".into()));
         assert_eq!(field_type(&Type::NUMERIC), FieldType::Number);
         assert_eq!(field_type(&Type::DATE), FieldType::Text);
     }

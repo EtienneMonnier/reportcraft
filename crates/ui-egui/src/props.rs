@@ -11,7 +11,7 @@ pub(crate) fn finished(r: &Response) -> bool {
 }
 
 /// The kinds of content the panel can switch between, with a starting value for each.
-const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Chart", "Cross-tab", "Barcode"];
+const KINDS: &[&str] = &["Text", "Field", "Formula", "Total", "Parameter", "Page number", "Line", "Box", "Image", "Chart", "Cross-tab", "Barcode"];
 
 fn kind_of(c: &Content) -> &'static str {
     match c {
@@ -26,6 +26,7 @@ fn kind_of(c: &Content) -> &'static str {
         Content::RefreshedAt => "Refreshed at",
         Content::PrintedAt => "Printed at",
         Content::Barcode { .. } => "Barcode",
+        Content::Image { .. } => "Image",
         Content::Subreport { .. } => "Subreport",
         Content::Chart { .. } => "Chart",
         Content::Crosstab { .. } => "Cross-tab",
@@ -69,6 +70,7 @@ pub(crate) fn content_of(kind: &str, from: &Content, first_field: &str) -> Conte
             show_text: true,
             ec_level: reportcraft_model::EcLevel::M,
         },
+        "Image" => Content::Image { data: None, field: Some(field), fit: reportcraft_model::ImageFit::Contain },
         "Chart" => Content::Chart {
             chart: reportcraft_model::ChartKind::Bar,
             category: first_field.to_owned(),
@@ -124,7 +126,7 @@ pub(crate) fn element(ui: &mut Ui, el: &mut Element, fields: &[String]) -> bool 
         ui.end_row();
     });
     done |= content(ui, &mut el.content, fields);
-    if !matches!(el.content, Content::Line { .. } | Content::Rect { .. }) {
+    if !matches!(el.content, Content::Line { .. } | Content::Rect { .. } | Content::Image { .. }) {
         done |= style(ui, el);
         done |= format(ui, &mut el.format);
         done |= optional_formula(ui, "Colour formula", &mut el.color_formula);
@@ -217,6 +219,48 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
                 }
             });
         }
+        Content::Image { data, field, fit } => {
+            use reportcraft_model::ImageFit;
+            ui.horizontal(|ui| {
+                let mut from_field = field.is_some();
+                let a = ui.radio_value(&mut from_field, false, tl!("embedded picture")).changed();
+                let b = ui.radio_value(&mut from_field, true, tl!("from a field")).changed();
+                if a || b {
+                    // Switching to embedded keeps the element as it is until a picture is chosen.
+                    match (from_field, field.is_some()) {
+                        (true, false) => {
+                            *field = Some(first.to_owned());
+                            *data = None;
+                            done = true;
+                        }
+                        (false, true) => request_picture(ui.ctx()),
+                        _ => {}
+                    }
+                }
+                if let Some(f) = field.as_mut() {
+                    done |= field_combo(ui, "image field", f);
+                }
+            });
+            if field.is_none() {
+                ui.horizontal(|ui| {
+                    match data.as_ref().map(reportcraft_core::image::Picture::of) {
+                        Some(Ok(p)) => {
+                            ui.label(tf!("{w} × {h} px, {kb} KB", w = p.width_px, h = p.height_px, kb = p.data.0.len().div_ceil(1024)));
+                        }
+                        _ => {
+                            ui.label(tl!("no picture yet"));
+                        }
+                    }
+                    if ui.button(tl!("Choose a picture…")).clicked() {
+                        request_picture(ui.ctx());
+                    }
+                });
+            }
+            ui.horizontal(|ui| {
+                done |= ui.radio_value(fit, ImageFit::Contain, tl!("keep proportions")).changed();
+                done |= ui.radio_value(fit, ImageFit::Stretch, tl!("stretch to the box")).changed();
+            });
+        }
         Content::Crosstab { rows, columns, value, function, totals } => {
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("crosstab function").selected_text(crate::canvas::aggregate_name(*function)).show_ui(ui, |ui| {
@@ -283,6 +327,21 @@ fn content(ui: &mut Ui, c: &mut Content, fields: &[String]) -> bool {
         _ => {}
     }
     done
+}
+
+/// Where the image editor leaves its request for a picture file, which the designer answers
+/// with its file dialog (the panel has none).
+fn picture_request_id() -> egui::Id {
+    egui::Id::unique("reportcraft: choose a picture")
+}
+
+fn request_picture(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(picture_request_id(), true));
+}
+
+/// Whether the image editor asked for a picture file since the last call.
+pub(crate) fn take_picture_request(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(picture_request_id())).unwrap_or(false)
 }
 
 /// A colour kept as text (lines, boxes), edited with a colour button.
