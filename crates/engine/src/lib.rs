@@ -526,6 +526,37 @@ mod tests {
     }
 
     #[test]
+    fn sqlserver_connections_are_saved_and_never_show_their_password() {
+        let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
+        let mssql = json!({"name": "erp", "kind": "sqlserver", "host": "127.0.0.1", "user": "rc", "database": "rent", "password": "hunter2", "confirm": true});
+        assert_eq!(s.execute("data.saveConnection", &mssql).unwrap()["saved"], json!(true));
+        let listed = s.execute("data.connections", &json!({})).unwrap();
+        assert_eq!(listed["connections"][0]["kind"], json!("sqlserver"));
+        assert_eq!(listed["connections"][0]["target"], json!("rc@127.0.0.1:1433/rent"), "port 1433 by default");
+        // A port where nothing listens: the error and the log name the server, never the password.
+        s.execute(
+            "data.saveConnection",
+            &json!({"name": "erp", "kind": "sqlserver", "host": "127.0.0.1", "port": 1, "user": "rc", "database": "rent", "confirm": true}),
+        )
+        .unwrap();
+        let failed =
+            s.execute("data.loadSqlServer", &json!({"saved": "erp", "query": "SELECT 1 AS one", "timeoutSeconds": 5})).unwrap_err().to_string();
+        let log = s.execute("data.queryLog", &json!({})).unwrap().to_string();
+        assert!(!failed.contains("hunter2") && !log.contains("hunter2"), "{failed} {log}");
+        assert!(log.contains("rc@127.0.0.1:1/rent") && log.contains("sqlserver"), "{log}");
+        assert!(s.execute("data.testConnection", &json!({"name": "erp"})).unwrap_err().to_string().contains("cannot connect"));
+        // Wrong kinds and writing queries are refused before connecting.
+        assert!(s.execute("data.loadPostgres", &json!({"saved": "erp", "query": "SELECT 1"})).unwrap_err().to_string().contains("not PostgreSQL"));
+        let write = s.execute("data.loadSqlServer", &json!({"saved": "erp", "query": "DELETE FROM rentals"})).unwrap_err().to_string();
+        assert!(write.contains("only queries that read"), "{write}");
+        let bad_kind = s
+            .execute("data.saveConnection", &json!({"name": "x", "kind": "oracle", "host": "h", "user": "u", "database": "d"}))
+            .unwrap_err()
+            .to_string();
+        assert!(bad_kind.contains("sqlserver"), "{bad_kind}");
+    }
+
+    #[test]
     fn an_agent_session_uses_saved_connections_and_cannot_confirm_external_actions() {
         let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
         s.execute("data.saveConnection", &json!({"name": "local", "kind": "sqlite", "path": "/nonexistent/x.db", "confirm": true})).unwrap();
@@ -535,6 +566,9 @@ mod tests {
             ("data.describeSqlite", json!({"path": "/etc/passwd"})),
             ("data.previewPostgres", json!({"connection": "host=evil", "table": "t"})),
             ("data.loadPostgres", json!({"connection": "host=evil", "query": "SELECT 1"})),
+            ("data.loadSqlServer", json!({"connection": "Server=tcp:evil,1433", "query": "SELECT 1"})),
+            ("data.describeSqlServer", json!({"connection": "Server=tcp:evil,1433"})),
+            ("data.previewSqlServer", json!({"connection": "Server=tcp:evil,1433", "table": "t"})),
         ] {
             let err = s.execute(id, &params).unwrap_err().to_string();
             assert!(err.contains("saved connections only"), "{id}: {err}");

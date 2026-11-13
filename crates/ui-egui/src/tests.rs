@@ -363,6 +363,22 @@ fn print_connections_and_barcodes_from_the_designer() {
     assert!(d.run("data.deleteConnection", serde_json::json!({"name": "local", "confirm": true})).is_some());
     assert!(d.connection_list().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
+    // A SQL Server connection: the port follows the kind until one is typed.
+    if let Some(c) = d.connections.as_mut() {
+        c.set_kind("sqlserver");
+        assert_eq!(c.port, 1433);
+        c.port = 14339;
+        c.set_kind("postgres");
+        assert_eq!(c.port, 14339);
+        c.set_kind("sqlserver");
+        (c.name, c.user, c.database, c.password) = ("erp".into(), "rc".into(), "rent".into(), "hunter2".into());
+    }
+    assert!(frames(&mut d, 2) > 0, "the SQL Server form draws");
+    let params = d.connections.as_ref().map(crate::forms::Connections::params).unwrap_or_default();
+    assert_eq!(params["kind"], serde_json::json!("sqlserver"));
+    assert!(d.run("data.saveConnection", params).is_some(), "{}", d.status());
+    assert_eq!(d.connection_list().first().map(|c| c.1.as_str()), Some("sqlserver"));
+    assert!(d.run("data.deleteConnection", serde_json::json!({"name": "erp", "confirm": true})).is_some());
     // A barcode, inserted and drawn.
     d.selected_band = Some("detail".into());
     d.insert("Barcode");

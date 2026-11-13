@@ -314,7 +314,8 @@ impl Connections {
             Some("verify-full" | "verify-ca") => "Encrypt=true",
             _ => "Encrypt=true;TrustServerCertificate=true",
         };
-        let ado = format!("Server={};User Id={};Database={};{encryption}", ado_quote(&format!("tcp:{host},{port}")), ado_quote(user), ado_quote(database));
+        let ado =
+            format!("Server={};User Id={};Database={};{encryption}", ado_quote(&format!("tcp:{host},{port}")), ado_quote(user), ado_quote(database));
         Ok((ado, self.secrets.get(name)?))
     }
 
@@ -428,7 +429,8 @@ mod tests {
     #[test]
     fn sql_server_connections_hand_the_password_apart() {
         let mut c = Connections::in_memory();
-        let read: Connection = serde_json::from_str(r#"{"name":"mssql","kind":"sqlserver","host":"db","user":"rc \"x\"","database":"rent"}"#).unwrap();
+        let read: Connection =
+            serde_json::from_str(r#"{"name":"mssql","kind":"sqlserver","host":"db","user":"rc \"x\"","database":"rent"}"#).unwrap();
         assert_eq!(read.target.describe(), "rc \"x\"@db:1433/rent", "port 1433 by default");
         c.save(read, Some("s3;cr\"et")).unwrap();
         let (ado, password) = c.sqlserver("mssql").unwrap();

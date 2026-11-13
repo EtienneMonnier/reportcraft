@@ -517,3 +517,26 @@ server's name; `disable` sends nothing encrypted. The driver only knows `disable
 failed handshake says which check failed and what each mode does. Saved connections keep an
 `sslmode`; the designer offers it as a plain choice.
 
+## SQL Server through tiberius, read-only by three locks (R1.4)
+
+Following the pure-Rust decision above, SQL Server is read with tiberius (TDS 7.3, rustls, MIT or
+Apache-2.0), not ODBC. Its API is async; the source runs its own single-threaded tokio runtime for
+each call, so it stays synchronous like the other sources and the engine knows nothing of async.
+The connection string is ADO.NET's, the form SQL Server people already have; a password left out of
+it may come from `SQLCMDPASSWORD`, as `sqlcmd` does, so it needn't be on a command line. Saved
+connections use the same `sslmode` words as PostgreSQL: `disable` sends only the login encrypted
+(SQL Server always encrypts it), `prefer` and `require` encrypt without checking the certificate
+(`TrustServerCertificate=true`, as most servers have a self-signed one), `verify-full` checks it.
+
+SQL Server has no read-only transaction, so read-only rests on three locks: the query text is
+scanned first (one statement, starting with `SELECT` or `WITH`, comments, strings and `[names]`
+skipped, none of the words that write, run code, change the session or end the transaction), it
+then runs inside a transaction that is always rolled back (with `XACT_ABORT` and a lock wait limit),
+and the documentation asks for a login with only `db_datareader`, the real guarantee. The scan
+refuses some harmless queries (a column named `Insert` must be written `[Insert]`); that is the
+price of refusing before connecting. Parameters are bound as `@P1`, `@P2`… (`:name` in the
+report's query, as elsewhere), each with its own type. The time limit and Stop send a TDS
+attention, which stops the statement on the server. Values follow the column types; dates and
+times come as ISO text, as PostgreSQL's and SQLite's do, so formats and formulas treat them alike.
+In the CLI, the database options became one table of kinds (`--sqlite`, `--postgres`,
+`--sqlserver`, `--connection`), so a new database adds a row, not a branch in every match.

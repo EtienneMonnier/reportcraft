@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last updated:** 2026-11-11
+> **Last updated:** 2026-11-13
 
 Items have an id (`R<milestone>.<n>`), an owner (**maintainers** or **open**) and pending changes
 (`- [ ]`). Each item points to the requirement it serves in [specification.md](specification.md)
@@ -28,7 +28,12 @@ Anything marked **decision** waits for a maintainer.
   - [x] Let an MCP session use saved connections only (no raw file path or connection string), as §11 asks
   - [ ] Saved connections in report files by name (`"connection": "odoo-prod"`), so a report knows where its data lives
   - [ ] A connections panel in the designer (R3), with a password field that never shows the kept one
-- [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — decided 2026-11-11: pure Rust for now, so SQL Server through a Rust driver (tiberius) and no ODBC yet; ODBC (Advantage, others) waits, as it needs the system's driver manager and the vendor's C driver
+- [ ] R1.4 ODBC source (SQL Server and legacy databases such as Advantage) — decided 2026-11-11: pure Rust for now, so SQL Server through a Rust driver (tiberius) and no ODBC yet; ODBC (Advantage, others) waits, as it needs the system's driver manager and the vendor's C driver (#4)
+  - [x] SQL Server source in pure Rust (tiberius): read-only query, schema discovery and previews, saved connections, CLI `--sqlserver`, designer
+  - [ ] ODBC for Advantage and other databases with no Rust driver (waits on the pure-Rust decision)
+  - [ ] Windows (integrated) and Microsoft Entra logins (SQL Server logins only today)
+  - [ ] Named instances (`Server=host\INSTANCE`, found through the SQL Server Browser) and a CA file of the connection's own
+  - [ ] Run the live SQL Server tests in CI (needs a SQL Server service in craft-common-actions or a local job)
 - [x] R1.5 Report parameters passed to queries as bound parameters (never string-spliced) (#5)
 - [x] R1.6 Query log (what ran, when, how many rows) (#6)
   - [ ] Show the log in the designer's data panel (R3)
@@ -114,6 +119,7 @@ Anything marked **decision** waits for a maintainer.
 ## R3 — Designer (owner: maintainers)
 - [x] R3.1 `ui-egui` crate (L6) on craft-ui and the suite's egui fork; banded canvas with live preview (#15)
   - [ ] craft-ui's controls, icons, themes and panes (the first version uses plain egui on the suite's fork), and the suite's menu bar (craft-menu)
+  - [ ] The suite's toolbars, as in WordCraft, GridCraft and DeckCraft, for the start screen and for styling fields (font, size, bold, alignment, colours, format) — suggested by Etienne on 2026-11-13
   - [ ] Bold and the report's fonts in the preview (egui's default fonts have no bold face; craft-fonts)
   - [ ] Render the preview off the UI thread for large data, with progress and Stop (R1.9)
   - [x] Parameters panel: values for the report's parameters, used by the preview and the exports

@@ -54,9 +54,7 @@ fn setup(server: &str) {
             &[
                 "IF DB_ID('rc_live') IS NOT NULL BEGIN ALTER DATABASE rc_live SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE rc_live END",
                 "CREATE DATABASE rc_live",
-                &format!(
-                    "IF SUSER_ID('rc_live_reader') IS NULL CREATE LOGIN rc_live_reader WITH PASSWORD = '{READER_PASSWORD}', CHECK_POLICY = OFF"
-                ),
+                &format!("IF SUSER_ID('rc_live_reader') IS NULL CREATE LOGIN rc_live_reader WITH PASSWORD = '{READER_PASSWORD}', CHECK_POLICY = OFF"),
             ],
         );
         execute(

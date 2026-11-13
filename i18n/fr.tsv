@@ -154,6 +154,7 @@
 	columns	colonnes
 	Encryption	Chiffrement
 	none	aucun
+	the login only	l'identification seulement
 	encrypted	chiffré
 	encrypted, certificate checked	chiffré, certificat vérifié
 	encrypted when the server offers it	chiffré si le serveur le propose

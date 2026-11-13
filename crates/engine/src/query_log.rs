@@ -20,11 +20,11 @@ pub struct QueryLogEntry {
     pub at: String,
     /// The command that ran it (`data.loadSqlite`).
     pub command: String,
-    /// `sqlite`, `postgres`.
+    /// `sqlite`, `postgres`, `sqlserver`.
     pub source: String,
     /// The database file, or `user@host:port/database`.
     pub target: String,
-    /// The SQL as sent, with placeholders (`?1`, `$1`).
+    /// The SQL as sent, with placeholders (`?1`, `$1`, `@P1`).
     pub sql: String,
     /// The placeholders' values, in order (`null` for NULL).
     pub values: Vec<Option<String>>,

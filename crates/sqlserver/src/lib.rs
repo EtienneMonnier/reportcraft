@@ -18,7 +18,7 @@ mod ado;
 mod guard;
 
 use std::future::Future;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
 use futures_util::TryStreamExt;
@@ -26,12 +26,16 @@ use reportcraft_core::{Cancel, Column, Error, FieldType, Result, RowSet, Value, 
 use reportcraft_data::{BindValue, ColumnInfo, DataSource, ForeignKey, Schema, SchemaSource, Table, TableKind};
 use tiberius::{AuthMethod, Client, ColumnData, ColumnType, Config, FromSql, Query, QueryItem};
 use tokio::net::TcpStream;
+// tokio's clock: the crate is native only, and std's `Instant::now` is kept off wasm crates.
+use tokio::time::Instant;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 type Conn = Client<Compat<TcpStream>>;
 
 /// How long a query may run by default.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// The longest time limit a query may be given (a larger one is cut to this).
+const MAX_TIMEOUT: Duration = Duration::from_secs(24 * 3_600);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long stopping a statement or rolling back may take before the connection is just closed
 /// (which also rolls back).
@@ -83,6 +87,12 @@ impl SqlServerSource {
         Self::new(connection, "")
     }
 
+    /// The same database with this report query.
+    pub fn with_query(mut self, query: impl Into<String>) -> Self {
+        self.query = query.into();
+        self
+    }
+
     /// Stops the running statement on the server when `cancel` is raised (from another thread).
     pub fn with_cancel(mut self, cancel: Cancel) -> Self {
         self.cancel = cancel;
@@ -111,7 +121,7 @@ impl SqlServerSource {
 
     /// Stops the query once it has run this long.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = timeout.min(MAX_TIMEOUT);
         self
     }
 
@@ -132,9 +142,8 @@ impl SqlServerSource {
         let pairs = ado::pairs(&self.connection);
         // Like sqlcmd: a password left out of the connection string may come from SQLCMDPASSWORD,
         // so it needn't appear on a command line.
-        let password = self.password.clone().or_else(|| {
-            if ado::get(&pairs, ado::PASSWORD).is_none() { std::env::var("SQLCMDPASSWORD").ok() } else { None }
-        });
+        let password =
+            self.password.clone().or_else(|| if ado::get(&pairs, ado::PASSWORD).is_none() { std::env::var("SQLCMDPASSWORD").ok() } else { None });
         if let Some(password) = password
             && let Some(user) = ado::get(&pairs, ado::USER)
         {
@@ -153,7 +162,9 @@ impl SqlServerSource {
             .build()
             .map_err(|e| Error::Io(format!("cannot start the SQL Server client: {e}")))?;
         runtime.block_on(async {
-            let deadline = Instant::now() + self.timeout;
+            let now = Instant::now();
+            // The time limit is capped, so the sum fits; were it not, the query would just stop at once.
+            let deadline = now.checked_add(self.timeout).unwrap_or(now);
             let mut client = connect(config).await?;
             begin(&mut client, self.timeout).await?;
             let mut running = false;
@@ -287,9 +298,7 @@ fn to_value(data: &ColumnData<'static>) -> Value {
         })),
         ColumnData::Numeric(Some(n)) => number(f64::from(*n)),
         ColumnData::Xml(Some(x)) => Value::Text(x.to_string()),
-        ColumnData::DateTime(Some(_)) | ColumnData::SmallDateTime(Some(_)) | ColumnData::DateTime2(Some(_)) => {
-            text_of(NaiveDateTime::from_sql(data))
-        }
+        ColumnData::DateTime(Some(_)) | ColumnData::SmallDateTime(Some(_)) | ColumnData::DateTime2(Some(_)) => text_of(NaiveDateTime::from_sql(data)),
         ColumnData::Date(Some(_)) => text_of(NaiveDate::from_sql(data)),
         ColumnData::Time(Some(_)) => text_of(NaiveTime::from_sql(data)),
         ColumnData::DateTimeOffset(Some(_)) => text_of(DateTime::<FixedOffset>::from_sql(data)),
@@ -515,9 +524,7 @@ impl SchemaSource for SqlServerSource {
             }
             for r in catalog(client, PRIMARY_KEYS_SQL, cancel, deadline).await? {
                 let column = text(&r, 1);
-                if let Some(c) =
-                    index(int(&r, 0)).and_then(|i| tables.get_mut(i)).and_then(|t| t.columns.iter_mut().find(|c| c.name == column))
-                {
+                if let Some(c) = index(int(&r, 0)).and_then(|i| tables.get_mut(i)).and_then(|t| t.columns.iter_mut().find(|c| c.name == column)) {
                     c.primary_key = u32::try_from(int(&r, 2)).ok();
                 }
             }

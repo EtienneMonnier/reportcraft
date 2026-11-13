@@ -73,7 +73,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.saveConnection",
         label: "Save connection",
         menu: "Data",
-        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432), "user"?: string, "database"?: string, "sslmode"?: "disable" | "prefer" | "require" | "verify-full" (postgres), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
+        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres" | "sqlserver", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432, 1433 for sqlserver), "user"?: string, "database"?: string, "sslmode"?: "disable" | "prefer" | "require" | "verify-full" (postgres and sqlserver), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
         access: Access::External,
         run: data_save_connection,
     },
@@ -140,6 +140,30 @@ static COMMANDS: &[CommandSpec] = &[
         params: r#"{"connection": string (libpq string or postgresql:// URL) or "saved": string (a saved connection, password from the keychain), "table": string, "limit"?: integer (default 20, at most 1000)}"#,
         access: Access::Read,
         run: data_preview_postgres,
+    },
+    CommandSpec {
+        id: "data.loadSqlServer",
+        label: "Load SQL Server data",
+        menu: "Data",
+        params: r#"{"connection": string (ADO.NET connection string: Server=tcp:host,1433;User Id=…;Database=…; the password may come from SQLCMDPASSWORD) or "saved": string (a saved connection, password from the keychain), "query": string (one SELECT or WITH; report parameters as :name, :range.from, :range.to, IN (:list)), "params"?: {name: value or [values]}, "limit"?: integer, "timeoutSeconds"?: integer (default 30, at most 3600), "maxMegabytes"?: integer (memory the rows may take, default 1024, at most 16384), "cacheSeconds"?: integer (reuse the same query's rows read less than this long ago, at most 86400), "dataset"?: string (name it for a subreport instead of the report's own data)}"#,
+        access: Access::Edit,
+        run: data_load_sqlserver,
+    },
+    CommandSpec {
+        id: "data.describeSqlServer",
+        label: "Describe SQL Server database",
+        menu: "Data",
+        params: r#"{"connection": string (ADO.NET connection string) or "saved": string (a saved connection, password from the keychain), "table"?: string (only this table or view; `schema.table` outside dbo)}"#,
+        access: Access::Read,
+        run: data_describe_sqlserver,
+    },
+    CommandSpec {
+        id: "data.previewSqlServer",
+        label: "Preview SQL Server table",
+        menu: "Data",
+        params: r#"{"connection": string (ADO.NET connection string) or "saved": string (a saved connection, password from the keychain), "table": string, "limit"?: integer (default 20, at most 1000)}"#,
+        access: Access::Read,
+        run: data_preview_sqlserver,
     },
     CommandSpec { id: "data.datasets", label: "Datasets", menu: "Data", params: "{}", access: Access::Read, run: data_datasets },
     CommandSpec {
@@ -386,6 +410,35 @@ fn postgres_conninfo(s: &Session, command: &str, params: &Json) -> EngineResult<
     }
 }
 
+/// The SQL Server connection: `connection` (ADO.NET), or the saved connection named by `saved`
+/// with its password from the keychain. A source for schema and previews; never shown.
+#[cfg(not(target_arch = "wasm32"))]
+fn sqlserver_database(s: &Session, command: &str, params: &Json) -> EngineResult<reportcraft_sqlserver::SqlServerSource> {
+    match params.get("saved").and_then(Json::as_str) {
+        Some(name) => {
+            let (ado, password) = s.with_connections(|c| c.sqlserver(name))?;
+            Ok(reportcraft_sqlserver::SqlServerSource::database(ado).with_password(password))
+        }
+        None => {
+            raw_source_allowed(s, command)?;
+            let ado =
+                str_param(command, params, "connection").map_err(|_| bad(command, "`connection` or `saved` (a saved connection) is required"))?;
+            Ok(reportcraft_sqlserver::SqlServerSource::database(ado))
+        }
+    }
+}
+
+/// The database a saved connection of this kind points to, for its schema.
+#[cfg(not(target_arch = "wasm32"))]
+fn saved_database(s: &Session, command: &str, name: &str, kind: &str) -> EngineResult<Box<dyn reportcraft_data::SchemaSource>> {
+    let saved = json!({"saved": name});
+    Ok(match kind {
+        "sqlite" => Box::new(reportcraft_sqlite::SqliteSource::database(&sqlite_path(s, command, &saved)?)),
+        "sqlserver" => Box::new(sqlserver_database(s, command, &saved)?),
+        _ => Box::new(reportcraft_postgres::PostgresSource::database(&postgres_conninfo(s, command, &saved)?)),
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn data_connections(s: &mut Session, _: &Json) -> EngineResult<Json> {
     s.with_connections(|c| {
@@ -409,19 +462,28 @@ fn data_connections(s: &mut Session, _: &Json) -> EngineResult<Json> {
 fn connection_of(params: &Json) -> EngineResult<reportcraft_connections::Connection> {
     const CMD: &str = "data.saveConnection";
     let text = |k: &str| str_param(CMD, params, k).map(str::to_owned);
+    let port = |default: u16| match params.get("port") {
+        None | Some(Json::Null) => Ok(default),
+        Some(p) => p.as_u64().and_then(|p| u16::try_from(p).ok()).ok_or_else(|| bad(CMD, "`port` must be a port number")),
+    };
+    let sslmode = || params.get("sslmode").and_then(Json::as_str).filter(|m| !m.is_empty()).map(str::to_owned);
     let target = match str_param(CMD, params, "kind")? {
         "sqlite" => reportcraft_connections::Target::Sqlite { path: text("path")? },
         "postgres" => reportcraft_connections::Target::Postgres {
             host: text("host")?,
-            port: match params.get("port") {
-                None | Some(Json::Null) => 5432,
-                Some(p) => p.as_u64().and_then(|p| u16::try_from(p).ok()).ok_or_else(|| bad(CMD, "`port` must be a port number"))?,
-            },
+            port: port(5432)?,
             user: text("user")?,
             database: text("database")?,
-            sslmode: params.get("sslmode").and_then(Json::as_str).filter(|m| !m.is_empty()).map(str::to_owned),
+            sslmode: sslmode(),
         },
-        other => return Err(bad(CMD, format!("`kind` is sqlite or postgres, not `{other}`"))),
+        "sqlserver" => reportcraft_connections::Target::SqlServer {
+            host: text("host")?,
+            port: port(1433)?,
+            user: text("user")?,
+            database: text("database")?,
+            sslmode: sslmode(),
+        },
+        other => return Err(bad(CMD, format!("`kind` is sqlite, postgres or sqlserver, not `{other}`"))),
     };
     Ok(reportcraft_connections::Connection {
         name: text("name")?,
@@ -465,12 +527,7 @@ fn data_test_connection(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let kind = s.with_connections(|c| {
         c.get(name).map(|conn| conn.target.kind()).ok_or_else(|| reportcraft_core::Error::NotFound(format!("connection `{name}`")))
     })?;
-    let saved = json!({"saved": name});
-    let schema = if kind == "sqlite" {
-        reportcraft_data::SchemaSource::schema(&reportcraft_sqlite::SqliteSource::database(&sqlite_path(s, CMD, &saved)?))?
-    } else {
-        reportcraft_data::SchemaSource::schema(&reportcraft_postgres::PostgresSource::database(&postgres_conninfo(s, CMD, &saved)?))?
-    };
+    let schema = saved_database(s, CMD, name, kind)?.schema()?;
     Ok(json!({"ok": true, "kind": kind, "tables": schema.tables.len()}))
 }
 
@@ -701,6 +758,49 @@ fn data_preview_postgres(s: &mut Session, params: &Json) -> EngineResult<Json> {
     const CMD: &str = "data.previewPostgres";
     let connection = postgres_conninfo(s, CMD, params)?;
     preview(&reportcraft_postgres::PostgresSource::database(&connection), CMD, params)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_load_sqlserver(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.loadSqlServer";
+    let database = sqlserver_database(s, CMD, params)?;
+    let query = str_param(CMD, params, "query")?;
+    let (limit, timeout) = limits_of(params);
+    let bound = bound_query(s, CMD, query, params, reportcraft_data::Dialect::SqlServer)?;
+    let source = database
+        .with_query(bound.sql.clone())
+        .with_binds(bound.values.clone())
+        .with_timeout(timeout)
+        .with_cancel(s.cancel().clone())
+        .with_max_bytes(max_bytes_of(params));
+    let target = source.target();
+    load_from_database(s, Query { command: CMD, source: "sqlserver", target, bound: &bound, limit }, params, || source.read(limit))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_describe_sqlserver(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    describe(&sqlserver_database(s, "data.describeSqlServer", params)?, params)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_preview_sqlserver(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.previewSqlServer";
+    preview(&sqlserver_database(s, CMD, params)?, CMD, params)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_load_sqlserver(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("SQL Server is not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_describe_sqlserver(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("SQL Server is not available in the web build".into()).into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_preview_sqlserver(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("SQL Server is not available in the web build".into()).into())
 }
 
 #[cfg(target_arch = "wasm32")]

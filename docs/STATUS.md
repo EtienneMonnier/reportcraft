@@ -1,6 +1,6 @@
 # Status
 
-> **Last updated:** 2026-11-11 · Stage: foundation (pre-alpha)
+> **Last updated:** 2026-11-13 · Stage: foundation (pre-alpha)
 
 ## Works
 - Report definitions in JSON, validated, with a format version.
@@ -14,13 +14,23 @@
   Rust (rustls): `prefer` (the default) and `require` encrypt without checking the certificate,
   `verify-full` also checks it against the system's authorities (or `SSL_CERT_FILE`) and the
   server's name, `disable` doesn't encrypt; saved connections keep their `sslmode`.
-- Saved connections: a SQLite file or a PostgreSQL host, port, user and database saved by name in
+- SQL Server data (native builds, pure Rust through tiberius): one query, read through a stream,
+  time limit (a TDS attention stops it on the server), row and memory caps; schema discovery across
+  schemas (tables and views the login may read, columns, primary and foreign keys) and previews
+  (`data.loadSqlServer`, `data.describeSqlServer`, `data.previewSqlServer`, `--sqlserver CONN` in
+  `render`, `validate`, `print` and `schema`, with an ADO.NET connection string and the password in
+  `SQLCMDPASSWORD`). SQL Server has no read-only transaction, so a query must be one `SELECT` or
+  `WITH` with no word that writes, and runs in a transaction that is rolled back; a login with only
+  `db_datareader` is the guarantee. Parameters are bound as `@P1`, `@P2`…; dates and times come as
+  ISO text, as from the other databases. Encrypted with rustls: the certificate is checked unless
+  `TrustServerCertificate=true` (saved connections use the same `sslmode` words as PostgreSQL).
+- Saved connections: a SQLite file or a PostgreSQL or SQL Server host, port, user and database saved by name in
   the suite's settings file (craft-settings, `reportcraft/config.toml`, or `REPORTCRAFT_CONFIG_DIR`),
   the password in the system keychain (Secret Service, macOS Keychain, Windows Credential Manager),
   never in a file, a result or the query log. `data.connections`, `data.saveConnection` and
   `data.deleteConnection` (both change nothing without `"confirm": true`), `data.testConnection`;
-  every SQLite and PostgreSQL command takes `"saved": NAME` instead of a path or connection string.
-  CLI: `reportcraft-cli connections [list|save|delete|test]` (`--password-stdin`), and
+  every SQLite, PostgreSQL and SQL Server command takes `"saved": NAME` instead of a path or connection string.
+  CLI: `reportcraft-cli connections [list|save|delete|test]` (`--sqlserver`, `--password-stdin`), and
   `--connection NAME` in `render`, `validate`, `print` and `schema`.
 - SQLite schema discovery: tables, views, columns (declared and ReportCraft types, nullability,
   primary keys) and foreign keys, plus table previews (`data.describeSqlite`, `data.previewSqlite`,
@@ -86,8 +96,9 @@
   values, required, defaults; checked before rendering, listed by `report.parameters`, shown with
   formats (a date range writes both ends).
 - Parameters in queries, bound and never spliced: `:name`, `:range.from` / `:range.to`, `IN (:list)`
-  (`data.loadSqlite` / `data.loadPostgres` take `params`; the CLI's `--param` reaches the query).
-- Query log: every SQLite and PostgreSQL query the session ran, with its start time, target
+  (`data.loadSqlite`, `data.loadPostgres` and `data.loadSqlServer` take `params`; the CLI's `--param`
+  reaches the query).
+- Query log: every SQLite, PostgreSQL and SQL Server query the session ran, with its start time, target
   (file, or `user@host:port/database`, never the password), SQL as sent, bound values, duration and
   row count or error; the newest 200 are kept (`data.queryLog`, `data.clearQueryLog`,
   `--query-log` in `render` and `validate`, printed to stderr even when the query fails).
@@ -104,7 +115,7 @@
   or a date format. Loaded rows are shared, so a command no longer copies them.
 - Cancellation and limits: a running query or render stops on request (`Session::cancel_handle`;
   MCP `notifications/cancelled`), SQLite through its progress handler, PostgreSQL by a cancel sent
-  to the server; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
+  to the server, SQL Server by an attention on its connection; time limits on queries (30 s) and renders (120 s), memory limit on the rows read
   (1 GiB by default), all configurable (`timeoutSeconds`, `maxMegabytes`, CLI `--timeout`,
   `--max-memory`). A stopped command leaves the session as it was.
 - Formulas, Excel-style (`reportcraft-expr`): named formulas (`formulas: [{name, expression}]`) are
@@ -145,7 +156,7 @@
   (`report.setStructure`), the field list takes values for the parameters, and Report ▸ Check lists
   `report.validate`'s findings; File ▸ Print… prints (printer, copies, pages, two-sided, black and
   white, shrink to fit; Check shows the job without sending it); Data ▸ Connections… saves, tests
-  and deletes connections (the password to the keychain); barcodes and charts are inserted and
+  and deletes SQLite, PostgreSQL and SQL Server connections (the password to the keychain); barcodes and charts are inserted and
   edited like the rest; previews the rendered pages live after every change; saves the report and
   exports PDF, HTML, XLSX and DOCX. Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y)
   every change to the report, also as `edit.undo` / `edit.redo` for the CLI and MCP (100 steps).
@@ -156,8 +167,8 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 184 tests (plus 8 live PostgreSQL tests run on demand), including 17 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 186 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 17 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
-- No ODBC source yet (see `ROADMAP.md`).
+- No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
 - Not yet built or tested on Windows, macOS, BSD or wasm.

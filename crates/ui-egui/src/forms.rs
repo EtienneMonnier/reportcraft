@@ -110,14 +110,15 @@ fn duplex_name(d: &str) -> &'static str {
 pub(crate) struct Connections {
     pub list: Vec<(String, String, String)>,
     pub name: String,
-    pub postgres: bool,
+    /// `sqlite`, `postgres` or `sqlserver`, as `data.saveConnection` names them.
+    pub kind: &'static str,
     pub path: String,
     pub host: String,
     pub port: u16,
     pub user: String,
     pub database: String,
     pub password: String,
-    /// `""`: libpq's default (`prefer`).
+    /// `""`: the default (`prefer`: encrypted, certificate not checked).
     pub sslmode: String,
 }
 
@@ -134,17 +135,30 @@ pub(crate) enum Manage {
 
 impl Connections {
     pub(crate) fn new(list: Vec<(String, String, String)>) -> Self {
-        Self { list, port: 5432, host: "localhost".into(), ..Self::default() }
+        Self { list, kind: "sqlite", port: 5432, host: "localhost".into(), ..Self::default() }
+    }
+
+    fn server(&self) -> bool {
+        self.kind != "sqlite"
+    }
+
+    /// Picks the kind of database; the port follows it unless one was typed.
+    pub(crate) fn set_kind(&mut self, kind: &'static str) {
+        let default_port = |k: &str| if k == "sqlserver" { 1433 } else { 5432 };
+        if self.port == default_port(self.kind) {
+            self.port = default_port(kind);
+        }
+        self.kind = kind;
     }
 
     /// The `data.saveConnection` parameters (a password only when one was typed).
     pub(crate) fn params(&self) -> Json {
-        let mut p = if self.postgres {
-            json!({"name": self.name, "kind": "postgres", "host": self.host, "port": self.port, "user": self.user, "database": self.database, "sslmode": self.sslmode})
+        let mut p = if self.server() {
+            json!({"name": self.name, "kind": self.kind, "host": self.host, "port": self.port, "user": self.user, "database": self.database, "sslmode": self.sslmode})
         } else {
             json!({"name": self.name, "kind": "sqlite", "path": self.path})
         };
-        if self.postgres && !self.password.is_empty() {
+        if self.server() && !self.password.is_empty() {
             p["password"] = json!(self.password);
         }
         p["confirm"] = json!(true);
@@ -178,8 +192,10 @@ pub(crate) fn connections(ctx: &egui::Context, c: &mut Connections) -> Manage {
     if open { ask } else { Manage::Close }
 }
 
-fn sslmode_name(m: &str) -> &'static str {
+fn sslmode_name(m: &str, kind: &str) -> &'static str {
     match m {
+        // SQL Server always encrypts the login.
+        "disable" if kind == "sqlserver" => tl!("the login only"),
         "disable" => tl!("none"),
         "require" => tl!("encrypted"),
         "verify-full" => tl!("encrypted, certificate checked"),
@@ -194,11 +210,14 @@ fn form(ui: &mut Ui, c: &mut Connections, ask: &mut Manage) {
         ui.end_row();
         ui.label(tl!("Database"));
         ui.horizontal(|ui| {
-            ui.radio_value(&mut c.postgres, false, "SQLite");
-            ui.radio_value(&mut c.postgres, true, "PostgreSQL");
+            for (kind, label) in [("sqlite", "SQLite"), ("postgres", "PostgreSQL"), ("sqlserver", "SQL Server")] {
+                if ui.radio(c.kind == kind, label).clicked() {
+                    c.set_kind(kind);
+                }
+            }
         });
         ui.end_row();
-        if c.postgres {
+        if c.server() {
             ui.label(tl!("Host"));
             ui.text_edit_singleline(&mut c.host);
             ui.end_row();
@@ -212,9 +231,9 @@ fn form(ui: &mut Ui, c: &mut Connections, ask: &mut Manage) {
             ui.text_edit_singleline(&mut c.database);
             ui.end_row();
             ui.label(tl!("Encryption"));
-            egui::ComboBox::from_id_salt("sslmode").selected_text(sslmode_name(&c.sslmode)).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("sslmode").selected_text(sslmode_name(&c.sslmode, c.kind)).show_ui(ui, |ui| {
                 for m in ["", "disable", "require", "verify-full"] {
-                    ui.selectable_value(&mut c.sslmode, m.to_owned(), sslmode_name(m));
+                    ui.selectable_value(&mut c.sslmode, m.to_owned(), sslmode_name(m, c.kind));
                 }
             });
             ui.end_row();
