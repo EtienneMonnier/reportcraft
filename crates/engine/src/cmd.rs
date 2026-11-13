@@ -73,7 +73,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.saveConnection",
         label: "Save connection",
         menu: "Data",
-        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres" | "sqlserver", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432, 1433 for sqlserver), "user"?: string, "database"?: string, "sslmode"?: "disable" | "prefer" | "require" | "verify-full" (postgres and sqlserver), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
+        params: r#"{"name": string (letters, digits, _ - .), "kind": "sqlite" | "postgres" | "sqlserver", "path"?: string (sqlite), "host"?: string, "port"?: integer (default 5432, 1433 for sqlserver), "user"?: string, "database"?: string, "sslmode"?: "disable" | "prefer" | "require" | "verify-full" (postgres and sqlserver), "password"?: string (kept in the system keychain, never in files; "" removes it; absent keeps it), "description"?: string, "pictures"?: string (a folder on this computer where image fields' relative paths are read, such as an Odoo filestore `…/filestore/DATABASE`), "confirm"?: boolean (save; without it nothing changes and the result says what would be saved)}"#,
         access: Access::External,
         run: data_save_connection,
     },
@@ -192,6 +192,14 @@ static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec { id: "data.clearQueryLog", label: "Clear query log", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_query_log },
     CommandSpec { id: "data.clearCache", label: "Clear query cache", menu: "Data", params: "{}", access: Access::Edit, run: data_clear_cache },
+    CommandSpec {
+        id: "data.setPictureFolder",
+        label: "Picture folder",
+        menu: "Data",
+        params: r#"{"path"?: string (a folder where image fields' relative paths are read, such as an Odoo filestore `…/filestore/DATABASE`; absent or "" clears it, and the saved connection's folder applies again)} (answers the folder in use)"#,
+        access: Access::Edit,
+        run: data_set_picture_folder,
+    },
     CommandSpec { id: "report.parameters", label: "Report parameters", menu: "Report", params: "{}", access: Access::Read, run: report_parameters },
     CommandSpec { id: "edit.undo", label: "Undo", menu: "Edit", params: "{}", access: Access::Edit, run: edit_undo },
     CommandSpec { id: "edit.redo", label: "Redo", menu: "Edit", params: "{}", access: Access::Edit, run: edit_redo },
@@ -359,6 +367,8 @@ fn data_datasets(s: &mut Session, _: &Json) -> EngineResult<Json> {
 fn set_rows(s: &mut Session, rows: RowSet) {
     s.rows = std::sync::Arc::new(rows);
     s.refreshed_at = now_local();
+    // Not from a saved connection: its picture folder no longer applies.
+    s.connection_pictures = None;
 }
 
 /// The time now, RFC 3339 with the local offset; `None` in the web build (no clock).
@@ -465,6 +475,7 @@ fn data_connections(s: &mut Session, _: &Json) -> EngineResult<Json> {
                 "kind": conn.target.kind(),
                 "target": conn.target.describe(),
                 "description": conn.description,
+                "pictures": conn.pictures,
                 "password": c.has_password(&conn.name).unwrap_or(false),
             }));
         }
@@ -505,6 +516,7 @@ fn connection_of(params: &Json) -> EngineResult<reportcraft_connections::Connect
         name: text("name")?,
         target,
         description: params.get("description").and_then(Json::as_str).unwrap_or_default().to_owned(),
+        pictures: params.get("pictures").and_then(Json::as_str).map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned),
     })
 }
 
@@ -612,19 +624,33 @@ fn load_from_database(s: &mut Session, q: Query<'_>, params: &Json, read: impl F
         logged.entry.from_cache = true;
         logged.entry.rows = Some(hit.rows.rows.len());
         s.query_log.push(logged.entry);
-        return Ok(hand_over(s, dataset, hit.rows, Some(hit.refreshed_at), true));
+        return Ok(hand_over(s, dataset, hit.rows, Some(hit.refreshed_at), true, saved_pictures(s, params)));
     }
     let rows = std::sync::Arc::new(logged.finish(&mut s.query_log, read())?);
     let at = now_local();
     if max_age > 0 {
         s.cache.put(key, std::sync::Arc::clone(&rows), at.clone().unwrap_or_default());
     }
-    Ok(hand_over(s, dataset, rows, at, false))
+    Ok(hand_over(s, dataset, rows, at, false, saved_pictures(s, params)))
+}
+
+/// The picture folder of the saved connection `params` names (`saved`), when it has one.
+#[cfg(not(target_arch = "wasm32"))]
+fn saved_pictures(s: &Session, params: &Json) -> Option<std::path::PathBuf> {
+    let name = params.get("saved").and_then(Json::as_str)?;
+    s.with_connections(|c| Ok(c.get(name).and_then(|conn| conn.pictures.clone()))).ok().flatten().map(std::path::PathBuf::from)
 }
 
 /// Gives loaded rows to the report, or to a named dataset, and says what was loaded.
 #[cfg(not(target_arch = "wasm32"))]
-fn hand_over(s: &mut Session, dataset: Option<String>, rows: std::sync::Arc<RowSet>, at: Option<String>, from_cache: bool) -> Json {
+fn hand_over(
+    s: &mut Session,
+    dataset: Option<String>,
+    rows: std::sync::Arc<RowSet>,
+    at: Option<String>,
+    from_cache: bool,
+    pictures: Option<std::path::PathBuf>,
+) -> Json {
     let mut out = json!({"columns": rows.columns, "rows": rows.rows.len(), "refreshedAt": at, "fromCache": from_cache});
     match dataset {
         Some(name) => {
@@ -636,6 +662,7 @@ fn hand_over(s: &mut Session, dataset: Option<String>, rows: std::sync::Arc<RowS
         None => {
             s.rows = rows;
             s.refreshed_at = at;
+            s.connection_pictures = pictures;
         }
     }
     out
@@ -1337,7 +1364,8 @@ fn file_print(s: &mut Session, params: &Json) -> EngineResult<Json> {
     if let Some(now) = now_local() {
         values.insert(reportcraft_layout::PRINTED_AT.to_owned(), now);
     }
-    let mut doc = reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?;
+    let files = picture_files(s);
+    let mut doc = reportcraft_layout::render_with_files(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params), files.as_ref())?;
     let total = doc.pages.len();
     if let Some(spec) = params.get("pages").and_then(Json::as_str) {
         doc = reportcraft_layout::select_pages(&doc, spec)?;
@@ -1381,10 +1409,11 @@ fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
         return Err(bad("report.render", format!("unknown format `{format}` (html, pdf, xlsx, docx or json)")));
     }
     // A spreadsheet isn't paginated: one continuous sheet, the page header once at the top.
+    let files = picture_files(s);
     let doc = if format == "xlsx" {
-        reportcraft_layout::render_continuous(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?
+        reportcraft_layout::render_continuous_with_files(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params), files.as_ref())?
     } else {
-        reportcraft_layout::render(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params))?
+        reportcraft_layout::render_with_files(&s.report, &s.rows, &s.datasets, &values, &render_limit(s, params), files.as_ref())?
     };
     match format {
         "html" => Ok(json!({"pages": doc.pages.len(), "html": to_html(&doc), "refreshedAt": s.refreshed_at})),
@@ -1392,4 +1421,49 @@ fn report_render(s: &mut Session, params: &Json) -> EngineResult<Json> {
         "xlsx" | "docx" => render_office(s, &doc, format, &render_limit(s, params)),
         _ => serde_json::to_value(&doc).map_err(|e| EngineError::Internal(e.to_string())),
     }
+}
+
+/// The picture files image fields may name: the session's picture folder, if it has one that can
+/// be read (else none, with a note in the log).
+#[cfg(not(target_arch = "wasm32"))]
+fn picture_files(s: &Session) -> Box<dyn reportcraft_layout::PictureFiles> {
+    match s.pictures().map(crate::pictures::FolderPictures::new) {
+        Some(Ok(files)) => Box::new(files),
+        Some(Err(e)) => {
+            log::warn!("pictures: {e}");
+            Box::new(reportcraft_layout::NoPictureFiles)
+        }
+        None => Box::new(reportcraft_layout::NoPictureFiles),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn picture_files(_: &Session) -> Box<dyn reportcraft_layout::PictureFiles> {
+    Box::new(reportcraft_layout::NoPictureFiles)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_set_picture_folder(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    const CMD: &str = "data.setPictureFolder";
+    match params.get("path").and_then(Json::as_str).map(str::trim).filter(|p| !p.is_empty()) {
+        Some(path) => {
+            raw_source_allowed(s, CMD)?;
+            crate::pictures::FolderPictures::new(std::path::Path::new(path))?;
+            s.picture_folder = Some(std::path::PathBuf::from(path));
+        }
+        None => s.picture_folder = None,
+    }
+    let from = if s.picture_folder.is_some() {
+        "set"
+    } else if s.connection_pictures.is_some() {
+        "connection"
+    } else {
+        "none"
+    };
+    Ok(json!({"folder": s.pictures().map(|p| p.display().to_string()), "from": from}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn data_set_picture_folder(_: &mut Session, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("picture folders are not available in the web build".into()).into())
 }

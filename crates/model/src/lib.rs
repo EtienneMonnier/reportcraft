@@ -1651,7 +1651,7 @@ mod tests {
         };
         assert!(with(read).validate().is_ok());
         let not_a_picture = Content::Image { data: Some(ImageData(b"GIF89a".to_vec().into())), field: None, fit: ImageFit::Contain };
-        assert!(with(not_a_picture).validate().unwrap_err().to_string().contains("not a PNG or JPEG"));
+        assert!(with(not_a_picture).validate().unwrap_err().to_string().contains("not a PNG, JPEG or WebP"));
         let neither = Content::Image { data: None, field: None, fit: ImageFit::Contain };
         assert!(with(neither).validate().unwrap_err().to_string().contains("either embedded"));
         let columns = [Column { name: "asset".into(), field_type: FieldType::Text }];

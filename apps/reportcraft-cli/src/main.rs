@@ -11,21 +11,23 @@ const USAGE: &str = "\
 reportcraft-cli <subcommand>
 
   commands [--json]                         every engine command with its parameters
-  render <report.json|--sample NAME> [--data FILE.csv | (--sqlite FILE.db | --postgres CONN | --sqlserver CONN) --query SQL] [--format html|pdf|xlsx|docx|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
-  validate <report.json|--sample NAME> [--data FILE.csv | (--sqlite FILE.db | --postgres CONN | --sqlserver CONN) --query SQL] [--json] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB]
+  render <report.json|--sample NAME> [--data FILE.csv | (--sqlite FILE.db | --postgres CONN | --sqlserver CONN) --query SQL] [--format html|pdf|xlsx|docx|json] [--param NAME=VALUE]... (repeat a name for several values) [--out FILE] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB] [--pictures DIR]
+  validate <report.json|--sample NAME> [--data FILE.csv | (--sqlite FILE.db | --postgres CONN | --sqlserver CONN) --query SQL] [--json] [--sub NAME=FILE.csv]... [--sub-query NAME=SQL]... [--query-log] [--timeout SECONDS] [--max-memory MB] [--pictures DIR]
                                             errors and warnings, checked against the data when given
   (--sub NAME=FILE.csv and --sub-query NAME=SQL load a dataset for subreports; --sub-query runs on
    the same database, after --query;
    --query-log prints each query run, its time and row count, to stderr;
    --timeout SECONDS limits the query and the render, default 30 and 120;
-   --max-memory MB limits the rows read, default 1024)
+   --max-memory MB limits the rows read, default 1024;
+   --pictures DIR: where image fields' relative paths are read, such as an Odoo filestore
+   …/filestore/DATABASE; a saved connection may keep one, see `connections save --pictures`)
   print <report.json|--sample NAME> [data options as for render] [--param NAME=VALUE]... [--printer NAME] [--copies N] [--duplex long|short|off] [--grayscale] [--fit] [--pages 1-3,5] [--dry-run]
                                             print through the system spooler; --dry-run only shows the job
   printers                                  the system's printers
   send PORT METHOD [JSON]                   one request to the designer started with `reportcraft --control PORT`
                                             (an engine command id, ui.state, ui.screenshot with a path to a .ppm file, app.quit)
   connections [list]                        saved connections (definitions in the settings file, passwords in the keychain)
-  connections save NAME (--sqlite FILE | [--sqlserver] --host HOST [--port N] --user USER --database DB [--sslmode MODE] [--password-stdin]) [--description TEXT]
+  connections save NAME (--sqlite FILE | [--sqlserver] --host HOST [--port N] --user USER --database DB [--sslmode MODE] [--password-stdin]) [--description TEXT] [--pictures DIR]
                                             (PostgreSQL unless --sqlserver; ports 5432 and 1433 by default)
   connections delete NAME | connections test NAME
   (--connection NAME --query SQL loads from a saved connection in render, validate and print;
@@ -176,6 +178,9 @@ fn load_inputs<'a>(
             "--sub-query" => sub_queries.push(named(flag_value(&mut it, a)?, a)?),
             "--timeout" => timeout = Some(number(flag_value(&mut it, a)?, a)?),
             "--max-memory" => max_memory = Some(number(flag_value(&mut it, a)?, a)?),
+            "--pictures" => {
+                exec(&mut s, "data.setPictureFolder", json!({"path": flag_value(&mut it, a)?}))?;
+            }
             path if !path.starts_with("--") => {
                 exec(&mut s, "report.load", json!({"json": read(path)?}))?;
             }
@@ -368,8 +373,9 @@ fn connections(args: &[String]) -> Result<(), String> {
             }
             for c in list {
                 let key = if c["password"] == json!(true) { "  (password in the keychain)" } else { "" };
+                let pictures = c["pictures"].as_str().map(|p| format!("  (pictures in {p})")).unwrap_or_default();
                 println!(
-                    "{:<16} {:<9} {}{key}",
+                    "{:<16} {:<9} {}{key}{pictures}",
                     c["name"].as_str().unwrap_or(""),
                     c["kind"].as_str().unwrap_or(""),
                     c["target"].as_str().unwrap_or("")
@@ -402,6 +408,7 @@ fn connections(args: &[String]) -> Result<(), String> {
                         a.trim_start_matches("--")
                     }
                     "--description" => "description",
+                    "--pictures" => "pictures",
                     "--port" => {
                         let port = flag_value(&mut it, a)?.parse::<u16>().map_err(|_| "`--port` expects a port number")?;
                         p["port"] = json!(port);

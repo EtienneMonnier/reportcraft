@@ -4128,6 +4128,7 @@ name = "reportcraft-layout"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "image-webp",
  "png",
  "reportcraft-barcode",
  "reportcraft-core",
