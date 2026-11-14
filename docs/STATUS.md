@@ -61,8 +61,10 @@
   paragraph per line at its height and a tab stop per item (left, right or centred as the item is
   aligned), so the text stays editable; backgrounds, lines, boxes, barcodes and images are pictures
   anchored behind the text at their place (JPEG converted to PNG; diagonal lines are left out with a
-  warning). Both open in GridCraft and WordCraft; the same report gives the same file. XLSX leaves
-  lines, boxes, barcodes and images out with a warning.
+  warning). Both open in GridCraft and WordCraft; the same report gives the same file. XLSX places
+  images and barcodes as pictures anchored on the row of the line they stand beside (in a column
+  of their own, the row grown to their height, text beside them centred) and leaves lines, boxes
+  and charts out with a warning.
 - Printing through craft-libs' `craft-print` (CUPS `lp` on Linux and macOS, the Windows print API):
   `file.printers` lists the printers, `file.print` renders the report to PDF and sends it with
   printer, copies (1–99), collation, duplex, grayscale, exact size or shrink to fit, and page ranges
@@ -191,7 +193,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 211 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 228 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

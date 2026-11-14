@@ -278,3 +278,72 @@ fn media_parts(docx: &[u8]) -> Vec<Vec<u8>> {
         })
         .collect()
 }
+
+#[test]
+fn xlsx_places_pictures_and_barcodes_on_their_rows() {
+    use reportcraft_core::image::ImageData;
+    use reportcraft_layout::pixels::{Rgba, encode_png};
+    use reportcraft_model::{EcLevel, ImageFit, Symbology};
+    let png = |w: u32, h: u32| encode_png(&Rgba { width: w, height: h, pixels: [30, 60, 90, 255].repeat((w * h) as usize) }).unwrap();
+    let at = |x: f64, y: f64, w: f64, h: f64, content: Content| Element {
+        x_mm: x,
+        y_mm: y,
+        width_mm: w,
+        height_mm: h,
+        ..el(0.0, 1.0, content, None, Align::Left)
+    };
+    let mut r = Report::new("Catalogue");
+    r.report_header = Band {
+        height_mm: 22.0,
+        elements: vec![
+            at(0.0, 0.0, 40.0, 20.0, Content::Image { data: Some(ImageData(png(80, 40).into())), field: None, fit: ImageFit::Contain }),
+            at(50.0, 2.0, 100.0, 6.0, Content::Text { text: "Catalogue".into() }),
+        ],
+        ..Band::default()
+    };
+    r.detail = Band {
+        height_mm: 26.0,
+        elements: vec![
+            at(0.0, 1.0, 30.0, 24.0, Content::Image { data: None, field: Some("photo".into()), fit: ImageFit::Stretch }),
+            at(50.0, 9.0, 60.0, 5.0, Content::Field { field: "item".into() }),
+            at(
+                120.0,
+                1.0,
+                24.0,
+                24.0,
+                Content::Barcode { symbology: Symbology::Qr, field: Some("item".into()), text: None, show_text: false, ec_level: EcLevel::M },
+            ),
+        ],
+        ..Band::default()
+    };
+    let photo = reportcraft_core::image::Picture::read(&png(30, 24)).unwrap().data_uri();
+    let rows = RowSet {
+        columns: vec![Column { name: "item".into(), field_type: FieldType::Text }, Column { name: "photo".into(), field_type: FieldType::Text }],
+        rows: vec![vec![Value::Text("Lift".into()), Value::Text(photo)], vec![Value::Text("Saw".into()), Value::Null]],
+    };
+    let doc = render_continuous(&r, &rows, &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
+    let out = to_xlsx(&doc, &Cancel::default()).unwrap();
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let drawing = part(&out.bytes, "xl/drawings/drawing1.xml");
+    // The logo, one photo, two QR codes: each anchored at its row (0: the title's, 1 and 2: the items').
+    let anchors: Vec<(String, String)> = drawing
+        .split("<xdr:from>")
+        .skip(1)
+        .map(|a| {
+            let tag = |t: &str| a.split(&format!("<xdr:{t}>")).nth(1).and_then(|x| x.split('<').next()).unwrap_or("").to_owned();
+            (tag("col"), tag("row"))
+        })
+        .collect();
+    let mut rows_of: Vec<&str> = anchors.iter().map(|(_, r)| r.as_str()).collect();
+    rows_of.sort_unstable();
+    assert_eq!(rows_of, ["0", "1", "1", "2"], "{anchors:?}");
+    // Pictures get columns of their own, left of the text: the logo and the photo in column A.
+    assert!(anchors.iter().filter(|(c, _)| c == "0").count() == 2, "{anchors:?}");
+    let sheet = part(&out.bytes, "xl/worksheets/sheet1.xml");
+    // Rows grow to their pictures, in whole pixels: 20 mm (57 pt) for the logo's, 24 mm (68.25 pt)
+    // for an item's photo and QR code; text beside them is centred.
+    assert!(sheet.contains(r#"<row r="1" spans="2:2" ht="57""#), "{sheet}");
+    assert_eq!(sheet.matches(r#"ht="68.25""#).count(), 2, "{sheet}");
+    assert!(part(&out.bytes, "xl/styles.xml").contains(r#"vertical="center""#));
+    assert!(sheet.contains("Lift") || part(&out.bytes, "xl/sharedStrings.xml").contains("Lift"));
+}
