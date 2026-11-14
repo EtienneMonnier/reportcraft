@@ -1,0 +1,16 @@
+[package]
+name = "reportcraft-qweb"
+description = "Odoo QWeb report templates read into ReportCraft reports, with sample data to preview them (L2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+reportcraft-core.workspace = true
+reportcraft-model.workspace = true
+roxmltree.workspace = true
+
+[lints]
+workspace = true

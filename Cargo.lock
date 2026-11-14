@@ -4108,6 +4108,7 @@ dependencies = [
  "reportcraft-office",
  "reportcraft-pdf",
  "reportcraft-postgres",
+ "reportcraft-qweb",
  "reportcraft-sqlite",
  "reportcraft-sqlserver",
  "rusqlite",
@@ -4195,6 +4196,15 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "tokio-postgres-rustls",
+]
+
+[[package]]
+name = "reportcraft-qweb"
+version = "0.1.0"
+dependencies = [
+ "reportcraft-core",
+ "reportcraft-model",
+ "roxmltree",
 ]
 
 [[package]]

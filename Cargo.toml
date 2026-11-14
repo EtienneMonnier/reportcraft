@@ -26,6 +26,7 @@ reportcraft-sqlserver = { path = "crates/sqlserver" }
 reportcraft-ui-egui = { path = "crates/ui-egui" }
 reportcraft-engine = { path = "crates/engine" }
 reportcraft-mcp = { path = "crates/mcp" }
+reportcraft-qweb = { path = "crates/qweb" }
 
 # foundation (same versions as the sibling apps)
 thiserror = "2"
@@ -66,6 +67,9 @@ zune-jpeg = "0.5"
 image-webp = "0.2"
 # Office export (decided: crates.io writers, MIT/Apache-2.0; GridCraft and WordCraft writers are
 # tied to their apps' models). DOCX draws shapes and pictures as images; XLSX leaves them out for now.
+# Odoo QWeb templates (R4.1): a read-only XML tree, no dependencies, already in the lock file
+# through the PDF stack.
+roxmltree = "0.21"
 rust_xlsxwriter = { version = "0.102", default-features = false, features = ["chrono"] }
 docx-rs = { version = "0.4.22", default-features = false }
 # The designer (L6 and up only): egui on the suite's fork, the revisions craft-libs pins (patched

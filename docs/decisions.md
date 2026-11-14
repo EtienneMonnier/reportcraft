@@ -627,3 +627,43 @@ Images and barcodes share the code DOCX already used (`pictures.rs`): pictures a
 and sampled down to their print size once, barcodes drawn black and white with their quiet zone.
 Lines, boxes and charts are still left out of XLSX with a warning; cell borders could stand in for
 lines and boxes later.
+
+## Odoo QWeb templates: imported and previewed, not written back (R4.1)
+
+Scope decided with the maintainer on 2026-11-14: a QWeb report template is *read* into a
+ReportCraft report and previewed on sample rows; ReportCraft doesn't write QWeb back. Writing back
+would mean keeping Odoo's HTML, Bootstrap classes and Python expressions intact through every edit,
+which a banded model can't hold; the value is in moving a report over, then editing it here.
+
+Only the format is used, as Odoo's documentation describes it (`t-foreach`, `t-as`, `t-if`,
+`t-field`, `t-call`…); no Odoo code is read into the converter or copied (Odoo is LGPL). The tests
+use templates written for them. Real templates were tried as local input only, never committed.
+
+How the template maps to the model:
+- **Data.** A converted report reads one row per line of each document, columns named as the
+  template writes them (`o.partner_id.name`, `line.quantity`), the document's columns repeated on
+  its lines, `o.id` telling documents apart. Keeping the template's names makes each column
+  traceable to the template and lets SQL alias to it (`AS "o.name"`); the formula language already
+  reads dotted names (`[o.amount_total]`).
+- **Bands.** `t-foreach="docs"` becomes a group on `o.id` with a page break. The first loop in a
+  document's table (whatever it loops over: `o.invoice_line_ids`, `lines_to_report`, a
+  `t-set` name) is the detail band, since the report's data gives the lines; each of its rows is a
+  part of the detail band, under its conditions. What comes before goes in the group header, what
+  follows in the group footer. Other loops are shown once, with a warning.
+- **Layout.** HTML is a flow; the model is positioned. Blocks (`p`, `div`, headings) are lines
+  stacked down the band; their inline text and fields are placed left to right with widths
+  estimated from the characters (a field last on its line takes the rest of it). A right-aligned
+  or centred line with several pieces becomes one formula (`"Total: " & TEXT([o.amount_total],
+  "#,##0.00")`) so the alignment holds. Tables get equal columns from the header row (a
+  `colspan="99"` row doesn't widen the table). It is a starting point to edit, not a pixel copy.
+- **Expressions.** Python isn't evaluated. Field paths, Odoo's formatting helpers around one field,
+  dictionary keys (`line['label']`), truth tests, comparisons with a literal and `and`/`or` chains
+  convert; a `t-elif`/`t-else` shows when the branches before it don't. Names that aren't a loop's
+  variable (`company`, `is_pro_forma`) aren't fields. The rest is listed with its template line and
+  shown in place as `{expression}`, so nothing disappears silently.
+- **Sample data.** Types are guessed from names (`*_id` text, `quantity`/`price`/`amount` numbers,
+  `id` integers), amounts get two decimals, pictures are blank.
+
+The converter is its own crate at L2 (`reportcraft-qweb`, on `roxmltree`, already in the lock file
+through the PDF stack): it needs only the model, stays wasm-safe, and caps its input (4 MB,
+200,000 nodes, no DTD, nesting 64 deep, `t-call` chains 8 deep, 512 elements per band).

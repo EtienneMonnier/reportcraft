@@ -193,7 +193,19 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 228 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- Odoo QWeb report templates imported (`file.importQweb`, `reportcraft-cli import-qweb FILE.xml
+  [--template ID] [--out REPORT.json] [--sample-data ROWS.csv]`): the file's report template is
+  chosen (the wrapper that loops over `docs`, following `t-call`s to templates of the same file),
+  the document loop becomes a group starting a new page, the first loop of a document's table the
+  detail band, what comes before it the group header and after it the footer. Fields (`t-field`,
+  `t-esc`, `t-out`, Odoo's `formatLang`/`format_date`…), `t-if`/`t-elif`/`t-else` as conditions
+  (truth tests, comparisons, `and`/`or`), `t-set` names for paths, headings, bold, alignment
+  classes, tables in equal columns with their header row, pictures from `image_data_uri(field)`.
+  Columns are named as the template writes them (`o.partner_id.name`, `line.quantity`); sample
+  rows (two documents of three lines) preview the report at once. What isn't converted (Python
+  calls, nested loops, the `web.external_layout` letterhead) is listed by template line and shown
+  in place as `{expression}`.
+- CLI and MCP server reaching every command. 239 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
