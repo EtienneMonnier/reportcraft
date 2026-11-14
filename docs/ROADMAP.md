@@ -75,7 +75,7 @@ Anything marked **decision** waits for a maintainer.
     - [x] Pictures much larger than their box sampled down to 300 dpi in PDF and DOCX
     - [ ] Pictures from a URL in a field (needs a download policy: hosts, size, time)
     - [ ] A picture folder for the session in the designer (today with a saved connection, or from the CLI)
-    - [ ] Pictures in XLSX (anchored over the cells), with barcodes
+    - [x] Pictures in XLSX (anchored over the cells), with barcodes
     - [ ] More formats: GIF, SVG (vector logos)
     - [ ] Crop to fill the box ("cover") and alignment inside it
   - [x] Text colour and background on text elements, fixed or from a formula
@@ -95,7 +95,7 @@ Anything marked **decision** waits for a maintainer.
   - [x] Lines and boxes in DOCX (pictures anchored behind the text)
   - [ ] Diagonal lines in DOCX; cell borders for lines and boxes in XLSX
   - [x] Barcodes as images in DOCX
-  - [ ] Barcodes as images in XLSX
+  - [x] Barcodes as images in XLSX
   - [ ] A "data only" XLSX: detail rows as a table with a header row (no group or report bands), for further analysis
   - [ ] One sheet per group, or per subreport, as an option
   - [ ] XLSX and DOCX in the browser build (the writers build for wasm; the clock-free path needs checking)

@@ -611,3 +611,19 @@ twice as large as their box needs at 300 dpi are therefore sampled down (each pi
 those it covers) and embedded as PNG in PDF and DOCX: that catalogue is 0.6 MB, with no visible
 loss. Smaller pictures keep their bytes (a JPEG stays a JPEG).
 
+
+## Pictures in XLSX: anchored on the row they stand beside (R2.4, R2.7)
+
+A spreadsheet has no page to place a picture on: `rust_xlsxwriter` anchors an image to a cell, with
+an offset inside it. Each image or barcode is anchored on the sheet row of the first line of text
+on its page that starts within the picture's height (a product photo beside its name), or on a row
+of its own when no text stands beside it. The column is the one starting at the picture's left
+edge (picture edges count when columns are made, so a picture never sits on a text cell's left).
+The row grows to hold the picture, and the text on it is centred vertically, as it reads beside a
+logo or a photo. Rows stay one per line of text: making a picture span several rows would change
+every report's sheet for the sake of a few, and break the "a row per line" reading of the export.
+
+Images and barcodes share the code DOCX already used (`pictures.rs`): pictures are converted to PNG
+and sampled down to their print size once, barcodes drawn black and white with their quiet zone.
+Lines, boxes and charts are still left out of XLSX with a warning; cell borders could stand in for
+lines and boxes later.

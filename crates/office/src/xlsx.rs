@@ -8,7 +8,8 @@ use reportcraft_layout::{Document, Item};
 use reportcraft_model::{Align, Format};
 use rust_xlsxwriter::{DocProperties, Format as XFormat, FormatAlign, Workbook, Worksheet};
 
-use crate::{Output, lines, mm_to_points, skipped_warning};
+use crate::pictures::{Placed, Pngs, placed};
+use crate::{Output, SAME_LINE_MM, mm_to_points, page_lines, skipped_warning};
 
 /// Excel's widest column, in pixels (255 characters).
 const MAX_COLUMN_PX: f64 = 1_790.0;
@@ -28,13 +29,16 @@ pub fn to_xlsx(doc: &Document, cancel: &Cancel) -> Result<Output> {
     let sheet = workbook.add_worksheet();
     sheet.set_name(sheet_name(&doc.title)).map_err(fail)?;
 
-    let (rows, skipped) = lines(doc);
-    let columns = column_edges(rows.iter().flatten().map(|it| it.x_mm));
+    let (rows, skipped) = sheet_rows(doc);
+    let columns = column_edges(rows.iter().flat_map(|r| r.items.iter().map(|it| it.x_mm).chain(r.pictures.iter().map(|p| p.x_mm))));
     if rows.len() > MAX_ROWS || columns.len() > MAX_COLUMNS {
         return Err(Error::TooLarge("the report has more rows or columns than a spreadsheet holds".into()));
     }
     // Column widths: up to the next column's edge, the last one as wide as its widest item.
-    let right = rows.iter().flatten().map(|it| it.x_mm + it.width_mm).fold(0.0, f64::max);
+    let right = rows
+        .iter()
+        .flat_map(|r| r.items.iter().map(|it| it.x_mm + it.width_mm).chain(r.pictures.iter().map(|p| p.x_mm + p.width_mm)))
+        .fold(0.0, f64::max);
     let edges: Vec<f64> = columns.keys().map(|k| *k as f64 / 10.0).collect();
     for (c, x) in edges.iter().enumerate() {
         let next = edges.get(c + 1).copied().unwrap_or(right);
@@ -46,20 +50,73 @@ pub fn to_xlsx(doc: &Document, cancel: &Cancel) -> Result<Output> {
             cancel.check("the XLSX export")?;
         }
         let row = u32::try_from(r).map_err(|_| Error::TooLarge("too many rows".into()))?;
-        let height = line.iter().map(|it| mm_to_points(it.height_mm).max(it.style.size_pt * 1.3)).fold(0.0, f64::max);
+        let text = line.items.iter().map(|it| mm_to_points(it.height_mm).max(it.style.size_pt * 1.3));
+        let pictures = line.pictures.iter().map(|p| mm_to_points((p.y_mm - line.top_mm).max(0.0) + p.height_mm));
+        let height = text.chain(pictures).fold(0.0, f64::max);
         sheet.set_row_height(row, height.clamp(1.0, MAX_ROW_PT)).map_err(fail)?;
         // Items sharing a column on one line are joined, keeping the first one's style.
         let mut cells: BTreeMap<u16, Vec<&Item>> = BTreeMap::new();
-        for it in line {
+        for it in &line.items {
             let col = columns.get(&key(it.x_mm)).copied().unwrap_or(0);
             cells.entry(col).or_default().push(it);
         }
+        // Next to a picture, text is centred in the taller row.
+        let middle = !line.pictures.is_empty();
         for (col, items) in cells {
-            write_cell(sheet, row, col, &items).map_err(fail)?;
+            write_cell(sheet, row, col, &items, middle).map_err(fail)?;
+        }
+        for p in &line.pictures {
+            let col = columns.get(&key(p.x_mm)).copied().unwrap_or(0);
+            let image = rust_xlsxwriter::Image::new_from_buffer(&p.png).map_err(fail)?.set_scale_to_size(
+                px(p.width_mm).max(1),
+                px(p.height_mm).max(1),
+                false,
+            );
+            sheet.insert_image_with_offset(row, col, &image, 0, px((p.y_mm - line.top_mm).max(0.0))).map_err(fail)?;
         }
     }
     let bytes = workbook.save_to_buffer().map_err(fail)?;
     Ok(Output { bytes, warnings: skipped_warning(skipped, "XLSX") })
+}
+
+/// Pixels at 96 per inch, Excel's unit for picture sizes and offsets.
+fn px(mm: f64) -> u32 {
+    (mm.max(0.0) * 96.0 / 25.4).round().min(f64::from(u32::MAX)) as u32
+}
+
+/// One sheet row: a line of text and the pictures placed on it.
+struct Row<'a> {
+    top_mm: f64,
+    items: Vec<&'a Item>,
+    pictures: Vec<Placed>,
+}
+
+/// The document's lines of text as rows, page after page, with each picture (images and
+/// barcodes) on the first line of its page that starts within its height, or on a row of its
+/// own; and how many drawn items are left out (lines, boxes, chart shapes, damaged pictures).
+fn sheet_rows(doc: &Document) -> (Vec<Row<'_>>, usize) {
+    let mut rows = Vec::new();
+    let mut skipped = 0;
+    let mut pngs = Pngs::new();
+    for page in &doc.pages {
+        let (lines, shapes) = page_lines(&page.items);
+        let mut page_rows: Vec<Row<'_>> =
+            lines.into_iter().map(|items| Row { top_mm: items.first().map_or(0.0, |it| it.y_mm), items, pictures: Vec::new() }).collect();
+        let mut drawn = 0;
+        for p in page.items.iter().filter_map(|it| placed(it, &mut pngs)) {
+            drawn += 1;
+            match page_rows.iter_mut().find(|r| r.top_mm >= p.y_mm - SAME_LINE_MM && r.top_mm < p.y_mm + p.height_mm) {
+                Some(r) => r.pictures.push(p),
+                None => {
+                    let at = page_rows.partition_point(|r| r.top_mm <= p.y_mm);
+                    page_rows.insert(at, Row { top_mm: p.y_mm, items: Vec::new(), pictures: vec![p] });
+                }
+            }
+        }
+        skipped += shapes.saturating_sub(drawn);
+        rows.extend(page_rows);
+    }
+    (rows, skipped)
 }
 
 /// A position in tenths of a millimetre, the precision columns are told apart at.
@@ -83,9 +140,12 @@ fn sheet_name(title: &str) -> String {
     if name.is_empty() { "Report".to_owned() } else { name }
 }
 
-fn write_cell(sheet: &mut Worksheet, row: u32, col: u16, items: &[&Item]) -> std::result::Result<(), rust_xlsxwriter::XlsxError> {
+fn write_cell(sheet: &mut Worksheet, row: u32, col: u16, items: &[&Item], middle: bool) -> std::result::Result<(), rust_xlsxwriter::XlsxError> {
     let Some(first) = items.first() else { return Ok(()) };
     let mut format = XFormat::new().set_font_size(first.style.size_pt);
+    if middle {
+        format = format.set_align(FormatAlign::VerticalCenter);
+    }
     if first.style.bold {
         format = format.set_bold();
     }
