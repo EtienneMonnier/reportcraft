@@ -755,7 +755,7 @@ impl Designer {
     /// Asks for a picture file and reads it; `None` (with the reason in the status line) when
     /// none was chosen or it isn't a PNG or JPEG picture within the limits.
     fn choose_picture(&mut self) -> Option<reportcraft_model::ImageData> {
-        let path = self.dialogs.open(tl!("Choose a picture"), &["png", "jpg", "jpeg"])?;
+        let path = self.dialogs.open(tl!("Choose a picture"), &["png", "jpg", "jpeg", "webp"])?;
         let too_large = || reportcraft_core::image::PictureError::TooLarge.to_string();
         let read = std::fs::metadata(&path)
             .map_err(|e| e.to_string())

@@ -372,10 +372,12 @@ fn print_connections_and_barcodes_from_the_designer() {
         assert_eq!(c.port, 14339);
         c.set_kind("sqlserver");
         (c.name, c.user, c.database, c.password) = ("erp".into(), "rc".into(), "rent".into(), "hunter2".into());
+        c.pictures = " /srv/odoo/filestore/rent ".into();
     }
     assert!(frames(&mut d, 2) > 0, "the SQL Server form draws");
     let params = d.connections.as_ref().map(crate::forms::Connections::params).unwrap_or_default();
     assert_eq!(params["kind"], serde_json::json!("sqlserver"));
+    assert_eq!(params["pictures"], serde_json::json!("/srv/odoo/filestore/rent"));
     assert!(d.run("data.saveConnection", params).is_some(), "{}", d.status());
     assert_eq!(d.connection_list().first().map(|c| c.1.as_str()), Some("sqlserver"));
     assert!(d.run("data.deleteConnection", serde_json::json!({"name": "erp", "confirm": true})).is_some());
@@ -478,6 +480,6 @@ fn an_inserted_image_embeds_the_chosen_picture_and_shows_it() {
     d.insert("Image");
     let el = d.session().report.detail.elements.last().cloned().unwrap();
     assert!(matches!(&el.content, Content::Image { data: None, field: Some(_), .. }), "falls back to a field");
-    assert!(d.status().contains("not a PNG or JPEG"), "{}", d.status());
+    assert!(d.status().contains("not a PNG, JPEG or WebP"), "{}", d.status());
     std::fs::remove_dir_all(&dir).unwrap();
 }

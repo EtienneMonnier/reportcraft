@@ -131,10 +131,38 @@ pub fn layout_with_cancel(report: &Report, rows: &RowSet, params: &Params, cance
     render(report, rows, &Datasets::new(), params, cancel)
 }
 
+/// Reads the picture files that image fields name by a relative path (Odoo's `store_fname`, a
+/// file in a folder of photos): the layout reads no file itself, the caller decides where they
+/// may come from. `None` when there is no such picture.
+pub trait PictureFiles: Sync {
+    fn read(&self, path: &str) -> Option<Picture>;
+}
+
+/// No picture files: image fields show base64 text and `data:` URIs only.
+pub struct NoPictureFiles;
+
+impl PictureFiles for NoPictureFiles {
+    fn read(&self, _: &str) -> Option<Picture> {
+        None
+    }
+}
+
 /// `layout_with_cancel`, with the datasets the report's subreports read.
 pub fn render(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Params, cancel: &Cancel) -> Result<Document> {
+    render_with_files(report, rows, datasets, params, cancel, &NoPictureFiles)
+}
+
+/// `render`, with picture files for image fields that name one.
+pub fn render_with_files(
+    report: &Report,
+    rows: &RowSet,
+    datasets: &Datasets,
+    params: &Params,
+    cancel: &Cancel,
+    files: &dyn PictureFiles,
+) -> Result<Document> {
     report.validate()?;
-    let ctx = Context { datasets, params, cancel, depth: 0 };
+    let ctx = Context { datasets, params, cancel, files, depth: 0 };
     let computed = formula::with_formulas(report, rows, params, cancel)?;
     Ok(run(report, computed.as_ref().unwrap_or(rows), &ctx)?.into_document())
 }
@@ -143,6 +171,18 @@ pub fn render(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Para
 /// (a spreadsheet): the page header once at the top, no page footer, one column, no page breaks.
 /// Items are placed from the page's corner (no margin).
 pub fn render_continuous(report: &Report, rows: &RowSet, datasets: &Datasets, params: &Params, cancel: &Cancel) -> Result<Document> {
+    render_continuous_with_files(report, rows, datasets, params, cancel, &NoPictureFiles)
+}
+
+/// `render_continuous`, with picture files for image fields that name one.
+pub fn render_continuous_with_files(
+    report: &Report,
+    rows: &RowSet,
+    datasets: &Datasets,
+    params: &Params,
+    cancel: &Cancel,
+    files: &dyn PictureFiles,
+) -> Result<Document> {
     report.validate()?;
     let page = reportcraft_model::PageSetup {
         paper: None,
@@ -160,7 +200,7 @@ pub fn render_continuous(report: &Report, rows: &RowSet, datasets: &Datasets, pa
         .map(|g| reportcraft_model::Group { keep_together: false, page_break_before: false, repeat_header: false, ..g.clone() })
         .collect();
     let endless = Report { page, groups, page_footer: Band::default(), ..report.clone() };
-    let ctx = Context { datasets, params, cancel, depth: 0 };
+    let ctx = Context { datasets, params, cancel, files, depth: 0 };
     let computed = formula::with_formulas(&endless, rows, params, cancel)?;
     let mut doc = run(&endless, computed.as_ref().unwrap_or(rows), &ctx)?.into_document();
     // Nothing goes below the last item.
@@ -227,6 +267,7 @@ struct Context<'a> {
     datasets: &'a Datasets,
     params: &'a Params,
     cancel: &'a Cancel,
+    files: &'a dyn PictureFiles,
     /// 0 for the main report, 1 for its subreports…
     depth: usize,
 }
@@ -464,6 +505,7 @@ struct Writer<'a> {
     page_number_items: Vec<(usize, usize)>,
     datasets: &'a Datasets,
     cancel: &'a Cancel,
+    files: &'a dyn PictureFiles,
     depth: usize,
     /// Where each band or subreport block starts (what a parent cuts a subreport at).
     marks: Vec<Mark>,
@@ -487,6 +529,7 @@ impl<'a> Writer<'a> {
             params: ctx.params,
             datasets: ctx.datasets,
             cancel: ctx.cancel,
+            files: ctx.files,
             depth: ctx.depth,
             marks: Vec::new(),
             link_index: HashMap::new(),
@@ -673,7 +716,7 @@ impl<'a> Writer<'a> {
         } else {
             let key = std::ptr::from_ref(el) as usize;
             let report = Arc::clone(self.child_reports.entry(key).or_insert_with(|| Arc::new(subreport_report(child, el.width_mm))));
-            let ctx = Context { datasets: self.datasets, params: self.params, cancel: self.cancel, depth: self.depth + 1 };
+            let ctx = Context { datasets: self.datasets, params: self.params, cancel: self.cancel, files: self.files, depth: self.depth + 1 };
             subreport_blocks(&report, &rows, &ctx)?
         };
         let below = (band.height_mm - el.y_mm - el.height_mm).max(0.0);
@@ -923,7 +966,8 @@ impl<'a> Writer<'a> {
             (Some(d), _) => Picture::of(d).ok(),
             (None, Some(f)) => match (self.rows.column_index(f), scope.current) {
                 (Some(c), Some(r)) => match self.rows.value(row_of(self.rows, r), c) {
-                    Value::Text(t) if !t.trim().is_empty() => Picture::from_text(t).ok(),
+                    // Base64 or a `data:` URI, else a file the caller may read (a relative path).
+                    Value::Text(t) if !t.trim().is_empty() => Picture::from_text(t).ok().or_else(|| self.files.read(t.trim())),
                     _ => None,
                 },
                 _ => None,

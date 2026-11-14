@@ -1,4 +1,4 @@
-//! Pictures in reports: PNG and JPEG files, recognised by their first bytes, with their size in
+//! Pictures in reports: PNG, JPEG and WebP files (Odoo keeps its product images as WebP), recognised by their first bytes, with their size in
 //! pixels read from their headers (nothing is decoded here). They come from a report file
 //! (base64), a text field (base64 or a `data:` URI) or a database blob.
 
@@ -14,6 +14,7 @@ use crate::limits::{MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS};
 pub enum ImageFormat {
     Png,
     Jpeg,
+    Webp,
 }
 
 impl ImageFormat {
@@ -21,6 +22,7 @@ impl ImageFormat {
         match self {
             ImageFormat::Png => "image/png",
             ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Webp => "image/webp",
         }
     }
 }
@@ -48,7 +50,7 @@ impl<'de> Deserialize<'de> for ImageData {
     }
 }
 
-/// A PNG or JPEG picture and its size in pixels.
+/// A PNG, JPEG or WebP picture and its size in pixels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Picture {
     pub format: ImageFormat,
@@ -60,7 +62,7 @@ pub struct Picture {
 /// Why bytes can't be shown as a picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PictureError {
-    /// Neither PNG nor JPEG, or a header too damaged to read its size.
+    /// Not PNG, JPEG or WebP, or a header too damaged to read its size.
     NotAPicture,
     /// Larger than `MAX_IMAGE_BYTES` or `MAX_IMAGE_PIXELS`, or with no pixels.
     TooLarge,
@@ -69,7 +71,7 @@ pub enum PictureError {
 impl fmt::Display for PictureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PictureError::NotAPicture => write!(f, "not a PNG or JPEG picture"),
+            PictureError::NotAPicture => write!(f, "not a PNG, JPEG or WebP picture"),
             PictureError::TooLarge => write!(
                 f,
                 "the picture is larger than {} MB or {} million pixels, or has no pixels",
@@ -122,13 +124,13 @@ impl Picture {
     }
 }
 
-/// A database blob as a value: a `data:` URI when it holds a PNG or JPEG picture (so an image
+/// A database blob as a value: a `data:` URI when it holds a PNG, JPEG or WebP picture (so an image
 /// element can show it), `None` otherwise (the source keeps its own way of writing bytes).
 pub fn blob_value(bytes: &[u8]) -> Option<crate::Value> {
     Picture::read(bytes).ok().map(|p| crate::Value::Text(p.data_uri()))
 }
 
-/// The format and size in pixels of a PNG or JPEG file, read from its header.
+/// The format and size in pixels of a PNG, JPEG or WebP file, read from its header.
 pub fn sniff(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     if bytes.starts_with(PNG) {
@@ -141,7 +143,42 @@ pub fn sniff(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
     if bytes.starts_with(&[0xFF, 0xD8]) {
         return jpeg_size(bytes).map(|s| (ImageFormat::Jpeg, s));
     }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12)? == b"WEBP" {
+        return webp_size(bytes).map(|s| (ImageFormat::Webp, s));
+    }
     None
+}
+
+fn le16(b: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from(u16::from_le_bytes(b.get(at..at + 2)?.try_into().ok()?)))
+}
+
+fn le24(b: &[u8], at: usize) -> Option<u32> {
+    let p = b.get(at..at + 3)?;
+    Some(u32::from(*p.first()?) | u32::from(*p.get(1)?) << 8 | u32::from(*p.get(2)?) << 16)
+}
+
+/// The size in the first chunk of a WebP file: lossy (`VP8 `), lossless (`VP8L`) or extended
+/// (`VP8X`, the canvas).
+fn webp_size(b: &[u8]) -> Option<(u32, u32)> {
+    match b.get(12..16)? {
+        b"VP8 " => {
+            // A frame tag (3 bytes), the start code, then 14-bit width and height.
+            if b.get(23..26)? != [0x9D, 0x01, 0x2A] {
+                return None;
+            }
+            Some((le16(b, 26)? & 0x3FFF, le16(b, 28)? & 0x3FFF))
+        }
+        b"VP8L" => {
+            if *b.get(20)? != 0x2F {
+                return None;
+            }
+            let bits = u32::from_le_bytes(b.get(21..25)?.try_into().ok()?);
+            Some(((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1))
+        }
+        b"VP8X" => Some((le24(b, 24)? + 1, le24(b, 27)? + 1)),
+        _ => None,
+    }
 }
 
 fn be32(b: &[u8], at: usize) -> Option<u32> {
@@ -216,6 +253,17 @@ mod tests {
         let mut with_dht = vec![0xFF, 0xD8, 0xFF, 0xC4, 0x00, 0x03, 0x00];
         with_dht.extend_from_slice(jpeg(7, 9).get(2..).unwrap());
         assert_eq!(sniff(&with_dht), Some((ImageFormat::Jpeg, (7, 9))));
+        // WebP: lossless and lossy files made with ImageMagick (4 × 2), and an extended header.
+        let lossless = b"RIFF\x22\0\0\0WEBPVP8L\x16\0\0\0\x2f\x03\x40\0\0\x0f";
+        assert_eq!(sniff(lossless), Some((ImageFormat::Webp, (4, 2))));
+        let lossy = b"RIFF\x60\0\0\0WEBPVP8 \x54\0\0\0\xb0\x03\0\x9d\x01\x2a\x04\0\x02\0";
+        assert_eq!(sniff(lossy), Some((ImageFormat::Webp, (4, 2))));
+        let extended = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\x10\0\0\0\x1f\x03\0\xdf\x01\0";
+        assert_eq!(sniff(extended), Some((ImageFormat::Webp, (800, 480))));
+        for cut in 0..lossy.len() {
+            assert_eq!(sniff(lossy.get(..cut).unwrap()), None, "cut at {cut}");
+        }
+        assert_eq!(sniff(b"RIFF\0\0\0\0WAVEfmt "), None);
     }
 
     #[test]

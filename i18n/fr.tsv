@@ -169,3 +169,5 @@
 	keep proportions	garder les proportions
 	stretch to the box	étirer au cadre
 	{w} × {h} px, {kb} KB	{w} × {h} px, {kb} Ko
+	Picture folder	Dossier d'images
+	optional: an Odoo filestore, …/filestore/DATABASE	facultatif : un filestore Odoo, …/filestore/BASE

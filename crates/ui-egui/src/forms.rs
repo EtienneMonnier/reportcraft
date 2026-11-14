@@ -120,6 +120,8 @@ pub(crate) struct Connections {
     pub password: String,
     /// `""`: the default (`prefer`: encrypted, certificate not checked).
     pub sslmode: String,
+    /// Where image fields' relative paths are read (an Odoo filestore); `""` for none.
+    pub pictures: String,
 }
 
 /// What the Connections window asks for.
@@ -160,6 +162,9 @@ impl Connections {
         };
         if self.server() && !self.password.is_empty() {
             p["password"] = json!(self.password);
+        }
+        if !self.pictures.trim().is_empty() {
+            p["pictures"] = json!(self.pictures.trim());
         }
         p["confirm"] = json!(true);
         p
@@ -250,6 +255,9 @@ fn form(ui: &mut Ui, c: &mut Connections, ask: &mut Manage) {
             });
             ui.end_row();
         }
+        ui.label(tl!("Picture folder"));
+        ui.add(egui::TextEdit::singleline(&mut c.pictures).hint_text(tl!("optional: an Odoo filestore, …/filestore/DATABASE")));
+        ui.end_row();
     });
     if ui.button(tl!("Save")).clicked() {
         *ask = Manage::Save;

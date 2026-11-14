@@ -198,27 +198,34 @@ struct Out<'a, 'f> {
 }
 
 /// Pictures embedded so far, by the address of their bytes (shared between the pages that show
-/// them): each is checked and handed to Krilla once, which writes it once.
+/// them) and the pixels their box needs: each is checked and handed to Krilla once, which writes
+/// it once. One much larger than its box needs is sampled down to `PRINT_DPI` first.
 #[derive(Default)]
 struct Pictures {
-    seen: std::collections::HashMap<(usize, usize), Option<Image>>,
+    seen: std::collections::HashMap<(usize, usize, (u32, u32)), Option<Image>>,
 }
 
 impl Pictures {
     /// The picture of an image shape, or `None` (with a warning) when it can't be decoded whole:
     /// Krilla decodes PNGs while writing the file, and one damaged picture would fail it all.
-    fn get(&mut self, shape: &Shape, warnings: &mut Warnings) -> Option<Image> {
-        let Shape::Image { format, width_px, height_px, data } = shape else { return None };
-        let key = (data.0.as_ptr() as usize, data.0.len());
+    fn get(&mut self, it: &Item, warnings: &mut Warnings) -> Option<Image> {
+        let Some(Shape::Image { format, width_px, height_px, data }) = &it.shape else { return None };
+        let needed = reportcraft_layout::pixels::print_pixels(it.width_mm, it.height_mm);
+        let key = (data.0.as_ptr() as usize, data.0.len(), needed);
         self.seen
             .entry(key)
             .or_insert_with(|| {
                 let picture = reportcraft_core::image::Picture { format: *format, width_px: *width_px, height_px: *height_px, data: data.clone() };
-                let image = reportcraft_layout::pixels::decode(&picture).and_then(|_| {
+                let image = reportcraft_layout::pixels::decode(&picture).and_then(|pixels| {
+                    if let Some(small) = reportcraft_layout::pixels::reduce(&pixels, needed) {
+                        let png = reportcraft_layout::pixels::encode_png(&small)?;
+                        return Image::from_png(craft_pdf::write::backend::Data::from(png), true).ok();
+                    }
                     let bytes = craft_pdf::write::backend::Data::from(data.0.to_vec());
                     match format {
                         ImageFormat::Png => Image::from_png(bytes, true).ok(),
                         ImageFormat::Jpeg => Image::from_jpeg(bytes, true).ok(),
+                        ImageFormat::Webp => Image::from_webp(bytes, true).ok(),
                     }
                 });
                 if image.is_none() {
@@ -235,8 +242,8 @@ fn draw_page(surface: &mut Surface<'_>, page: &Page, out: &mut Out<'_, '_>, canc
     for it in page.items.iter().filter(|i| i.shape.is_some()) {
         tick(cancel, drawn)?;
         match &it.shape {
-            Some(shape @ Shape::Image { .. }) => {
-                if let Some(image) = out.pictures.get(shape, out.warnings) {
+            Some(Shape::Image { .. }) => {
+                if let Some(image) = out.pictures.get(it, out.warnings) {
                     draw_image(surface, it, image);
                 }
             }

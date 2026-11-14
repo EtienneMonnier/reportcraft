@@ -86,6 +86,10 @@ pub struct Connection {
     pub target: Target,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// A folder on this computer where image fields' relative paths are read: an Odoo
+    /// database's filestore (`…/filestore/DATABASE`), a folder of photos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pictures: Option<String>,
 }
 
 impl Connection {
@@ -117,6 +121,9 @@ impl Connection {
                     return Err(Error::Invalid(format!("connection `{n}`: the port can't be 0")));
                 }
             }
+        }
+        if let Some(folder) = &self.pictures {
+            field(folder, "the picture folder")?;
         }
         if self.description.len() > 1_024 {
             return Err(Error::TooLarge(format!("connection `{n}`: description longer than 1024 characters")));
@@ -357,6 +364,7 @@ mod tests {
             name: name.into(),
             target: Target::Postgres { host: "db.example".into(), port: 5433, user: "report's".into(), database: "odoo".into(), sslmode: None },
             description: String::new(),
+            pictures: None,
         }
     }
 
@@ -366,7 +374,11 @@ mod tests {
         let open = || Connections::open(Location::Dir(dir.path().to_owned()), Box::<MemorySecrets>::default());
         let mut c = open();
         c.save(pg("prod"), Some("s3cr'et\\")).unwrap();
-        c.save(Connection { name: "local".into(), target: Target::Sqlite { path: "/data/x.db".into() }, description: "test".into() }, None).unwrap();
+        c.save(
+            Connection { name: "local".into(), target: Target::Sqlite { path: "/data/x.db".into() }, description: "test".into(), pictures: None },
+            None,
+        )
+        .unwrap();
         assert_eq!(c.conninfo("prod").unwrap(), r"host='db.example' port=5433 user='report\'s' dbname='odoo' password='s3cr\'et\\'");
         assert_eq!(c.sqlite_path("local").unwrap(), "/data/x.db");
         assert!(c.conninfo("local").unwrap_err().to_string().contains("not PostgreSQL"));
@@ -390,7 +402,7 @@ mod tests {
         assert!(c.has_password("p").unwrap(), "None keeps it");
         c.save(pg("p"), Some("")).unwrap();
         assert!(!c.has_password("p").unwrap(), "empty removes it");
-        let sqlite = Connection { name: "f".into(), target: Target::Sqlite { path: "a.db".into() }, description: String::new() };
+        let sqlite = Connection { name: "f".into(), target: Target::Sqlite { path: "a.db".into() }, description: String::new(), pictures: None };
         assert!(c.save(sqlite, Some("x")).is_err());
         assert_eq!(c.list().len(), 1);
     }

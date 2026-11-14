@@ -584,3 +584,30 @@ text (`<binary, N bytes>`, `0x…`). Pictures from a path in a field are left fo
 reads no file itself today, and a path would need the same allowed-paths rules as data files.
 The designer embeds a picture through its file dialog; agents and scripts pass base64 to
 `report.addElement` or `report.setElement`, so no new command reads files.
+
+## Picture files: a folder per connection, read by the engine (R2.4)
+
+Odoo keeps pictures out of the database: `ir_attachment` holds a relative path (`store_fname`,
+such as `3f/3f5a…`) into the database's filestore on the server's disk. A field that names a
+picture by a path is read relative to a *picture folder*, never as an absolute path, so a report
+stays portable and a shared report can't read arbitrary files. The folder belongs to the saved
+connection (each computer says where that database's filestore is, as it says where the database
+is) and applies to rows read through it; it can also be set for the session from the CLI or the
+engine (`data.setPictureFolder`), which an MCP agent limited to saved connections may not do.
+Only files inside the folder are read: the path must be relative with plain components, and the
+file is resolved with its links before the check, so a link can't lead out. Each file is capped
+like any picture, and a render reads at most 512 MB of distinct files (repeats come from a cache).
+
+The layout reads no file: it asks a `PictureFiles` the caller gives it (`render_with_files`) for
+values that aren't base64 or a `data:` URI, and the engine passes one over the folder. So the
+layout stays wasm-safe and testable, and other sources of files (a URL, an Odoo API) can come
+later behind the same seam.
+
+Odoo 20 stores its product pictures as WebP, so WebP joined PNG and JPEG: Krilla embeds it
+(decoded, as it does PNG), and `image-webp`, already in the lock file through Krilla, decodes it
+for DOCX and the designer. In the demo database every `image_128` … `image_1920` attachment points
+to the same full-size file, so a catalogue of 14 products made a 4.9 MB PDF. Pictures more than
+twice as large as their box needs at 300 dpi are therefore sampled down (each pixel the average of
+those it covers) and embedded as PNG in PDF and DOCX: that catalogue is 0.6 MB, with no visible
+loss. Smaller pictures keep their bytes (a JPEG stays a JPEG).
+

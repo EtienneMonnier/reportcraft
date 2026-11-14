@@ -89,14 +89,21 @@
   versions 1–40), from a field or a fixed text, drawn as SVG with their quiet zone; a value the
   symbology can't hold is written as text. Every symbology was checked with an independent decoder
   (zxing-cpp), from the encoder and from a rendered page.
-- Images (`"kind": "image"`): a PNG or JPEG picture embedded in the report (`data`, base64 in the
-  file) or read from a field of the current row (base64 text, a `data:` URI, or a SQLite, PostgreSQL
-  or SQL Server blob holding a PNG or JPEG, which these sources now hand over as a `data:` URI),
-  kept in proportion and centred in its box (`"fit": "contain"`, the default) or stretched
-  (`"stretch"`); at most 16 MB and 50 million pixels each. Drawn in HTML, PDF, DOCX and the
-  designer's canvas and preview; a blank or unreadable value draws nothing, and a picture damaged
-  past its header is left out of the PDF and DOCX with a warning. Insert ▸ Image asks for a file to
-  embed; the properties panel switches between an embedded picture and a field.
+- Images (`"kind": "image"`): a PNG, JPEG or WebP picture embedded in the report (`data`, base64
+  in the file) or read from a field of the current row: base64 text, a `data:` URI, a SQLite,
+  PostgreSQL or SQL Server blob holding a picture (handed over as a `data:` URI), or a path
+  relative to the picture folder. The picture folder is kept with a saved connection
+  (`"pictures"`, `connections save … --pictures DIR`, the Connections window) and applies to rows
+  read through it, or is set for the session (`data.setPictureFolder`, `--pictures DIR`; not for
+  MCP agents limited to saved connections). For Odoo it is the database's filestore
+  (`…/filestore/DATABASE`), and the field `ir_attachment.store_fname`. Only files inside the
+  folder are read (no `..`, no absolute path, no link leading out), 512 MB at most per render.
+  Pictures are kept in proportion and centred in their box (`"fit": "contain"`, the default) or
+  stretched (`"stretch"`); at most 16 MB and 50 million pixels each. Drawn in HTML, PDF, DOCX and
+  the designer's canvas and preview; one much larger than its box needs is sampled down to 300 dpi
+  in PDF and DOCX. A blank or unreadable value draws nothing, and a picture damaged past its
+  header is left out of the PDF and DOCX with a warning. Insert ▸ Image asks for a file to embed;
+  the properties panel switches between an embedded picture and a field.
 - Labels: `column_order: across` fills a row of columns with detail bands, then the next row;
   group headers and footers start a new row.
 - Group pagination: a group header kept with its first row (`keep_with_next`: never alone at the
@@ -184,7 +191,7 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- CLI and MCP server reaching every command. 206 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 211 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

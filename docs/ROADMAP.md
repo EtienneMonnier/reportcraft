@@ -70,10 +70,13 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Widow/orphan control for detail rows (at least N rows of a group on a page)
 - [x] R2.4 Lines and boxes in bands (#10)
   - [x] Images in bands: PNG or JPEG embedded in the report or read from a field (base64, `data:` URI, or a database blob), kept in proportion or stretched, in HTML, PDF, DOCX and the designer (#10)
-    - [ ] Pictures from a path or URL in a field (a file next to the report), under the same allowed-paths rules as data files
-    - [ ] Odoo pictures kept in the filestore (`ir_attachment.store_fname`), not in the database
+    - [x] Pictures from a file a field names by a relative path, inside a picture folder set by hand (`data.setPictureFolder`, `--pictures`) or kept with a saved connection
+    - [x] Odoo pictures kept in the filestore (`ir_attachment.store_fname`, the connection's folder `…/filestore/DATABASE`), WebP included
+    - [x] Pictures much larger than their box sampled down to 300 dpi in PDF and DOCX
+    - [ ] Pictures from a URL in a field (needs a download policy: hosts, size, time)
+    - [ ] A picture folder for the session in the designer (today with a saved connection, or from the CLI)
     - [ ] Pictures in XLSX (anchored over the cells), with barcodes
-    - [ ] More formats: GIF, WebP, SVG (vector logos)
+    - [ ] More formats: GIF, SVG (vector logos)
     - [ ] Crop to fill the box ("cover") and alignment inside it
   - [x] Text colour and background on text elements, fixed or from a formula
   - [x] DOCX: fill an element's whole box with its background

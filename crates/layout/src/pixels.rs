@@ -23,9 +23,50 @@ pub fn decode(picture: &Picture) -> Option<Rgba> {
     let rgba = match picture.format {
         ImageFormat::Png => png_rgba(&picture.data.0)?,
         ImageFormat::Jpeg => jpeg_rgba(&picture.data.0, picture.width_px, picture.height_px)?,
+        ImageFormat::Webp => webp_rgba(&picture.data.0)?,
     };
     let expected = usize::try_from(u64::from(rgba.width) * u64::from(rgba.height) * 4).ok()?;
     (rgba.pixels.len() == expected && rgba.width > 0 && rgba.height > 0).then_some(rgba)
+}
+
+/// Resolution pictures are printed at: more pixels than this gives a larger file, not a sharper page.
+pub const PRINT_DPI: f64 = 300.0;
+
+/// The pixels a `width_mm` × `height_mm` box needs at `PRINT_DPI` (at least 1 a side).
+pub fn print_pixels(width_mm: f64, height_mm: f64) -> (u32, u32) {
+    let px = |mm: f64| (mm.max(0.0) / 25.4 * PRINT_DPI).ceil().clamp(1.0, f64::from(u32::MAX)) as u32;
+    (px(width_mm), px(height_mm))
+}
+
+/// The pixels sampled down to `max` (each pixel the average of those it covers), or `None` when
+/// they are within twice that already, where sampling down would save little.
+pub fn reduce(rgba: &Rgba, max: (u32, u32)) -> Option<Rgba> {
+    let (w, h) = (rgba.width, rgba.height);
+    if w <= max.0.saturating_mul(2) && h <= max.1.saturating_mul(2) {
+        return None;
+    }
+    let (tw, th) = (w.min(max.0).max(1), h.min(max.1).max(1));
+    let (sw, th64, tw64, sh) = (u64::from(w), u64::from(th), u64::from(tw), u64::from(h));
+    let mut out = Vec::with_capacity(usize::try_from(tw64 * th64 * 4).ok()?);
+    for oy in 0..th64 {
+        let (y0, y1) = (oy * sh / th64, ((oy + 1) * sh / th64).max(oy * sh / th64 + 1));
+        for ox in 0..tw64 {
+            let (x0, x1) = (ox * sw / tw64, ((ox + 1) * sw / tw64).max(ox * sw / tw64 + 1));
+            let mut sum = [0u64; 4];
+            for y in y0..y1 {
+                let row = usize::try_from(y * sw * 4).ok()?;
+                let px = rgba.pixels.get(row + usize::try_from(x0 * 4).ok()?..row + usize::try_from(x1 * 4).ok()?)?;
+                for p in px.as_chunks::<4>().0 {
+                    for (s, v) in sum.iter_mut().zip(p) {
+                        *s += u64::from(*v);
+                    }
+                }
+            }
+            let n = (y1 - y0) * (x1 - x0);
+            out.extend(sum.iter().map(|s| u8::try_from(s / n).unwrap_or(u8::MAX)));
+        }
+    }
+    Some(Rgba { width: tw, height: th, pixels: out })
 }
 
 /// The pixels as a compressed PNG file.
@@ -82,6 +123,21 @@ fn to_rgba(data: &[u8], channels: usize, width: u32, height: u32, stride: usize)
     Some(out)
 }
 
+fn webp_rgba(bytes: &[u8]) -> Option<Rgba> {
+    let mut decoder = image_webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
+    let (width, height) = decoder.dimensions();
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return None;
+    }
+    let mut buf = vec![0; decoder.output_buffer_size()?];
+    // The first frame of an animation.
+    decoder.read_image(&mut buf).ok()?;
+    let channels = if decoder.has_alpha() { 4 } else { 3 };
+    let stride = usize::try_from(width).ok()?.checked_mul(channels)?;
+    let pixels = to_rgba(&buf, channels, width, height, stride)?;
+    Some(Rgba { width, height, pixels })
+}
+
 fn jpeg_rgba(bytes: &[u8], width: u32, height: u32) -> Option<Rgba> {
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
@@ -102,6 +158,19 @@ mod tests {
     /// A tiny JPEG: 4 × 2 pixels, red on the left half and blue on the right, made for these
     /// tests (`magick -size 2x2 xc:red -size 2x2 xc:blue +append -quality 95 x.jpg`).
     pub(crate) const JPEG_4X2: &[u8] = include_bytes!("../tests/pictures/red-blue-4x2.jpg");
+    /// The same, as lossless WebP (`… +append -define webp:lossless=true x.webp`).
+    const WEBP_4X2: &[u8] = include_bytes!("../tests/pictures/red-blue-4x2.webp");
+
+    #[test]
+    fn webp_decodes() {
+        let p = Picture::read(WEBP_4X2).unwrap();
+        assert_eq!((p.format, p.width_px, p.height_px), (ImageFormat::Webp, 4, 2));
+        let px = decode(&p).unwrap();
+        assert_eq!(px.pixels.get(..4), Some(&[255, 0, 0, 255][..]));
+        assert_eq!(px.pixels.get(12..16), Some(&[0, 0, 255, 255][..]));
+        let cut = Picture::read(WEBP_4X2.get(..30).unwrap()).unwrap();
+        assert_eq!(decode(&cut), None);
+    }
 
     #[test]
     fn png_round_trips_and_jpeg_decodes() {
@@ -131,6 +200,22 @@ mod tests {
             // zune-jpeg may fill in a truncated scan; what matters is no panic and the right size.
             assert!(decode(&p).is_none_or(|d| d.pixels.len() == 32));
         }
+    }
+
+    #[test]
+    fn large_pictures_are_sampled_down_to_their_print_size() {
+        // 30 mm at 300 dpi.
+        assert_eq!(print_pixels(30.0, 10.0), (355, 119));
+        assert_eq!(print_pixels(0.0, -1.0), (1, 1));
+        // 4 × 2 pixels, left half black, right half white, to 2 × 1: each the average of its 2 × 2.
+        let px = [0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255].repeat(2);
+        let rgba = Rgba { width: 4, height: 2, pixels: px };
+        assert_eq!(reduce(&rgba, (1, 1)), Some(Rgba { width: 1, height: 1, pixels: vec![127, 127, 127, 255] }));
+        assert_eq!(reduce(&rgba, (2, 1)), None, "within twice the size: kept");
+        let big = Rgba { width: 1000, height: 600, pixels: vec![200; 1000 * 600 * 4] };
+        let small = reduce(&big, (100, 60)).unwrap();
+        assert_eq!((small.width, small.height, small.pixels.len()), (100, 60, 100 * 60 * 4));
+        assert!(small.pixels.iter().all(|&v| v == 200));
     }
 
     #[test]

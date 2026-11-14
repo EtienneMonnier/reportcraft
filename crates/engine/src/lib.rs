@@ -11,6 +11,8 @@ mod cache;
 mod cmd;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod control;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pictures;
 pub mod query_log;
 pub mod sample;
 
@@ -82,6 +84,10 @@ pub struct Session {
     cancel: Cancel,
     /// What the session may do beyond its own state (an MCP server narrows it).
     pub policy: Policy,
+    /// Where image fields' relative paths are read, as set with `data.setPictureFolder`.
+    pub picture_folder: Option<std::path::PathBuf>,
+    /// The picture folder of the saved connection the rows came from, when it has one.
+    pub(crate) connection_pictures: Option<std::path::PathBuf>,
     /// Earlier report definitions, most recent last (`edit.undo`), and the ones undone
     /// (`edit.redo`).
     pub(crate) undo: Vec<Report>,
@@ -106,6 +112,8 @@ impl Default for Session {
             query_log: QueryLog::default(),
             cancel: Cancel::default(),
             policy: Policy::PERSON,
+            picture_folder: None,
+            connection_pictures: None,
             undo: Vec::new(),
             redo: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -166,6 +174,12 @@ impl Session {
         // The engine's own tests never touch the user's settings or keychain.
         let open = if cfg!(test) { reportcraft_connections::Connections::in_memory } else { reportcraft_connections::Connections::open_user };
         f(guard.get_or_insert_with(open))
+    }
+
+    /// Where image fields' relative paths are read: the folder set with `data.setPictureFolder`,
+    /// else the one of the saved connection the rows came from.
+    pub fn pictures(&self) -> Option<&std::path::Path> {
+        self.picture_folder.as_deref().or(self.connection_pictures.as_deref())
     }
 
     pub fn cancel_handle(&self) -> Cancel {
@@ -522,6 +536,48 @@ mod tests {
         assert_eq!(s.execute("data.deleteConnection", &json!({"name": "odoo"})).unwrap()["deleted"], json!(false));
         assert_eq!(s.execute("data.deleteConnection", &json!({"name": "odoo", "confirm": true})).unwrap()["deleted"], json!(true));
         assert!(s.execute("data.loadPostgres", &json!({"saved": "odoo", "query": "SELECT 1"})).unwrap_err().to_string().contains("saved: local"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn image_fields_read_files_from_the_picture_folder_set_or_kept_by_the_connection() {
+        let dir = std::env::temp_dir().join(format!("reportcraft-pictures-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let filestore = dir.join("filestore");
+        std::fs::create_dir_all(filestore.join("3f")).unwrap();
+        let png = reportcraft_layout::pixels::encode_png(&reportcraft_layout::pixels::Rgba { width: 2, height: 1, pixels: vec![255; 8] }).unwrap();
+        std::fs::write(filestore.join("3f/3f5a01"), &png).unwrap();
+        let db = dir.join("odoo.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch("CREATE TABLE product (name TEXT, store_fname TEXT); INSERT INTO product VALUES ('Lift', '3f/3f5a01'), ('Saw', NULL), ('Drill', '../escape.png');")
+            .unwrap();
+        drop(conn);
+        let mut s = Session::with_saved_connections(reportcraft_connections::Connections::in_memory());
+        let image = json!({"band": "detail", "element": {"x_mm": 0, "y_mm": 0, "width_mm": 20, "height_mm": 10, "content": {"kind": "image", "field": "store_fname"}}});
+        s.execute("report.addElement", &image).unwrap();
+        let count = |s: &mut Session| s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().matches("<image ").count();
+        // From a saved connection that keeps the filestore: one picture (no path, and a path
+        // leading out of the folder, show none).
+        let save =
+            json!({"name": "odoo", "kind": "sqlite", "path": db.display().to_string(), "pictures": filestore.display().to_string(), "confirm": true});
+        s.execute("data.saveConnection", &save).unwrap();
+        assert_eq!(s.execute("data.connections", &json!({})).unwrap()["connections"][0]["pictures"], json!(filestore.display().to_string()));
+        s.execute("data.loadSqlite", &json!({"saved": "odoo", "query": "SELECT * FROM product"})).unwrap();
+        assert_eq!(s.pictures(), Some(filestore.as_path()));
+        assert_eq!(count(&mut s), 1);
+        // CSV rows don't come from the connection: no folder, no picture.
+        s.execute("data.loadCsv", &json!({"csv": "name,store_fname\nLift,3f/3f5a01\n"})).unwrap();
+        assert_eq!(s.pictures(), None);
+        assert_eq!(count(&mut s), 0);
+        // A folder set by hand; one that doesn't exist is refused; an agent can't set one.
+        let set = s.execute("data.setPictureFolder", &json!({"path": filestore.display().to_string()})).unwrap();
+        assert_eq!(set["from"], json!("set"));
+        assert_eq!(count(&mut s), 1);
+        assert!(s.execute("data.setPictureFolder", &json!({"path": dir.join("nope").display().to_string()})).is_err());
+        assert_eq!(s.execute("data.setPictureFolder", &json!({})).unwrap()["folder"], json!(null));
+        s.policy = Policy::AGENT;
+        let refused = s.execute("data.setPictureFolder", &json!({"path": filestore.display().to_string()})).unwrap_err().to_string();
+        assert!(refused.contains("saved connections only"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

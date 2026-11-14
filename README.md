@@ -23,6 +23,7 @@ PGPASSWORD=… cargo run -p reportcraft-cli -- render rentals.rcr.json --postgre
 SQLCMDPASSWORD=… cargo run -p reportcraft-cli -- render rentals.rcr.json --sqlserver "Server=tcp:db,1433;User Id=report;Database=erp" --query "SELECT …"
 cargo run -p reportcraft-cli -- schema --postgres "host=db user=report dbname=erp"  # tables, columns, keys
 cargo run -p reportcraft-cli -- render sales.rcr.json --out sales.pdf --format pdf  # a report that names its saved connection loads its own data
+cargo run -p reportcraft-cli -- render catalogue.rcr.json --connection odoo --query "SELECT …, a.store_fname AS photo …" --pictures ~/.local/share/Odoo/filestore/mydb --format pdf --out catalogue.pdf  # Odoo pictures
 cargo run -p reportcraft-cli -- validate rentals.rcr.json --data mydata.csv          # errors and warnings
 cargo run -p reportcraft-cli -- commands                               # every command
 cargo run -p reportcraft-cli -- mcp                                    # MCP server on stdio

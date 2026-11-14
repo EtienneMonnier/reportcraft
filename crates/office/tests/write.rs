@@ -233,6 +233,7 @@ fn docx_draws_pictures_with_jpeg_converted_to_png() {
     use reportcraft_model::ImageFit;
     let png = encode_png(&Rgba { width: 3, height: 1, pixels: [0, 128, 255, 255].repeat(3) }).unwrap();
     let jpeg = include_bytes!("../../layout/tests/pictures/red-blue-4x2.jpg");
+    let webp = include_bytes!("../../layout/tests/pictures/red-blue-4x2.webp");
     let image = |x: f64, bytes: &[u8]| Element {
         x_mm: x,
         y_mm: 0.0,
@@ -242,22 +243,25 @@ fn docx_draws_pictures_with_jpeg_converted_to_png() {
         ..el(0.0, 1.0, Content::Text { text: String::new() }, None, Align::Left)
     };
     let mut r = Report::new("Pictures");
-    r.report_header = Band { height_mm: 40.0, elements: vec![image(0.0, &png), image(40.0, jpeg)], ..Band::default() };
+    r.report_header = Band { height_mm: 40.0, elements: vec![image(0.0, &png), image(40.0, jpeg), image(80.0, webp)], ..Band::default() };
     let doc = layout(&r, &RowSet::default(), &Params::new()).unwrap();
     let out = to_docx(&doc, &Cancel::default()).unwrap();
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let xml = part(&out.bytes, "word/document.xml");
-    assert_eq!(xml.matches("<wp:anchor ").count(), 2, "{xml}");
+    assert_eq!(xml.matches("<wp:anchor ").count(), 3, "{xml}");
     // 3 × 1 pixels kept in proportion in a 30 mm square: 30 × 10 mm, as EMUs.
     assert!(xml.contains(r#"<wp:extent cx="1080000" cy="360000" />"#), "{xml}");
-    // Both media are PNG files; the JPEG's colours survive the conversion.
+    // Every media file is PNG; the JPEG's and the WebP's colours survive the conversion.
     let media = media_parts(&out.bytes);
-    assert_eq!(media.len(), 2);
+    assert_eq!(media.len(), 3);
     assert!(media.contains(&png));
-    let converted = media.iter().find(|m| **m != png).unwrap();
-    let pixels = decode(&Picture::read(converted).unwrap()).unwrap();
-    assert_eq!((pixels.width, pixels.height), (4, 2));
-    assert!(pixels.pixels[0] > 200 && pixels.pixels[2] < 60, "red on the left");
+    for converted in media.iter().filter(|m| **m != png) {
+        let picture = Picture::read(converted).unwrap();
+        assert_eq!(picture.format, reportcraft_core::image::ImageFormat::Png);
+        let pixels = decode(&picture).unwrap();
+        assert_eq!((pixels.width, pixels.height), (4, 2));
+        assert!(pixels.pixels[0] > 200 && pixels.pixels[2] < 60, "red on the left");
+    }
 }
 
 /// The files under `word/media/`.

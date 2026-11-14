@@ -163,22 +163,29 @@ fn placed(png: Vec<u8>, px: (u32, u32), x: f64, y: f64, w: f64, h: f64, id: Stri
         .offset_y(emu(y))
 }
 
-/// Image items' pictures as PNG (the only picture format docx-rs writes), by the address of
-/// their bytes: a JPEG is converted once however many pages show it; `None` when damaged.
-type Pngs = std::collections::HashMap<(usize, usize), Option<std::sync::Arc<Vec<u8>>>>;
+/// Image items' pictures as PNG (the only picture format docx-rs writes) with their size in
+/// pixels, by the address of their bytes and the pixels their box needs: a JPEG or WebP picture
+/// is converted once however many pages show it, and one much larger than its box needs is
+/// sampled down to `PRINT_DPI`; `None` when damaged.
+type Pngs = std::collections::HashMap<(usize, usize, (u32, u32)), Option<Png>>;
 
-fn png_of(shape: &Shape, pngs: &mut Pngs) -> Option<std::sync::Arc<Vec<u8>>> {
-    let Shape::Image { format, width_px, height_px, data } = shape else { return None };
-    pngs.entry((data.0.as_ptr() as usize, data.0.len()))
+/// A PNG file and its size in pixels.
+type Png = (std::sync::Arc<Vec<u8>>, (u32, u32));
+
+fn png_of(it: &Item, pngs: &mut Pngs) -> Option<Png> {
+    let Some(Shape::Image { format, width_px, height_px, data }) = &it.shape else { return None };
+    let needed = reportcraft_layout::pixels::print_pixels(it.width_mm, it.height_mm);
+    pngs.entry((data.0.as_ptr() as usize, data.0.len(), needed))
         .or_insert_with(|| {
             let picture = Picture { format: *format, width_px: *width_px, height_px: *height_px, data: data.clone() };
             // Decoded whole either way, so a damaged picture never reaches the file.
             let pixels = reportcraft_layout::pixels::decode(&picture)?;
-            match format {
-                ImageFormat::Png => Some(data.0.to_vec()),
-                ImageFormat::Jpeg => reportcraft_layout::pixels::encode_png(&pixels),
-            }
-            .map(std::sync::Arc::new)
+            let (png, size) = match (reportcraft_layout::pixels::reduce(&pixels, needed), format) {
+                (Some(small), _) => (reportcraft_layout::pixels::encode_png(&small)?, (small.width, small.height)),
+                (None, ImageFormat::Png) => (data.0.to_vec(), (pixels.width, pixels.height)),
+                (None, ImageFormat::Jpeg | ImageFormat::Webp) => (reportcraft_layout::pixels::encode_png(&pixels)?, (pixels.width, pixels.height)),
+            };
+            Some((std::sync::Arc::new(png), size))
         })
         .clone()
 }
@@ -230,8 +237,8 @@ fn page_pictures(items: &[Item], page: usize, pngs: &mut Pngs) -> (Vec<Pic>, usi
                 }
                 _ => undrawn += 1,
             },
-            Some(shape @ Shape::Image { width_px, height_px, .. }) => match png_of(shape, pngs) {
-                Some(png) => add(png.to_vec(), (*width_px, *height_px), x, y, w, h, &mut pics),
+            Some(Shape::Image { .. }) => match png_of(it, pngs) {
+                Some((png, size)) => add(png.to_vec(), size, x, y, w, h, &mut pics),
                 None => undrawn += 1,
             },
             Some(Shape::Barcode { columns, rows, quiet, modules }) => match barcode_picture(*columns, *rows, *quiet, modules, w, h) {
