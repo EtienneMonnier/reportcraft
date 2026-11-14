@@ -59,6 +59,14 @@ static COMMANDS: &[CommandSpec] = &[
         access: Access::Edit,
         run: report_load,
     },
+    CommandSpec {
+        id: "file.importQweb",
+        label: "Import Odoo QWeb template",
+        menu: "File",
+        params: r#"{"xml": string (an Odoo QWeb template file), "template"?: string (its id; default: the file's last template)}"#,
+        access: Access::Edit,
+        run: file_import_qweb,
+    },
     CommandSpec { id: "report.get", label: "Report definition", menu: "Report", params: "{}", access: Access::Read, run: report_get },
     CommandSpec {
         id: "data.loadCsv",
@@ -323,6 +331,25 @@ fn report_load(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let title = report.title.clone();
     s.report = report;
     Ok(json!({"title": title}))
+}
+
+/// Converts an Odoo QWeb template into the session's report and loads sample rows shaped like
+/// the data it reads, so it previews at once; what wasn't converted comes back as diagnostics.
+fn file_import_qweb(s: &mut Session, params: &Json) -> EngineResult<Json> {
+    let xml = str_param("file.importQweb", params, "xml")?;
+    let template = params.get("template").and_then(Json::as_str);
+    let import = reportcraft_qweb::import(xml, template)?;
+    let columns = import.sample.columns.clone();
+    set_rows(s, import.sample);
+    s.datasets.clear();
+    s.report = import.report;
+    Ok(json!({
+        "title": s.report.title,
+        "templates": import.templates,
+        "columns": columns,
+        "rows": s.rows.rows.len(),
+        "diagnostics": import.diagnostics,
+    }))
 }
 
 fn report_get(s: &mut Session, _: &Json) -> EngineResult<Json> {

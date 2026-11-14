@@ -15,6 +15,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L0 | `barcode` | Code 128, EAN-13 and QR code encoders (module grids), written from the public standards |
 | L0 | `expr` | Excel-style formulas: parser (length and depth bounded), function catalogue, deterministic evaluator over an `Env` the caller provides |
 | L1 | `model` | The report definition (`*.rcr.json`, `format_version`): page setup, parameters, sort, groups, bands, elements |
+| L2 | `qweb` | Odoo QWeb report templates (read with `roxmltree`) converted to a report: document loop to a group, line loop to the detail band, HTML flow to positioned elements; sample rows to preview; diagnostics by template line |
 | L2 | `data` | `DataSource` and `SchemaSource` traits, schema types; `MemorySource`, `CsvSource` (wasm-safe) |
 | L3 | `sqlite` | Read-only SQLite source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
 | L3 | `postgres` | Read-only PostgreSQL source and schema discovery (native only; implements `DataSource`, `SchemaSource`) |
@@ -27,7 +28,7 @@ An engine-first Cargo workspace (edition 2024, resolver 3), laid out like the ot
 | L6 | `mcp` | MCP server over stdio (hand-written JSON-RPC), one tool per command |
 | L6 | `ui-egui` | The designer: banded canvas, live preview of the rendered pages, menus; every action an engine command; file dialogs through the `Dialogs` trait |
 | L7 | `apps/reportcraft` | The desktop app (eframe, wgpu, the suite's egui fork; rfd dialogs; `--screenshot FILE.ppm` for checks) |
-| L7 | `apps/reportcraft-cli` | `commands`, `render`, `run`, `sample`, `mcp`, `version` |
+| L7 | `apps/reportcraft-cli` | `commands`, `render`, `run`, `sample`, `import-qweb`, `mcp`, `version` |
 | — | `xtask` | `ci`, `layers` |
 
 ## Data flow

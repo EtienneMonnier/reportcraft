@@ -12,6 +12,8 @@ const LAYERS: &[(&str, u8)] = &[
     ("reportcraft-expr", 0),
     ("reportcraft-model", 1),
     ("reportcraft-data", 2),
+    // Reads Odoo QWeb templates into the model (R4.1); no data access, wasm-safe.
+    ("reportcraft-qweb", 2),
     ("reportcraft-layout", 3),
     // Native data sources: they implement `reportcraft-data`'s trait, so they sit above it.
     ("reportcraft-sqlite", 3),

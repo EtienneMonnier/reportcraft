@@ -420,6 +420,29 @@ mod tests {
     }
 
     #[test]
+    fn a_qweb_template_imports_with_sample_rows_and_previews() {
+        let xml = r#"<odoo><template id="report_order"><t t-call="web.html_container"><t t-foreach="docs" t-as="o">
+            <div class="page"><h2>Order <span t-field="o.name"/></h2>
+            <table><tbody><tr t-foreach="o.order_line" t-as="line"><td t-field="line.name"/><td class="text-end" t-field="line.price_total"/></tr></tbody></table>
+            </div></t></t></template></odoo>"#;
+        let mut s = Session::default();
+        let out = s.execute("file.importQweb", &json!({"xml": xml})).unwrap();
+        assert_eq!(out["title"], json!("report_order"));
+        assert_eq!(out["rows"], json!(6));
+        assert_eq!(out["diagnostics"], json!([]));
+        let html = s.execute("report.render", &json!({"format": "html"})).unwrap();
+        let html = html.get("html").and_then(Json::as_str).unwrap();
+        // Two orders on two pages, three lines each, amounts with two decimals.
+        assert!(html.contains("Order") && html.contains("Name 2") && html.contains("37.50"), "{html}");
+        assert_eq!(html.matches("<div class=\"page\">").count(), 2);
+        // The import is one undoable change; a bad file changes nothing.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.report.title, "Untitled report");
+        assert!(s.execute("file.importQweb", &json!({"xml": "<odoo/>"})).is_err());
+        assert!(s.execute("file.importQweb", &json!({})).is_err());
+    }
+
+    #[test]
     fn formulas_are_tried_checked_and_rendered() {
         let mut s = Session::default();
         s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();

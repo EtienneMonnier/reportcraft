@@ -24,6 +24,8 @@ SQLCMDPASSWORD=… cargo run -p reportcraft-cli -- render rentals.rcr.json --sql
 cargo run -p reportcraft-cli -- schema --postgres "host=db user=report dbname=erp"  # tables, columns, keys
 cargo run -p reportcraft-cli -- render sales.rcr.json --out sales.pdf --format pdf  # a report that names its saved connection loads its own data
 cargo run -p reportcraft-cli -- render catalogue.rcr.json --connection odoo --query "SELECT …, a.store_fname AS photo …" --pictures ~/.local/share/Odoo/filestore/mydb --format pdf --out catalogue.pdf  # Odoo pictures
+cargo run -p reportcraft-cli -- import-qweb report_invoice.xml --out invoice.rcr.json --sample-data invoice.csv  # an Odoo QWeb template
+cargo run -p reportcraft-cli -- render invoice.rcr.json --data invoice.csv --format pdf --out invoice.pdf          # previewed on sample rows
 cargo run -p reportcraft-cli -- validate rentals.rcr.json --data mydata.csv          # errors and warnings
 cargo run -p reportcraft-cli -- commands                               # every command
 cargo run -p reportcraft-cli -- mcp                                    # MCP server on stdio

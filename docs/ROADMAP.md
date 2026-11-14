@@ -153,7 +153,13 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Translate engine messages (errors and diagnostics are English today)
 
 ## R4 — Formats and migration (owner: open)
-- [ ] R4.1 Odoo QWeb templates: edit visually and preview on sample data — **decision**: scope
+- [x] R4.1 Odoo QWeb templates: edit visually and preview on sample data — decided 2026-11-14: import and preview, no writing back to QWeb; the format from Odoo's documentation only (#20)
+  - [ ] File ▸ Import QWeb… in the designer (today `file.importQweb`, `reportcraft-cli import-qweb`)
+  - [ ] Nested loops (a document's lines grouped by section, taxes per line) as subreports or inner groups
+  - [ ] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer
+  - [ ] More Python expressions: `in [...]`, parentheses, arithmetic on fields as formulas
+  - [ ] Templates called from other modules (`t-call` to a file that isn't given), and `inherit_id` views applied
+  - [ ] An SQL query proposed for the columns the report reads (`o.partner_id.name` → joins on the Odoo model)
 - [ ] R4.2 Power BI text project format (PBIP/TMDL) import, from public documentation
 - [ ] R4.3 Crystal Reports `.rpt` read-only import — **decision**: only if a clean-room route exists
 

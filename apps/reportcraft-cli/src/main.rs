@@ -41,6 +41,9 @@ reportcraft-cli <subcommand>
    the password in SQLCMDPASSWORD)
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
+  import-qweb FILE.xml [--template ID] [--out REPORT.json] [--sample-data ROWS.csv]
+                                            convert an Odoo QWeb report template (what isn't converted
+                                            is listed); preview it with `render REPORT.json --data ROWS.csv`
   mcp [--allow-paths] [--allow-actions]     MCP server on stdio; an agent uses saved connections only and
                                             can't confirm prints or connection changes unless allowed
   version
@@ -70,6 +73,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "schema" => schema(rest),
         "validate" => validate(rest),
         "sample" => print_sample(rest.first().map(String::as_str).unwrap_or("rentals")),
+        "import-qweb" => import_qweb(rest),
         "mcp" => {
             let mut s = Session::default();
             // An agent gets saved connections only and can't confirm external actions, unless
@@ -555,6 +559,65 @@ fn run_commands(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn import_qweb(args: &[String]) -> Result<(), String> {
+    let (mut file, mut template, mut out, mut rows) = (None, None, None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--template" => template = Some(flag_value(&mut it, a)?.to_owned()),
+            "--out" => out = Some(flag_value(&mut it, a)?.to_owned()),
+            "--sample-data" => rows = Some(flag_value(&mut it, a)?.to_owned()),
+            path if !path.starts_with("--") && file.is_none() => file = Some(path.to_owned()),
+            other => return Err(format!("unknown option `{other}`")),
+        }
+    }
+    let file = file.ok_or("`import-qweb` needs a QWeb template file")?;
+    let mut s = Session::default();
+    let mut params = json!({"xml": read(&file)?});
+    if let (Some(t), Some(map)) = (template, params.as_object_mut()) {
+        map.insert("template".to_owned(), json!(t));
+    }
+    let result = exec(&mut s, "file.importQweb", params)?;
+    for d in result.get("diagnostics").and_then(Json::as_array).into_iter().flatten() {
+        let field = |k: &str| d.get(k).and_then(Json::as_str).unwrap_or("").to_owned();
+        eprintln!("{}: {}: {}", field("severity"), field("location"), field("message"));
+    }
+    let report = exec(&mut s, "report.get", json!({}))?;
+    let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    match out {
+        Some(path) => std::fs::write(&path, text + "\n").map_err(|e| format!("{path}: {e}"))?,
+        None => println!("{text}"),
+    }
+    if let Some(path) = rows {
+        let preview = exec(&mut s, "data.preview", json!({"limit": 1000}))?;
+        std::fs::write(&path, csv_of(&preview)).map_err(|e| format!("{path}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// `data.preview`'s columns and rows as CSV.
+fn csv_of(preview: &Json) -> String {
+    let quote = |v: &Json| {
+        let t = match v {
+            Json::Null => String::new(),
+            Json::String(t) => t.clone(),
+            other => other.to_string(),
+        };
+        if t.contains([',', '"', '\n', '\r']) { format!("\"{}\"", t.replace('"', "\"\"")) } else { t }
+    };
+    let mut out = String::new();
+    let columns = preview.get("columns").and_then(Json::as_array).cloned().unwrap_or_default();
+    let names: Vec<Json> = columns.iter().map(|c| c.get("name").cloned().unwrap_or(Json::Null)).collect();
+    out.push_str(&names.iter().map(quote).collect::<Vec<_>>().join(","));
+    out.push('\n');
+    for row in preview.get("rows").and_then(Json::as_array).into_iter().flatten() {
+        let cells: Vec<String> = row.as_array().into_iter().flatten().map(quote).collect();
+        out.push_str(&cells.join(","));
+        out.push('\n');
+    }
+    out
 }
 
 fn print_sample(name: &str) -> Result<(), String> {
