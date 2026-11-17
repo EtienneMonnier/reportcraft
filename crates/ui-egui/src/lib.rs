@@ -255,6 +255,31 @@ impl Designer {
         }
     }
 
+    /// Imports an Odoo QWeb template (`*.xml`) as a new report previewed on its sample rows; what
+    /// wasn't converted goes to the status line, by template line.
+    pub fn import_qweb(&mut self, path: &Path) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                self.status = format!("{}: {e}", path.display());
+                return;
+            }
+        };
+        let Some(r) = self.run("file.importQweb", json!({"xml": text})) else { return };
+        self.path = None;
+        self.selected = None;
+        self.selected_band = None;
+        self.data = tf!("sample rows of {file}, {n} rows", file = path.display(), n = r["rows"]);
+        let notes: Vec<String> = r["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|d| format!("{}: {}", d["location"].as_str().unwrap_or(""), d["message"].as_str().unwrap_or("")))
+            .collect();
+        let imported = tf!("imported {file}", file = path.display());
+        self.status = if notes.is_empty() { imported } else { format!("{imported} · {}", notes.join(" · ")) };
+    }
+
     /// Loads a CSV file as the report's rows.
     pub fn load_csv(&mut self, path: &Path) {
         match std::fs::read_to_string(path) {
@@ -550,6 +575,11 @@ impl Designer {
                     && let Some(p) = self.dialogs.open("Open report", &["json"])
                 {
                     self.open_report(&p);
+                }
+                if ui.button(tl!("Import Odoo QWeb template…")).clicked()
+                    && let Some(p) = self.dialogs.open(tl!("Import Odoo QWeb template…").trim_end_matches('…'), &["xml"])
+                {
+                    self.import_qweb(&p);
                 }
                 if ui.button(tl!("Save report…")).clicked() {
                     let name = self

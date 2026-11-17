@@ -171,3 +171,6 @@
 	{w} × {h} px, {kb} KB	{w} × {h} px, {kb} Ko
 	Picture folder	Dossier d'images
 	optional: an Odoo filestore, …/filestore/DATABASE	facultatif : un filestore Odoo, …/filestore/BASE
+	Import Odoo QWeb template…	Importer un modèle QWeb Odoo…
+	imported {file}	{file} importé
+	sample rows of {file}, {n} rows	lignes d'exemple de {file}, {n} lignes
