@@ -294,6 +294,11 @@ pub struct Group {
     /// Starts every group on a new page (except one that already starts a page).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_break_before: bool,
+    /// Numbers pages within each group: the page a group starts on is its page 1, and the total
+    /// is the group's ("page 1 / 2" of each invoice). A page two groups share belongs to the one
+    /// that starts on it; with `page_break_before` none is shared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restart_page_numbers: bool,
     #[serde(default)]
     pub header: Band,
     #[serde(default)]
@@ -1216,6 +1221,7 @@ mod tests {
             page_break_before: false,
             header: Band::default(),
             footer: Band::default(),
+            restart_page_numbers: false,
         });
         r.sort.push(SortKey { field: "amount".into(), descending: false });
         r.page_header = Band {
@@ -1565,6 +1571,7 @@ mod tests {
             page_break_before: false,
             header: Band::default(),
             footer: Band::default(),
+            restart_page_numbers: false,
         });
         for (name, _) in Report::bands(&r.clone()) {
             assert!(r.band_mut(&name).is_some(), "{name}");

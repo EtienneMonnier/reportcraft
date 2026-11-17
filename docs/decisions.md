@@ -752,3 +752,17 @@ query can fill it (`string_agg(t.name, ', ')` in a subquery, aliased to that nam
 text even when its name speaks of taxes or amounts. A filter after `if` is dropped: in Odoo's
 templates it leaves out blanks, which `string_agg` leaves out too; other filters, and values that
 aren't a plain field (`str(t.amount)`), aren't read yet.
+
+## Groups that number their own pages (R4.1)
+
+Odoo renders each document of a batch on its own and joins the PDFs, so an invoice of two pages
+prints "1 / 2" and "2 / 2" whatever comes before it. A banded report lays every document out in
+one run, so "page N / M" counted the whole run. A group now says it numbers its own pages
+(`restart_page_numbers`, off by default, so existing reports don't change): the page a group
+starts on is its page 1, and M is the number of pages up to the next group that starts the count
+again. With `page_break_before` (as the documents of an imported template have) no page is
+shared; without it, a page two groups share counts for the one that starts on it — the page footer
+there already reads the new group's row. Crystal-style "reset page number after group" with a
+separate "total pages of the group" was considered: one flag covers both, since a per-group
+number with a whole-report total reads wrong. Imported QWeb templates set it on the document
+group, as Odoo prints them.

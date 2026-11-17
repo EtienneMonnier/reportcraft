@@ -848,6 +848,7 @@ mod tests {
         s.execute("file.openSample", &json!({"name": "rentals"})).unwrap();
         let mut groups = serde_json::to_value(&s.report.groups).unwrap();
         groups[0]["page_break_before"] = json!(true);
+        groups[0]["restart_page_numbers"] = json!(true);
         let r = s
             .execute(
                 "report.setStructure",
@@ -861,6 +862,7 @@ mod tests {
             .unwrap();
         assert_eq!(r, json!({"groups": 1, "sort": 1, "formulas": 1, "parameters": 1}));
         assert!(s.report.groups[0].page_break_before && !s.report.groups[0].header.elements.is_empty(), "the bands came along");
+        assert!(s.report.groups[0].restart_page_numbers);
         let before = s.report.clone();
         assert!(s.execute("report.setStructure", &json!({"formulas": [{"name": "a", "expression": "[a] + 1"}]})).is_err(), "a circle");
         assert!(s.execute("report.setStructure", &json!({"sort": "amount"})).is_err());

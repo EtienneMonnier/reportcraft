@@ -223,7 +223,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.setStructure",
         label: "Groups, sort, formulas and parameters",
         menu: "Report",
-        params: r#"{"groups"?: [{"field", "keep_together"?, "repeat_header"?, "page_break_before"?, "header"?, "footer"?}], "sort"?: [{"field", "descending"?}], "formulas"?: [{"name", "expression"}], "parameters"?: [{"name", "label"?, "type"?, "default"?, "choices"?, "multiple"?, "required"?}]} (each given list replaces the report's; a group keeps the bands you give it)"#,
+        params: r#"{"groups"?: [{"field", "keep_together"?, "repeat_header"?, "page_break_before"?, "restart_page_numbers"?, "header"?, "footer"?}], "sort"?: [{"field", "descending"?}], "formulas"?: [{"name", "expression"}], "parameters"?: [{"name", "label"?, "type"?, "default"?, "choices"?, "multiple"?, "required"?}]} (each given list replaces the report's; a group keeps the bands you give it)"#,
         access: Access::Edit,
         run: report_set_structure,
     },

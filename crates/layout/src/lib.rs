@@ -316,6 +316,9 @@ fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Wr
                     w.new_page(&order)?;
                 }
             }
+            if group.restart_page_numbers && w.restarts.last() != Some(&w.pages.len()) {
+                w.restarts.push(w.pages.len());
+            }
             w.open.push(OpenGroup { level, start: pos, end });
             if let Some(scope) = order.get(pos..end) {
                 // What must follow a header kept with it: the inner headers and one detail row.
@@ -507,6 +510,9 @@ struct Writer<'a> {
     row_height: f64,
     /// Items that show the page number, by page.
     page_number_items: Vec<(usize, usize)>,
+    /// Pages where the numbering starts again at 1 (a group numbering its own pages starts on
+    /// them), in order.
+    restarts: Vec<usize>,
     /// The row being placed (what a page header started now reads) and the last row a band was
     /// drawn for (what a page footer reads).
     next_row: Option<usize>,
@@ -557,6 +563,7 @@ impl<'a> Writer<'a> {
             column_bottom: 0.0,
             row_height: 0.0,
             page_number_items: Vec::new(),
+            restarts: Vec::new(),
             next_row: None,
             last_row: None,
         }
@@ -1161,10 +1168,14 @@ impl<'a> Writer<'a> {
     }
 
     fn into_document(mut self) -> Document {
-        let total = self.pages.len();
+        let count = self.pages.len();
         for (page, item) in std::mem::take(&mut self.page_number_items) {
+            // The run of pages numbered together: from the last restart at or before this page
+            // to the next one.
+            let first = self.restarts.iter().rev().find(|&&r| r <= page).copied().unwrap_or(0);
+            let next = self.restarts.iter().find(|&&r| r > page).copied().unwrap_or(count);
             if let Some(it) = self.pages.get_mut(page).and_then(|p| p.items.get_mut(item)) {
-                it.text = format!("{} / {total}", page + 1);
+                it.text = format!("{} / {}", page - first + 1, next.saturating_sub(first));
             }
         }
         let (width_mm, height_mm) = self.report.page.size();
@@ -1250,6 +1261,7 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
             },
+            restart_page_numbers: false,
         });
         r.detail = Band {
             height_mm: 5.0,
@@ -1312,6 +1324,7 @@ mod tests {
             header: Band::default(),
             // Too tall to fit under a row: it starts a page of its own.
             footer: band(15.0, "branch"),
+            restart_page_numbers: false,
         });
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();
@@ -1324,6 +1337,33 @@ mod tests {
         r.page_header.visible_if = Some("[branch] = \"Paris\"".into());
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc).iter().filter(|t| *t == "Paris").count(), 3, "Paris's pages only: two headers and the group footer");
+    }
+
+    #[test]
+    fn groups_number_their_own_pages() {
+        let band = |h: f64, content: Content| Band { height_mm: h, elements: vec![el(content)], ..Band::default() };
+        let mut r = Report::new("t");
+        r.page.height_mm = 60.0;
+        r.page.margin_mm = 10.0;
+        r.page_footer = band(5.0, Content::PageNumber);
+        r.detail = band(20.0, Content::Field { field: "amount".into() });
+        r.groups.push(Group {
+            field: "branch".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: true,
+            header: Band::default(),
+            footer: Band::default(),
+            restart_page_numbers: true,
+        });
+        let numbers = |r: &Report| -> Vec<String> {
+            let doc = layout(r, &rows(), &Params::new()).unwrap();
+            doc.pages.iter().filter_map(|p| p.items.iter().find(|i| i.text.contains(" / ")).map(|i| i.text.clone())).collect()
+        };
+        // Lyon's rows on two pages, Paris's on one: each counts its own.
+        assert_eq!(numbers(&r), ["1 / 2", "2 / 2", "1 / 1"]);
+        r.groups[0].restart_page_numbers = false;
+        assert_eq!(numbers(&r), ["1 / 3", "2 / 3", "3 / 3"]);
     }
 
     #[test]
@@ -1410,6 +1450,7 @@ mod tests {
                 keep_with_next: false,
             },
             footer: Band::default(),
+            restart_page_numbers: false,
         });
         r.detail = Band {
             height_mm: 5.0,
@@ -1478,6 +1519,7 @@ mod tests {
                 keep_with_next: false,
             },
             footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")], page_break_before_if: None, visible_if: None, keep_with_next: false },
+            restart_page_numbers: false,
         });
         r.sort.push(reportcraft_model::SortKey { field: "net".into(), descending: true });
         let share = Element { format: Some(reportcraft_model::Format::Percent { decimals: 0 }), ..f("[net] / SUM([net])") };
@@ -1568,6 +1610,7 @@ mod tests {
             page_break_before: false,
             header: Band { height_mm: 6.0, elements: vec![el(Content::Field { field: "branch".into() })], ..Band::default() },
             footer: Band { height_mm: 6.0, elements: vec![el(Content::Text { text: "end".into() })], ..Band::default() },
+            restart_page_numbers: false,
         });
         r.detail = Band { height_mm: 5.0, elements: vec![el(Content::Field { field: "amount".into() })], ..Band::default() };
         let pages = |r: &Report| -> Vec<Vec<String>> {
@@ -1749,6 +1792,7 @@ mod tests {
                 visible_if: cond("COUNT([amount]) > 1"),
                 ..Band::default()
             },
+            restart_page_numbers: false,
         });
         let big = Element { visible_if: cond("[amount] > 6"), ..el(Content::Text { text: "big".into() }) };
         r.detail = Band {
@@ -1816,6 +1860,7 @@ mod tests {
             page_break_before: false,
             header: Band::default(),
             footer: Band::default(),
+            restart_page_numbers: false,
         });
         assert!(matches!(layout(&r, &rows(), &Params::new()), Err(Error::NotFound(_))));
         let doc = layout(&Report::new("t"), &RowSet::default(), &Params::new()).unwrap();

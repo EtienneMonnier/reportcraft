@@ -150,7 +150,15 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
             if !b.fields.iter().any(|f| f.name.eq_ignore_ascii_case(&key)) {
                 b.fields.insert(0, Field { name: key.clone(), field_type: FieldType::Integer, level: Level::Doc, example: None });
             }
-            report.groups.push(Group { field: key, keep_together: false, repeat_header: false, page_break_before: true, header, footer });
+            report.groups.push(Group {
+                field: key,
+                keep_together: false,
+                repeat_header: false,
+                page_break_before: true,
+                header,
+                footer,
+                restart_page_numbers: true,
+            });
         }
         None => {
             report.report_header = header;

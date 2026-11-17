@@ -70,6 +70,8 @@ fn a_document_loop_becomes_a_group_and_its_lines_the_detail() {
     let group = &r.groups[0];
     assert_eq!(group.field, "o.id");
     assert!(group.page_break_before);
+    // Each document numbers its own pages, as Odoo prints them.
+    assert!(group.restart_page_numbers);
 
     let header = texts(&group.header.elements);
     assert_eq!(

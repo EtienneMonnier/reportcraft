@@ -168,7 +168,7 @@ Anything marked **decision** waits for a maintainer.
       - [ ] An SQL snippet for `section_number` / `subsection_number` (a window count over the move's lines) in the import's notes
     - [ ] Rows of the detail shown under exclusive conditions (a line's row and its collapsed form) take room only when shown (today the band is as tall as all of them)
   - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
-    - [ ] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them
+    - [x] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them: groups that number their own pages (`restart_page_numbers`)
     - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)
     - [ ] Totals in page headers and footers (the rows of the page: carried forward, page totals)
   - [ ] More Python expressions — `in (…)`, `not in`, `not (…)`, parentheses and `t-set` names for conditions done

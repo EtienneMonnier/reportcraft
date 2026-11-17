@@ -64,6 +64,8 @@ pub(crate) fn show(ctx: &egui::Context, draft: &mut Draft, fields: &[String]) ->
                     ui.checkbox(&mut g.keep_together, tl!("keep together"));
                     ui.checkbox(&mut g.repeat_header, tl!("repeat header"));
                     ui.checkbox(&mut g.page_break_before, tl!("new page"));
+                    ui.checkbox(&mut g.restart_page_numbers, tl!("own page numbers"))
+                        .on_hover_text(tl!("Number the pages of each group from 1 (page 1 / 2 of each invoice)"));
                     if ui.button("×").on_hover_text(tl!("Remove")).clicked() {
                         remove = Some(i);
                     }
@@ -80,6 +82,7 @@ pub(crate) fn show(ctx: &egui::Context, draft: &mut Draft, fields: &[String]) ->
                     page_break_before: false,
                     header: reportcraft_model::Band { height_mm: 7.0, ..Default::default() },
                     footer: reportcraft_model::Band { height_mm: 7.0, ..Default::default() },
+                    restart_page_numbers: false,
                 });
             }
             ui.separator();

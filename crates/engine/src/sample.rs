@@ -101,6 +101,7 @@ fn rentals() -> Report {
             visible_if: None,
             keep_with_next: false,
         },
+        restart_page_numbers: false,
     });
     r.detail = Band {
         height_mm: 6.0,
