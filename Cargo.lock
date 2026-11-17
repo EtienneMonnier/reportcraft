@@ -4203,6 +4203,7 @@ name = "reportcraft-qweb"
 version = "0.1.0"
 dependencies = [
  "reportcraft-core",
+ "reportcraft-expr",
  "reportcraft-model",
  "roxmltree",
 ]

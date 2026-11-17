@@ -11,12 +11,14 @@
 //! repeated on each of its lines, and `o.id` (the document loop's variable) telling documents
 //! apart. Each document starts a new page. Another loop over a document's or a line's records
 //! reads a dataset of its own, one row per item, shown by a subreport linked to its document (and
-//! line); its sample rows come with the import.
+//! line); its sample rows come with the import. Odoo's title lines (sections, subsections) group
+//! the lines, numbered by `line.section_number` and `line.subsection_number` (see `sections`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod expr;
 mod flow;
 mod letterhead;
+mod sections;
 
 use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value};
 use reportcraft_model::{Diagnostic, Group, Report, Severity};
@@ -146,7 +148,7 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
         Some(var) => {
             let key = format!("{var}.id");
             if !b.fields.iter().any(|f| f.name.eq_ignore_ascii_case(&key)) {
-                b.fields.insert(0, Field { name: key.clone(), field_type: FieldType::Integer, level: Level::Doc });
+                b.fields.insert(0, Field { name: key.clone(), field_type: FieldType::Integer, level: Level::Doc, example: None });
             }
             report.groups.push(Group { field: key, keep_together: false, repeat_header: false, page_break_before: true, header, footer });
         }
@@ -155,6 +157,7 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
             report.report_footer = footer;
         }
     }
+    sections::apply(&mut report, &mut b.fields);
     if let Some((layout, doc)) = b.letterhead.clone() {
         letterhead::apply(&mut report, layout, &doc, &mut b.fields);
     }
@@ -166,13 +169,34 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
 fn sample(fields: &[Field]) -> RowSet {
     let columns: Vec<Column> = fields.iter().map(|f| Column { name: f.name.clone(), field_type: f.field_type }).collect();
     let lines = if fields.iter().any(|f| f.level == Level::Line) { SAMPLE_LINES } else { 1 };
+    // Lines grouped by section: the first line of each document is a section's title.
+    let sections = fields.iter().any(|f| f.name.ends_with(".section_number"));
     let mut rows = Vec::new();
     for d in 1..=SAMPLE_DOCS {
         for l in 1..=lines {
-            rows.push(fields.iter().map(|f| sample_value(f, d, l, 1)).collect());
+            rows.push(fields.iter().map(|f| if sections { section_value(f, l) } else { None }.unwrap_or_else(|| sample_value(f, d, l, 1))).collect());
         }
     }
     RowSet { columns, rows }
+}
+
+/// A line's value in sample rows grouped by section, where it differs from the others: line 1
+/// is the title (no amounts), the others products, all in section 1.
+fn section_value(f: &Field, line: usize) -> Option<Value> {
+    if f.level != Level::Line {
+        return None;
+    }
+    let title = line == 1;
+    if f.name.ends_with(".display_type") {
+        return Some(Value::Text(if title { "line_section" } else { "product" }.to_owned()));
+    }
+    if f.name.ends_with(".section_number") {
+        return Some(Value::Int(1));
+    }
+    if f.name.ends_with(".subsection_number") {
+        return Some(Value::Int(0));
+    }
+    (title && f.field_type == FieldType::Number).then_some(Value::Null)
 }
 
 /// A nested loop's made-up rows: two items for each document of the sample data, or for each of
@@ -210,8 +234,12 @@ fn sample_value(f: &Field, doc: usize, line: usize, item: usize) -> Value {
             };
             Value::Number(base * n as f64)
         }
-        FieldType::Bool => Value::Bool(n % 2 == 1),
-        FieldType::Text => Value::Text(format!("{} {n}", label(text_leaf(&f.name)))),
+        // Flags that hide content (`collapse_prices`, `hide_…`) are off, others on.
+        FieldType::Bool => Value::Bool(!["collapse", "hide"].iter().any(|w| leaf.starts_with(w))),
+        FieldType::Text => match &f.example {
+            Some(example) => Value::Text(example.clone()),
+            None => Value::Text(format!("{} {n}", label(text_leaf(&f.name)))),
+        },
     }
 }
 

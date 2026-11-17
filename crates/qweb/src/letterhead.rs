@@ -25,7 +25,7 @@ pub(crate) fn apply(report: &mut Report, layout: Layout, doc: &str, fields: &mut
     let company = |leaf: &str| format!("{doc}.company_id.{leaf}");
     let mut read = |name: String| {
         if !fields.iter().any(|f| f.name.eq_ignore_ascii_case(&name)) {
-            fields.push(Field { name: name.clone(), field_type: FieldType::Text, level: Level::Doc });
+            fields.push(Field { name: name.clone(), field_type: FieldType::Text, level: Level::Doc, example: None });
         }
         name
     };

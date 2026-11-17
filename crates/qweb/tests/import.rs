@@ -341,3 +341,115 @@ fn nested_loops_become_linked_subreports_with_sample_rows() {
     let problems = r.check_with_datasets(Some(&out.sample.columns), &columns);
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+/// An original quotation template in the shape of Odoo 20's documents: title lines (sections,
+/// subsections, notes) mixed with the products, named conditions, alternatives inside a row and a
+/// cell, a cell for the screen only, and the section's total computed in Python.
+const QUOTE: &str = r#"<odoo><template id="report_quote">
+<t t-call="web.html_container"><t t-foreach="docs" t-as="o">
+  <div class="page">
+    <table class="table">
+      <thead><tr>
+        <th>Item</th><th class="text-end">Quantity</th>
+        <th t-attf-class="text-end {{ 'd-none d-md-table-cell' if report_type == 'html' else '' }}">Price</th>
+        <th class="text-end">Amount</th>
+      </tr></thead>
+      <tbody>
+        <t t-foreach="o.quote_line_ids" t-as="line">
+          <t t-set="is_title" t-value="line.display_type in ('line_section', 'line_subsection')"/>
+          <t t-set="is_note" t-value="line.display_type == 'line_note'"/>
+          <tr>
+            <t t-if="not line.display_type or line.display_type == 'product'">
+              <td><span t-field="line.name"/></td>
+              <td class="text-end"><span t-field="line.quantity"/></td>
+              <td class="text-end"><span t-field="line.price_unit"/></td>
+              <td class="text-end">
+                <span t-if="o.tax_mode == 'excluded'" t-field="line.price_subtotal"/>
+                <span t-if="o.tax_mode == 'included'" t-field="line.price_total"/>
+              </td>
+            </t>
+            <t t-elif="is_title">
+              <t t-set="title_total" t-value="line.compute_section_total()"/>
+              <td t-att-colspan="3 if o.tax_mode else 2"><span t-field="line.name"/></td>
+              <td t-attf-class="{{ 'd-table-cell' if report_type == 'html' else 'd-none' }}">For the screen</td>
+              <td class="text-end"><span t-out="title_total"/></td>
+            </t>
+            <t t-elif="is_note">
+              <td colspan="99"><em t-field="line.name"/></td>
+            </t>
+          </tr>
+        </t>
+      </tbody>
+    </table>
+  </div>
+</t></t></template></odoo>"#;
+
+#[test]
+fn title_lines_group_the_lines_by_section() {
+    let out = import(QUOTE, None).unwrap();
+    let r = &out.report;
+    let at = |els: &[Element]| -> Vec<(String, f64, Option<String>)> {
+        texts(els).into_iter().zip(els).map(|(t, e)| (t, e.x_mm, e.visible_if.clone())).collect()
+    };
+    // Grouped by document, then section, then subsection.
+    let fields: Vec<&str> = r.groups.iter().map(|g| g.field.as_str()).collect();
+    assert_eq!(fields, ["o.id", "line.section_number", "line.subsection_number"]);
+    for (group, kind) in r.groups[1..].iter().zip(["line_section", "line_subsection"]) {
+        // The title's row is the header, shown when the group starts with a title line, bold.
+        assert_eq!(group.header.visible_if.as_deref(), Some(format!("[line.display_type] = \"{kind}\"").as_str()));
+        let header = at(&group.header.elements);
+        assert_eq!(
+            header.iter().map(|(t, x, _)| (t.as_str(), *x)).collect::<Vec<_>>(),
+            [("[line.name]", 0.5), ("=SUM([line.price_subtotal])", 135.5)]
+        );
+        assert!(group.header.elements.iter().all(|e| e.style.bold));
+        assert!(group.footer.elements.is_empty());
+    }
+    // Title lines take no room among the lines.
+    assert_eq!(r.detail.visible_if.as_deref(), Some("AND([line.display_type] <> \"line_section\", [line.display_type] <> \"line_subsection\")"));
+    // The product's cells, the title's and the note's start at the same column; the screen-only
+    // cell is left out, the computed colspan fills the row up to the total's column, and the two
+    // amounts are alternatives laid over each other.
+    let detail = at(&r.detail.elements);
+    let cells: Vec<(&str, f64)> = detail.iter().map(|(t, x, _)| (t.as_str(), *x)).collect();
+    assert_eq!(
+        cells,
+        [
+            ("[line.name]", 0.5),
+            ("[line.quantity]", 45.5),
+            ("[line.price_unit]", 90.5),
+            ("[line.price_subtotal]", 135.5),
+            ("[line.price_total]", 135.5),
+            ("[line.name]", 0.5),
+            ("=SUM([line.price_subtotal])", 135.5),
+            ("[line.name]", 0.5),
+        ]
+    );
+    assert_eq!(
+        r.detail.elements[4].visible_if.as_deref(),
+        Some("AND(OR(ISBLANK([line.display_type]), [line.display_type] = \"product\"), [o.tax_mode] = \"included\")")
+    );
+    assert_eq!(r.detail.elements[2].style.align, Align::Right);
+    assert!(detail[7].2.as_deref().is_some_and(|c| c.ends_with("[line.display_type] = \"line_note\")")), "{detail:?}");
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(messages.contains(&"`title_total` is read as the sum of `line.price_subtotal` over the section's lines"), "{messages:?}");
+    assert!(!messages.iter().any(|m| m.contains("is_title") || m.contains("is_note") || m.contains("beyond")), "{messages:?}");
+
+    // Sample rows: a title line then products in section 1, compared fields at their first value.
+    let column = |name: &str| out.sample.columns.iter().position(|c| c.name == name).unwrap();
+    let (kind, number, sub, mode, amount) = (
+        column("line.display_type"),
+        column("line.section_number"),
+        column("line.subsection_number"),
+        column("o.tax_mode"),
+        column("line.price_subtotal"),
+    );
+    assert_eq!(out.sample.columns[number].field_type, FieldType::Integer);
+    let row = |i: usize, c: usize| out.sample.rows[i][c].clone();
+    assert_eq!((row(0, kind), row(1, kind)), (Value::Text("line_section".into()), Value::Text("product".into())));
+    assert_eq!((row(0, number), row(2, number), row(2, sub)), (Value::Int(1), Value::Int(1), Value::Int(0)));
+    assert_eq!((row(0, amount), row(1, amount)), (Value::Null, Value::Number(25.0)));
+    assert_eq!(row(0, mode), Value::Text("excluded".into()));
+    let problems = r.check_with_datasets(Some(&out.sample.columns), &Default::default());
+    assert!(problems.is_empty(), "{problems:?}");
+}

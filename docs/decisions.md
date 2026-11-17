@@ -708,3 +708,35 @@ distance under its end (never higher than the band put them), on the next page w
 fit: a total under a list of payments stays under it. Elements beside the subreport keep their
 place. No golden snapshot had an element below a subreport, so none changed.
 
+
+## Odoo's title lines group the lines by section (R4.1)
+
+Odoo keeps section and subsection titles (and notes) as lines of the document, with
+`display_type` saying which; its templates test it on each line and print the section's total
+on the title's row, computed in Python. The banded model has a better word for "a title over the
+lines that follow, with their total": a group. When the detail band has content shown on a title
+line and hidden on a product's (decided by a small three-valued reading of the conditions: the
+line's type alone settles `AND(…, [line.display_type] = "product")`, not `[line.amount] > 0`), the
+converter adds a group per section, and per subsection inside it. Its header is a copy of what the
+detail shows on a title line, in bold as Odoo prints titles, shown when the group starts with a
+title; the detail hides title lines, which would otherwise print twice.
+
+Grouping needs a key that sorts in document order, which a line's own fields don't give (section
+ids follow creation, not position). So the data carries `line.section_number` (0 before the first
+section, then 1, 2… in the order of the lines, the title included) and `line.subsection_number`
+(the same within a section) — a window count in SQL over the move's lines. The layout sorts by
+group keys and keeps the query's order inside them, so the lines stay in sequence.
+
+The section's total is Python (`section_subtotal`, `_get_section_totals(…)`): an unconverted
+expression, or the `t-set` name of one, that speaks of a section's total becomes
+`SUM([line.price_subtotal])`, which a group header computes over its group's rows; a warning says
+so, since a company whose prices include taxes prints `price_total` there.
+
+Converting Odoo 20's invoice also needed: `t-set` names for conditions (`is_section`), `in (…)`
+and parentheses, flags (`collapse_prices`, `is_…`) read by their value and not by being blank,
+conditions on the `t` elements around cells (alternatives of a `t-if`/`t-elif` chain start at
+the same column), the PDF branch of `t-attf-class` (Odoo hides screen-only cells with
+`… if report_type == 'html' else 'd-none'`), a computed `colspan` filling the row, and two spans
+of a cell under different conditions laid over each other rather than joined. Sample rows take,
+for a field compared with a text, that text, so the preview opens the branch the template
+expects (`o.document_tax_mode == 'tax_excluded'`).

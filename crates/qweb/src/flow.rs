@@ -56,6 +56,8 @@ pub(crate) struct Field {
     pub name: String,
     pub field_type: FieldType,
     pub level: Level,
+    /// The first text a condition compares it with (`o.state == 'posted'`), its sample value.
+    pub example: Option<String>,
 }
 
 /// The rows a nested loop reads: one per item, the document's (and the line's) columns repeated,
@@ -85,12 +87,14 @@ enum Piece {
     Field(String, TextStyle, Option<Format>),
     /// An expression with no ReportCraft meaning, shown as written.
     Raw(String, TextStyle),
+    /// A formula the converter wrote (a section's total).
+    Formula(String, TextStyle, Option<Format>),
 }
 
 impl Piece {
     fn style(&self) -> &TextStyle {
         match self {
-            Piece::Text(_, s) | Piece::Field(_, s, _) | Piece::Raw(_, s) => s,
+            Piece::Text(_, s) | Piece::Field(_, s, _) | Piece::Raw(_, s) | Piece::Formula(_, s, _) => s,
         }
     }
 }
@@ -137,7 +141,7 @@ impl Style {
             "small" => self.size_pt = (self.size_pt * 0.8).max(6.0),
             _ => {}
         }
-        for class in node.attribute("class").unwrap_or("").split_whitespace() {
+        for class in print_classes(node).split_whitespace() {
             match class {
                 "text-end" | "text-right" => self.align = Align::Right,
                 "text-center" => self.align = Align::Center,
@@ -160,6 +164,11 @@ pub(crate) struct Builder<'a, 'i> {
     detail_loop: Option<roxmltree::NodeId>,
     /// Names given by `t-set` to paths, latest last.
     aliases: Vec<(String, String)>,
+    /// Names given by `t-set` to conditions (`is_section = line.display_type == 'line_section'`),
+    /// as formulas, latest last.
+    conditions: Vec<(String, String)>,
+    /// Names given by `t-set` to Python that isn't converted, with that Python, latest last.
+    unread: Vec<(String, String)>,
     pub header: Band,
     pub detail: Band,
     pub footer: Band,
@@ -177,8 +186,9 @@ pub(crate) struct Builder<'a, 'i> {
     /// The line of text being gathered, with the condition it shows under.
     pending: Vec<Piece>,
     pending_condition: Option<String>,
-    /// A table cell gathers its pieces here instead of laying out lines.
-    cell: Option<Vec<Piece>>,
+    /// A table cell gathers its pieces here, with the condition each shows under, instead of
+    /// laying out lines.
+    cell: Option<Vec<(Piece, Option<String>)>>,
     /// The XML line of the node being read.
     line: u32,
     full_bands: bool,
@@ -190,6 +200,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             library,
             calls: Vec::new(),
             aliases: Vec::new(),
+            conditions: Vec::new(),
+            unread: Vec::new(),
             detail_loop: None,
             header: Band::default(),
             detail: Band::default(),
@@ -277,6 +289,24 @@ impl<'a, 'i> Builder<'a, 'i> {
         };
         add_field(fields, name, level);
         money(name).then_some(Format::Number { decimals: 2, grouping: true })
+    }
+
+    /// Fields a condition compares with a text (`[o.state] = "posted"`) are text, and that text
+    /// is their sample value (the first one met), so the sample shows the branch it opens.
+    fn compared(&mut self, formula: &str) {
+        for (open, _) in formula.match_indices('[') {
+            let rest = &formula[open + 1..];
+            let Some(close) = rest.find(']') else { continue };
+            let after = &rest[close + 1..];
+            let Some(literal) = after.strip_prefix(" = \"").or_else(|| after.strip_prefix(" <> \"")) else { continue };
+            let Some(end) = literal.find('"') else { continue };
+            let (name, text) = (&rest[..close], &literal[..end]);
+            let nested = self.nested.as_mut().map(|n| &mut n.dataset.fields);
+            for f in self.fields.iter_mut().chain(nested.into_iter().flatten()).filter(|f| f.name.eq_ignore_ascii_case(name)) {
+                f.field_type = FieldType::Text;
+                f.example.get_or_insert_with(|| text.to_owned());
+            }
+        }
     }
 
     /// Starts reading a nested loop over `each` (a path from the document's or the line's
@@ -379,6 +409,9 @@ impl<'a, 'i> Builder<'a, 'i> {
             self.warn(format!("elements nested more than {MAX_DEPTH} deep are left out"));
             return;
         }
+        if hidden_in_print(node) {
+            return;
+        }
         let mut scope = scope.clone();
         scope.style = scope.style.inside(node);
         if !self.conditions(node, &mut scope) {
@@ -394,7 +427,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             return;
         }
         if let Some(var) = node.attribute("t-set") {
-            self.set(var, node.attribute("t-value"));
+            self.set(var, node.attribute("t-value"), &scope);
             return;
         }
         if let Some(value) = ["t-field", "t-out", "t-esc", "t-raw"].iter().find_map(|a| node.attribute(*a)) {
@@ -437,6 +470,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         for field in formula.split('[').skip(1).filter_map(|f| f.split(']').next()) {
             self.field(field, scope);
         }
+        self.compared(&formula);
         scope.condition = Some(match scope.condition.take() {
             Some(outer) => format!("AND({outer}, {formula})"),
             None => formula,
@@ -470,7 +504,8 @@ impl<'a, 'i> Builder<'a, 'i> {
 
     /// A condition as a formula, its fields read through the `t-set` names.
     fn test(&self, test: &str, scope: &Scope) -> Option<String> {
-        let formula = expr::condition(&expr::keys(&collapse(test)))?;
+        let named = |name: &str| self.conditions.iter().rev().find(|(n, _)| n == name).map(|(_, f)| f.clone());
+        let formula = expr::condition_with(&expr::keys(&collapse(test)), &named)?;
         let mut out = String::new();
         let mut rest = formula.as_str();
         while let Some(open) = rest.find('[') {
@@ -498,26 +533,45 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 
     /// `t-set`: a name for a path (`partner = o.partner_id`, `lines = o.move_ids.filtered(…)`) is
-    /// remembered and read through; filters and sorts aren't applied, which is reported.
-    fn set(&mut self, var: &str, value: Option<&str>) {
+    /// remembered and read through; filters and sorts aren't applied, which is reported. A name
+    /// for a condition (`is_section = line.display_type == 'line_section'`) is remembered as its
+    /// formula, for the `t-if`s that test it.
+    fn set(&mut self, var: &str, value: Option<&str>, scope: &Scope) {
         let Some(value) = value.map(|v| expr::keys(&collapse(v))) else {
+            self.forget(var);
             self.warn(format!("`t-set=\"{var}\"` with a body is ignored"));
             return;
         };
         let cut = [".filtered(", ".sorted(", ".with_context(", ".sudo(", ".with_company("].iter().filter_map(|m| value.find(m)).min();
         let (base, tail) = cut.map_or((value.as_str(), ""), |i| value.split_at(i));
         let Some(base) = expr::path(base) else {
-            self.warn(format!("`t-set=\"{var}\"` is ignored"));
+            let condition = self.test(&value, scope);
+            self.forget(var);
+            match condition {
+                Some(formula) => self.conditions.push((var.to_owned(), formula)),
+                None => {
+                    self.unread.push((var.to_owned(), value.clone()));
+                    self.warn(format!("`t-set=\"{var}\"` is ignored"));
+                }
+            }
             return;
         };
         let target = self.resolve(base);
         if target == var {
             return;
         }
+        self.forget(var);
         if tail.contains(".filtered(") || tail.contains(".sorted(") {
             self.warn(format!("`t-set=\"{var}\"`: filters and sorts aren't applied, `{var}` reads every record of `{target}`"));
         }
         self.aliases.push((var.to_owned(), target));
+    }
+
+    /// Drops what a name stood for: it is being set again.
+    fn forget(&mut self, var: &str) {
+        self.aliases.retain(|(n, _)| n != var);
+        self.conditions.retain(|(n, _)| n != var);
+        self.unread.retain(|(n, _)| n != var);
     }
 
     /// Follows a `t-call`: a template of the same file is read in place (`true`, the element's own
@@ -645,8 +699,11 @@ impl<'a, 'i> Builder<'a, 'i> {
 
     /// A space between pieces, kept on the text before it.
     fn space(&mut self) {
-        let pieces = self.cell.as_mut().unwrap_or(&mut self.pending);
-        if let Some(Piece::Text(t, _)) = pieces.last_mut()
+        let last = match self.cell.as_mut() {
+            Some(cell) => cell.last_mut().map(|(p, _)| p),
+            None => self.pending.last_mut(),
+        };
+        if let Some(Piece::Text(t, _)) = last
             && !t.ends_with(' ')
         {
             t.push(' ');
@@ -655,7 +712,7 @@ impl<'a, 'i> Builder<'a, 'i> {
 
     fn piece(&mut self, piece: Piece, scope: &Scope) {
         if let Some(cell) = self.cell.as_mut() {
-            cell.push(piece);
+            cell.push((piece, scope.condition.clone()));
             return;
         }
         if self.pending.is_empty() {
@@ -683,11 +740,34 @@ impl<'a, 'i> Builder<'a, 'i> {
                 let format = self.field(&p, scope).or(monetary.then_some(Format::Number { decimals: 2, grouping: true }));
                 self.piece(Piece::Field(p, style, format), scope);
             }
-            None => {
-                self.warn(format!("expression `{}` isn't converted: shown as written", collapse(value)));
-                self.piece(Piece::Raw(collapse(value), style), scope);
-            }
+            None => match self.section_total(value, scope) {
+                Some(formula) => self.piece(Piece::Formula(formula, style, Some(Format::Number { decimals: 2, grouping: true })), scope),
+                None => {
+                    self.warn(format!("expression `{}` isn't converted: shown as written", collapse(value)));
+                    self.piece(Piece::Raw(collapse(value), style), scope);
+                }
+            },
         }
+    }
+
+    /// A section's total on a line of the detail (`section_subtotal`,
+    /// `line._get_section_totals(…)`, which Odoo computes in Python), by its name or the Python
+    /// a `t-set` name stands for: the sum of the lines'
+    /// `price_subtotal` over the rows the band summarises, which is the section once the lines
+    /// are grouped by section (see `sections`).
+    fn section_total(&mut self, value: &str, scope: &Scope) -> Option<String> {
+        let named = self.unread.iter().rev().find(|(n, _)| n == value.trim()).map(|(_, v)| v.as_str());
+        let says = |text: &str| {
+            let lower = text.to_ascii_lowercase();
+            lower.contains("section") && lower.contains("total")
+        };
+        if !(says(value) || named.is_some_and(says)) || self.target != Target::Detail {
+            return None;
+        }
+        let field = format!("{}.price_subtotal", scope.line_var.as_deref()?);
+        self.field(&field, scope);
+        self.warn(format!("`{}` is read as the sum of `{field}` over the section's lines", collapse(value)));
+        Some(format!("SUM([{field}])"))
     }
 
     /// Whether a path reads a field of the documents or their lines: it starts with a loop's
@@ -763,7 +843,8 @@ impl<'a, 'i> Builder<'a, 'i> {
         for tr in rows {
             self.line = node.document().text_pos_at(tr.range().start).row;
             if let Some(var) = tr.attribute("t-set") {
-                self.set(var, tr.attribute("t-value"));
+                let set_scope = self.loop_scope(tr, node, scope);
+                self.set(var, tr.attribute("t-value"), &set_scope);
                 continue;
             }
             let mut row_scope = scope.clone();
@@ -900,24 +981,79 @@ impl<'a, 'i> Builder<'a, 'i> {
         self.row(tr, &scope, depth, widths);
     }
 
-    /// One table row at the bottom of the current band: each cell's pieces in its column.
+    /// The scope of a node inside a table's loops (a `t-set` between rows): the detail loop's
+    /// variable is the line's, another's an item's.
+    fn loop_scope(&self, node: Node<'a, 'i>, table: Node<'a, 'i>, scope: &Scope) -> Scope {
+        let mut out = scope.clone();
+        let mut wrappers: Vec<Node<'a, 'i>> = node.ancestors().skip(1).take_while(|a| *a != table && a.tag_name().name() == "t").collect();
+        wrappers.reverse();
+        let mut first = true;
+        for w in wrappers.iter().filter(|w| w.has_attribute("t-foreach")) {
+            let var = w.attribute("t-as").unwrap_or("item").to_owned();
+            let detail = self.detail_loop == Some(w.id()) || (!self.line_loop && out.doc_var.is_some());
+            if first && detail {
+                out.line_var = Some(var);
+            } else {
+                out.item_var = Some(var);
+            }
+            first = false;
+        }
+        out
+    }
+
+    /// One table row at the bottom of the current band: each cell's pieces in its column. Cells
+    /// under `t-if` / `t-elif` / `t-else` (on themselves or on a `t` around them) are
+    /// alternatives: each branch starts at the column the first one started at. A cell whose
+    /// `colspan` is computed spans the columns left, less one for each cell after it in its
+    /// branch.
     fn row(&mut self, tr: Node<'a, 'i>, scope: &Scope, depth: usize, widths: &[f64]) {
-        let widths = if widths.is_empty() { vec![CONTENT_MM / cells(tr).len().max(1) as f64; cells(tr).len().max(1)] } else { widths.to_vec() };
+        // The row's own `t-set`s first: its cells read them.
+        for set in tr.descendants().filter(|n| n.has_attribute("t-set") && n.ancestors().skip(1).find(|a| is_cell(*a) || *a == tr) == Some(tr)) {
+            if let Some(var) = set.attribute("t-set") {
+                self.line = set.document().text_pos_at(set.range().start).row;
+                self.set(var, set.attribute("t-value"), scope);
+            }
+        }
+        let row_cells = cells(tr);
+        let widths = if widths.is_empty() { vec![CONTENT_MM / row_cells.len().max(1) as f64; row_cells.len().max(1)] } else { widths.to_vec() };
+        let branches: Vec<Option<Node<'a, 'i>>> = row_cells.iter().map(|c| branch_of(tr, *c)).collect();
         let y = self.bottom();
-        let mut x = 0.0;
-        let mut column = 0;
+        let (mut x, mut column) = (0.0, 0);
+        let mut chain: (Option<roxmltree::NodeId>, f64, usize) = (None, 0.0, 0);
         let mut laid = Vec::new();
-        for cell in cells(tr) {
-            let mut cell_scope = scope.clone();
-            cell_scope.style = scope.style.inside(cell);
-            let n = span(cell);
+        for (i, cell) in row_cells.iter().copied().enumerate() {
+            let branch = branches.get(i).copied().flatten();
+            match branch {
+                Some(b) if chain.0 != Some(b.id()) => {
+                    if b.has_attribute("t-if") {
+                        (chain.1, chain.2) = (x, column);
+                    } else {
+                        (x, column) = (chain.1, chain.2);
+                    }
+                    chain.0 = Some(b.id());
+                }
+                Some(_) => {}
+                None => chain.0 = None,
+            }
+            let n = if cell.has_attribute("t-att-colspan") && !cell.has_attribute("colspan") {
+                let after = branches.iter().skip(i + 1).filter(|b| b.map(|n| n.id()) == branch.map(|n| n.id())).count();
+                widths.len().saturating_sub(column + after).max(1)
+            } else {
+                span(cell)
+            };
             let width: f64 = widths.iter().skip(column).take(n).sum();
             column += n;
             if width <= 0.0 {
                 self.warn("a cell beyond the table header's columns is left out");
                 continue;
             }
-            if !self.conditions(cell, &mut cell_scope) {
+            let mut cell_scope = scope.clone();
+            let mut shown = true;
+            for w in between(tr, cell).into_iter().chain(std::iter::once(cell)) {
+                shown &= self.conditions(w, &mut cell_scope);
+            }
+            cell_scope.style = scope.style.inside(cell);
+            if !shown {
                 x += width;
                 continue;
             }
@@ -927,10 +1063,8 @@ impl<'a, 'i> Builder<'a, 'i> {
                 Some(value) => self.value(&expr::keys(value), cell, &cell_scope),
                 None => self.children(cell, &cell_scope, depth + 1),
             }
-            let mut pieces = self.cell.take().unwrap_or_default();
-            trim(&mut pieces);
-            if !pieces.is_empty() {
-                laid.push((pieces, x, width, cell_scope));
+            for (pieces, condition) in variants(self.cell.take().unwrap_or_default(), &cell_scope.condition) {
+                laid.push((pieces, x, width, Scope { condition, ..cell_scope.clone() }));
             }
             x += width;
         }
@@ -945,10 +1079,112 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 }
 
+/// A cell's pieces as what it shows: one line under the cell's condition, or, when every piece
+/// shows under a condition of its own (`<span t-if="…tax_excluded"/><span t-if="…tax_included"/>`),
+/// one line per condition, laid over each other in the cell as the alternatives they are.
+fn variants(pieces: Vec<(Piece, Option<String>)>, base: &Option<String>) -> Vec<(Vec<Piece>, Option<String>)> {
+    let mut runs: Vec<(Vec<Piece>, Option<String>)> = Vec::new();
+    for (piece, condition) in pieces {
+        match runs.last_mut() {
+            Some((run, c)) if *c == condition => run.push(piece),
+            _ => runs.push((vec![piece], condition)),
+        }
+    }
+    for (run, _) in &mut runs {
+        trim(run);
+    }
+    runs.retain(|(run, _)| !run.is_empty());
+    if runs.len() > 1 && runs.iter().all(|(_, c)| c != base) {
+        return runs;
+    }
+    let mut all: Vec<Piece> = runs.into_iter().flat_map(|(run, _)| run).collect();
+    trim(&mut all);
+    if all.is_empty() { Vec::new() } else { vec![(all, base.clone())] }
+}
+
+fn is_cell(n: Node<'_, '_>) -> bool {
+    matches!(n.tag_name().name(), "td" | "th")
+}
+
+/// The elements between a row and one of its cells (`t` wrappers), outermost first.
+fn between<'a, 'i>(tr: Node<'a, 'i>, cell: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
+    let mut out: Vec<Node<'a, 'i>> = cell.ancestors().skip(1).take_while(|a| *a != tr).collect();
+    out.reverse();
+    out
+}
+
+/// The outermost element of a cell (a `t` around it, or the cell) that is a branch of a
+/// `t-if` / `t-elif` / `t-else` chain.
+fn branch_of<'a, 'i>(tr: Node<'a, 'i>, cell: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
+    between(tr, cell)
+        .into_iter()
+        .chain(std::iter::once(cell))
+        .find(|n| n.has_attribute("t-if") || n.has_attribute("t-elif") || n.has_attribute("t-else"))
+}
+
+/// The classes an element has when printed: its `class`, and those `t-att-class` and
+/// `t-attf-class` give where they don't depend on the record. Odoo's templates hide what is for
+/// the screen with `'d-none …' if report_type == 'html' else ''`: the PDF branch is taken.
+fn print_classes(node: Node<'_, '_>) -> String {
+    let mut out = node.attribute("class").unwrap_or("").to_owned();
+    if let Some(e) = node.attribute("t-att-class") {
+        out.push(' ');
+        out.push_str(&printed_branch(e));
+    }
+    if let Some(f) = node.attribute("t-attf-class") {
+        let mut rest = f;
+        // `{{ … }}` or the older `#{ … }`, whichever comes first.
+        let next = |r: &str| [("{{", "}}"), ("#{", "}")].into_iter().filter_map(|(o, c)| r.find(o).map(|i| (i, c))).min_by_key(|(i, _)| *i);
+        while let Some((open, end)) = next(rest) {
+            out.push(' ');
+            out.push_str(&rest[..open]);
+            let body = &rest[open + 2..];
+            let (inside, after) = match body.find(end) {
+                Some(close) => (&body[..close], &body[close + end.len()..]),
+                None => (body, ""),
+            };
+            out.push(' ');
+            out.push_str(&printed_branch(inside));
+            rest = after;
+        }
+        out.push(' ');
+        out.push_str(rest);
+    }
+    out
+}
+
+/// The classes a Python expression gives a printed report: a quoted text, or the branch of
+/// `A if report_type == 'html' else B` taken outside a web page; anything else gives none.
+fn printed_branch(e: &str) -> String {
+    let e = collapse(e);
+    let unquote = |t: &str| {
+        let t = t.trim();
+        t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).or_else(|| t.strip_prefix('"').and_then(|x| x.strip_suffix('"'))).map(str::to_owned)
+    };
+    if let Some(text) = unquote(&e).filter(|t| !t.contains(['\'', '"'])) {
+        return text;
+    }
+    let Some((then, rest)) = e.split_once(" if ") else { return String::new() };
+    let Some((test, otherwise)) = rest.split_once(" else ") else { return String::new() };
+    let test = test.replace('"', "'").replace(' ', "");
+    let taken = match test.as_str() {
+        "report_type=='html'" => otherwise,
+        "report_type!='html'" => then,
+        _ => return String::new(),
+    };
+    unquote(taken).unwrap_or_default()
+}
+
+/// Hidden in a printed report: `d-none` with no `d-print-…` class bringing it back.
+fn hidden_in_print(node: Node<'_, '_>) -> bool {
+    let classes = print_classes(node);
+    classes.split_whitespace().any(|c| c == "d-none") && !classes.split_whitespace().any(|c| c.starts_with("d-print-"))
+}
+
 /// Adds a column to a list unless it is there.
-fn add_field(fields: &mut Vec<Field>, name: &str, level: Level) {
+pub(crate) fn add_field(fields: &mut Vec<Field>, name: &str, level: Level) {
     if !fields.iter().any(|f| f.name.eq_ignore_ascii_case(name)) {
-        fields.push(Field { name: name.to_owned(), field_type: guess_type(name), level });
+        fields.push(Field { name: name.to_owned(), field_type: guess_type(name), level, example: None });
     }
 }
 
@@ -981,21 +1217,24 @@ fn is_block(tag: &str) -> bool {
     )
 }
 
-/// The rows of a table and the `t-set`s between them, in order, with those of nested tables left
-/// to them.
+/// The rows of a table and the `t-set`s between them (those inside a row are the row's), in
+/// order, with those of nested tables left to them.
 fn table_rows<'a, 'i>(table: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
+    let owner = |n: &Node<'a, 'i>, tags: &[&str]| n.ancestors().skip(1).find(|a| tags.contains(&a.tag_name().name()));
     table
         .descendants()
         .filter(|n| {
-            (n.tag_name().name() == "tr" || n.has_attribute("t-set")) && n.ancestors().skip(1).find(|a| a.tag_name().name() == "table") == Some(table)
+            (n.tag_name().name() == "tr" && owner(n, &["table"]) == Some(table))
+                || (n.has_attribute("t-set") && owner(n, &["table", "tr"]) == Some(table))
         })
         .collect()
 }
 
-/// A row's cells, with those inside `t` wrappers (`<t t-if>` around a `td`).
+/// A row's cells, with those inside `t` wrappers (`<t t-if>` around a `td`), less those a
+/// printed report hides.
 fn cells<'a, 'i>(tr: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
     tr.descendants()
-        .filter(|n| matches!(n.tag_name().name(), "td" | "th") && n.ancestors().skip(1).find(|a| a.tag_name().name() == "tr") == Some(tr))
+        .filter(|n| is_cell(*n) && n.ancestors().skip(1).find(|a| a.tag_name().name() == "tr") == Some(tr) && !hidden_in_print(*n))
         .collect()
 }
 
@@ -1063,8 +1302,8 @@ fn line(pieces: Vec<Piece>, x: f64, width: f64, y: f64, height: f64, scope: &Sco
         }
         let wanted = match &piece {
             Piece::Text(t, s) | Piece::Raw(t, s) => t.chars().count() as f64 * s.size_pt * MM_PER_PT * CHAR_EM + 1.0,
-            Piece::Field(..) if i + 1 == count => room,
-            Piece::Field(..) => FIELD_MM,
+            Piece::Field(..) | Piece::Formula(..) if i + 1 == count => room,
+            Piece::Field(..) | Piece::Formula(..) => FIELD_MM,
         };
         let w = wanted.min(room);
         let (content, format) = content_of(&piece);
@@ -1081,6 +1320,7 @@ fn content_of(piece: &Piece) -> (Content, Option<Format>) {
         Piece::Text(t, _) => (Content::Text { text: t.clone() }, None),
         Piece::Raw(e, _) => (Content::Text { text: format!("{{{e}}}") }, None),
         Piece::Field(f, _, format) => (Content::Field { field: f.clone() }, format.clone()),
+        Piece::Formula(e, _, format) => (Content::Formula { expression: e.clone() }, format.clone()),
     }
 }
 
@@ -1090,6 +1330,8 @@ fn formula_part(piece: &Piece) -> String {
         Piece::Raw(e, _) => format!("\"{{{}}}\"", e.replace('"', "\"\"")),
         Piece::Field(f, _, Some(Format::Number { decimals, .. })) => format!("TEXT([{f}], \"#,##0.{}\")", "0".repeat(usize::from(*decimals))),
         Piece::Field(f, ..) => format!("[{f}]"),
+        Piece::Formula(e, _, Some(Format::Number { decimals, .. })) => format!("TEXT({e}, \"#,##0.{}\")", "0".repeat(usize::from(*decimals))),
+        Piece::Formula(e, ..) => e.clone(),
     }
 }
 
@@ -1128,6 +1370,8 @@ fn guess_type(name: &str) -> FieldType {
     let l = leaf(name);
     if l == "id" || l.ends_with("_count") || l == "sequence" {
         FieldType::Integer
+    } else if expr::flag(name) {
+        FieldType::Bool
     } else if money(name) || ["qty", "quantity", "discount", "weight", "volume", "rate"].iter().any(|w| l.contains(w)) {
         FieldType::Number
     } else {
