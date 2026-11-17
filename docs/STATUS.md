@@ -193,7 +193,8 @@
   the open window over 127.0.0.1 (a token in a file only its user can read; `reportcraft-cli send
   PORT METHOD [JSON]`): any engine command run as an agent would (saved connections only, no
   confirmed external action), `ui.state`, `ui.screenshot`, `app.quit`.
-- Odoo QWeb report templates imported (`file.importQweb`, `reportcraft-cli import-qweb FILE.xml
+- Odoo QWeb report templates imported (File ▸ Import Odoo QWeb template… in the designer,
+  `file.importQweb`, `reportcraft-cli import-qweb FILE.xml
   [--template ID] [--out REPORT.json] [--sample-data ROWS.csv]`): the file's report template is
   chosen (the wrapper that loops over `docs`, following `t-call`s to templates of the same file),
   the document loop becomes a group starting a new page, the first loop of a document's table the
@@ -210,7 +211,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 241 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 242 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

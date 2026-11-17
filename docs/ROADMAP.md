@@ -154,7 +154,9 @@ Anything marked **decision** waits for a maintainer.
 
 ## R4 — Formats and migration (owner: open)
 - [x] R4.1 Odoo QWeb templates: edit visually and preview on sample data — decided 2026-11-14: import and preview, no writing back to QWeb; the format from Odoo's documentation only (#20)
-  - [ ] File ▸ Import QWeb… in the designer (today `file.importQweb`, `reportcraft-cli import-qweb`)
+  - [x] File ▸ Import Odoo QWeb template… in the designer, what isn't converted in the status line
+    - [ ] Choose the template of a file that holds several (today the report template the import picks)
+    - [ ] A window listing what wasn't converted, each finding leading to its element
   - [ ] Nested loops (a document's lines grouped by section, taxes per line) as subreports or inner groups
   - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
     - [ ] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them

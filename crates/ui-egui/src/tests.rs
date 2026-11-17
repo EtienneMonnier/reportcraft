@@ -98,6 +98,35 @@ fn reports_are_saved_opened_and_exported() {
 }
 
 #[test]
+fn an_odoo_template_is_imported_and_previewed_on_its_sample_rows() {
+    let dir = std::env::temp_dir().join(format!("reportcraft-designer-qweb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap_or_default();
+    let xml = dir.join("invoice.xml");
+    let template = r#"<odoo><template id="report_note"><t t-call="web.html_container"><t t-foreach="docs" t-as="o">
+        <t t-call="web.external_layout"><h2 t-field="o.name"/><p t-esc="o.total * 2"/>
+        <table><tr t-foreach="o.line_ids" t-as="line"><td t-field="line.name"/></tr></table></t></t></t></template></odoo>"#;
+    std::fs::write(&xml, template).unwrap_or_default();
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    d.import_qweb(&xml);
+    assert_eq!(d.session().report.title, "report_note");
+    assert!(d.status().starts_with("imported"), "{}", d.status());
+    assert!(d.status().contains("line 2: expression `o.total * 2`"), "{}", d.status());
+    assert_eq!(d.state()["data"].as_str().map(|s| s.ends_with("6 rows")), Some(true), "{}", d.state()["data"]);
+    assert!(!d.session().report.page_header.elements.is_empty(), "the letterhead");
+    // One step to undo, back to the sample.
+    d.undo();
+    assert_eq!(d.session().report.title, "Rentals by branch");
+    d.import_qweb(&dir.join("missing.xml"));
+    assert!(d.status().contains("missing.xml"));
+    std::fs::write(&xml, "<odoo>").unwrap_or_default();
+    d.import_qweb(&xml);
+    assert!(d.status().contains("QWeb"), "{}", d.status());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn elements_are_labelled_by_what_they_show() {
     assert_eq!(canvas::label(&Content::Field { field: "amount".into() }), "[amount]");
     assert_eq!(canvas::label(&Content::Formula { expression: "=[a]*2".into() }), "=[a]*2");
