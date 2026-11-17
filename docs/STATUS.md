@@ -44,7 +44,8 @@
   primary keys) and foreign keys, plus table previews (`data.describeSqlite`, `data.previewSqlite`,
   `reportcraft-cli schema --sqlite FILE [--table T] [--preview N] [--json]`).
 - Banded layout: report/page headers and footers, nested groups, detail, sort, sum/count/avg/min/max,
-  parameters, page breaks, "page N / M"; HTML output, printable from a browser.
+  parameters, page breaks, "page N / M", counted per group when the group numbers its own pages
+  (`restart_page_numbers`, "own page numbers" in the designer's structure window); HTML output, printable from a browser.
 - PDF output (`report.render` with `"format": "pdf"`, `reportcraft-cli render … --format pdf --out
   FILE.pdf`) through craft-libs' `craft-pdf`: selectable, searchable text with embedded font subsets
   (any script the font covers, French spaces and accents included), measured right and centre
@@ -225,7 +226,8 @@
   rows (two documents of three lines) preview the report at once. Odoo's `web.external_layout`
   becomes a letterhead of each document's company (logo, name and address in the page header;
   phone, e-mail, website and page numbers in the footer), `web.internal_layout` a one-line page
-  header (date, company, page numbers). A loop inside a document's or a line's (serial numbers
+  header (date, company, page numbers); each document numbers its own pages ("page 1 / 2" of
+  each invoice). A loop inside a document's or a line's (serial numbers
   under each line, payments under the lines) becomes a subreport over a dataset of its own (named
   after the loop, `o_payment_ids`), linked to the document and the line by `o.id`/`line.id`, with
   sample rows (two items each; `import-qweb --sample-data ROWS.csv` writes them to
@@ -234,7 +236,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 250 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 251 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

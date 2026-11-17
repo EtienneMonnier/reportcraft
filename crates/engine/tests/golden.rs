@@ -208,6 +208,7 @@ fn nested_groups_across_pages() {
                 visible_if: None,
                 keep_with_next: false,
             },
+            restart_page_numbers: false,
         },
         Group {
             field: "branch".into(),
@@ -228,6 +229,7 @@ fn nested_groups_across_pages() {
                 visible_if: None,
                 keep_with_next: false,
             },
+            restart_page_numbers: false,
         },
     ];
     r.detail = Band {
@@ -379,6 +381,7 @@ fn group_pagination() {
                 visible_if: None,
                 keep_with_next: false,
             },
+            restart_page_numbers: false,
         },
         Group {
             field: "branch".into(),
@@ -399,6 +402,7 @@ fn group_pagination() {
                 visible_if: None,
                 keep_with_next: false,
             },
+            restart_page_numbers: false,
         },
     ];
     r.detail = Band {
@@ -460,6 +464,7 @@ fn landscape_columns() {
             visible_if: None,
             keep_with_next: false,
         },
+        restart_page_numbers: false,
     }];
     r.detail = Band {
         height_mm: 5.0,
@@ -537,6 +542,7 @@ fn lines_and_boxes() {
             visible_if: None,
             keep_with_next: false,
         },
+        restart_page_numbers: false,
     }];
     r.detail = Band {
         height_mm: 5.0,
@@ -580,6 +586,7 @@ fn labels_across() {
             keep_with_next: false,
         },
         footer: Band::default(),
+        restart_page_numbers: false,
     }];
     r.detail = Band {
         height_mm: 38.0,
@@ -908,6 +915,7 @@ fn formulas() {
             visible_if: None,
             keep_with_next: false,
         },
+        restart_page_numbers: false,
     });
     r.detail = Band {
         height_mm: 5.5,
@@ -965,6 +973,7 @@ fn conditions() {
             visible_if: cond("COUNT([days]) > 3"),
             ..Band::default()
         },
+        restart_page_numbers: false,
     });
     r.sort.push(SortKey { field: "days".into(), descending: true });
     r.detail = Band {
@@ -1042,6 +1051,7 @@ fn charts() {
             ..Band::default()
         },
         footer: Band { height_mm: 50.0, elements: vec![chart(0.0, 120.0, 46.0, ChartKind::Bar, "branch", "Amount by branch")], ..Band::default() },
+        restart_page_numbers: false,
     });
     r.report_footer = Band {
         height_mm: 60.0,

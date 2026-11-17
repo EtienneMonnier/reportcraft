@@ -111,6 +111,8 @@
 	name	nom
 	new page	nouvelle page
 	no problem found	aucun problème trouvé
+	own page numbers	pages numérotées à part
+	Number the pages of each group from 1 (page 1 / 2 of each invoice)	Numéroter les pages de chaque groupe à partir de 1 (page 1 / 2 de chaque facture)
 	repeat header	répéter l'en-tête
 	required	obligatoire
 	structure applied	structure appliquée

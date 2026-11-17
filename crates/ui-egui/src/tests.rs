@@ -139,6 +139,7 @@ fn elements_are_labelled_by_what_they_show() {
         page_break_before: false,
         header: Default::default(),
         footer: Default::default(),
+        restart_page_numbers: false,
     });
     assert_eq!(canvas::band_title(&r, "groups[0].header"), "Group 1 header (branch)");
     assert_eq!(canvas::band_title(&r, "page_footer"), "Page footer");

@@ -53,6 +53,7 @@ pub(crate) fn apply(report: &mut Report, fields: &mut Vec<Field>) -> Vec<String>
             page_break_before: false,
             header,
             footer: Band::default(),
+            restart_page_numbers: false,
         });
         hide.push(format!("[{kind_field}] <> \"{kind}\""));
         added.push(key);
