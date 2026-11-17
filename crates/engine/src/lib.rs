@@ -420,6 +420,23 @@ mod tests {
     }
 
     #[test]
+    fn odoo_sections_preview_as_titles_with_their_total() {
+        let xml = r#"<odoo><template id="report_quote"><t t-foreach="docs" t-as="o"><table><tbody>
+            <t t-foreach="o.line_ids" t-as="line"><tr>
+              <t t-if="line.display_type == 'line_section'"><td t-field="line.name"/><td><span t-out="line.section_total()"/></td></t>
+              <t t-else=""><td t-field="line.name"/><td t-field="line.price_subtotal"/></t>
+            </tr></t></tbody></table></t></template></odoo>"#;
+        let mut s = Session::default();
+        s.execute("file.importQweb", &json!({"xml": xml})).unwrap();
+        let html = s.execute("report.render", &json!({"format": "html"})).unwrap();
+        let html = html.get("html").and_then(Json::as_str).unwrap();
+        // Each document: its title line once, with the sum of the two products under it.
+        assert_eq!(html.matches(">Name 1<").count(), 2, "{html}");
+        assert_eq!(html.matches(">62.50<").count(), 2, "{html}");
+        assert!(html.contains(">Name 2<") && html.contains(">37.50<"), "{html}");
+    }
+
+    #[test]
     fn a_qweb_template_imports_with_sample_rows_and_previews() {
         let xml = r#"<odoo><template id="report_order"><t t-call="web.html_container"><t t-foreach="docs" t-as="o">
             <div class="page"><h2>Order <span t-field="o.name"/></h2>

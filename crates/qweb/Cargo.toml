@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 reportcraft-core.workspace = true
+reportcraft-expr.workspace = true
 reportcraft-model.workspace = true
 roxmltree.workspace = true
 

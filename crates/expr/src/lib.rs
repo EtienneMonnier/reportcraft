@@ -28,7 +28,7 @@ mod tests;
 
 pub use eval::{Env, evaluate};
 pub use func::Func;
-pub use parse::{Expr, ParseError, parse};
+pub use parse::{Expr, Op, ParseError, parse};
 pub use text::Locale;
 pub use value::{ExprError, Val, significant};
 

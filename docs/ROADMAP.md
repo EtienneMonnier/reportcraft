@@ -161,12 +161,18 @@ Anything marked **decision** waits for a maintainer.
     - [ ] Several repeated loops in one band (today the first; the next is shown once)
     - [ ] Loops three deep (a nested loop inside a nested loop)
     - [ ] A line's records shown inline (`', '.join(line.tax_ids.mapped('name'))`, taxes per line) as a text field
-    - [ ] Lines grouped by section (`display_type == 'line_section'` rows with subtotals) as an inner group
+    - [x] Lines grouped by section (`display_type == 'line_section'` rows with their total) as inner groups, subsections inside sections
+      - [ ] The section total from `price_total` when the company's prices include taxes (today `price_subtotal`)
+      - [ ] Older templates' subtotal row after a section's lines (`current_subtotal` summed in a `t-set`) as the group footer
+      - [ ] An SQL snippet for `section_number` / `subsection_number` (a window count over the move's lines) in the import's notes
+    - [ ] Rows of the detail shown under exclusive conditions (a line's row and its collapsed form) take room only when shown (today the band is as tall as all of them)
   - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
     - [ ] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them
     - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)
     - [ ] Totals in page headers and footers (the rows of the page: carried forward, page totals)
-  - [ ] More Python expressions: `in [...]`, parentheses, arithmetic on fields as formulas
+  - [ ] More Python expressions — `in (…)`, `not in`, `not (…)`, parentheses and `t-set` names for conditions done
+    - [ ] Arithmetic on fields as formulas (`line.price_unit * 1.2`), comparisons between two fields
+    - [ ] Odoo's `groups="…"` (shown to some users only) and `is_html_empty(…)`
   - [ ] Templates called from other modules (`t-call` to a file that isn't given), and `inherit_id` views applied
   - [ ] An SQL query proposed for the columns the report reads (`o.partner_id.name` → joins on the Odoo model)
 - [ ] R4.2 Power BI text project format (PBIP/TMDL) import, from public documentation

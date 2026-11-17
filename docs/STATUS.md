@@ -202,8 +202,21 @@
   the document loop becomes a group starting a new page, the first loop of a document's table the
   detail band, what comes before it the group header and after it the footer. Fields (`t-field`,
   `t-esc`, `t-out`, Odoo's `formatLang`/`format_date`…), `t-if`/`t-elif`/`t-else` as conditions
-  (truth tests, comparisons, `and`/`or`), `t-set` names for paths, headings, bold, alignment
-  classes, tables in equal columns with their header row, pictures from `image_data_uri(field)`.
+  (truth tests, flags such as `is_…`/`collapse_…` by their value, comparisons, `in (…)` and
+  `not in`, `and`/`or`/`not`, parentheses), `t-set` names for paths and for conditions
+  (`is_section = line.display_type == 'line_section'`), headings, bold, alignment classes
+  (including the printed branch of `t-attf-class`, so `d-none` cells for the screen are left out),
+  tables in equal columns with their header row, pictures from `image_data_uri(field)`. Cells
+  under `t-if`/`t-elif`/`t-else` (on a `t` around them) are alternatives starting at the same
+  column, a computed `colspan` fills the row, and spans that are alternatives in a cell
+  (amount without or with taxes) are laid over each other, each under its condition.
+  Odoo's title lines (`display_type` `line_section` and `line_subsection`) group the lines: a
+  group per section, and per subsection inside it, on `line.section_number` and
+  `line.subsection_number` (numbers the query gives: 0 before the first title, then 1, 2…), whose
+  header is the title's row in bold, its total (`section_subtotal`, `_get_section_totals`) the
+  sum of `line.price_subtotal` over the group; the title lines take no room among the lines.
+  Sample rows give fields compared with a text that text (`o.state == 'posted'` → `posted`) and
+  start each document with a section.
   Columns are named as the template writes them (`o.partner_id.name`, `line.quantity`); sample
   rows (two documents of three lines) preview the report at once. Odoo's `web.external_layout`
   becomes a letterhead of each document's company (logo, name and address in the page header;
@@ -217,7 +230,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 244 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 248 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
