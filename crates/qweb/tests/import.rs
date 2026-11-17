@@ -103,8 +103,10 @@ fn a_document_loop_becomes_a_group_and_its_lines_the_detail() {
     assert!((quantity.x_mm - 60.5).abs() < 0.11 && (quantity.width_mm - 59.0).abs() < 0.11, "{quantity:?}");
 
     let detail = texts(&r.detail.elements);
-    assert_eq!(detail, ["[line.product_id.name]", "[line.quantity]", "{line.price_unit * 1.2}"]);
+    // A calculation on fields is a formula, an amount with two decimals.
+    assert_eq!(detail, ["[line.product_id.name]", "[line.quantity]", "=[line.price_unit] * 1.2"]);
     assert_eq!(r.detail.elements[1].style.align, Align::Right);
+    assert_eq!(r.detail.elements[2].format, Some(Format::Number { decimals: 2, grouping: true }));
     // Pieces on a right-aligned line are joined in one formula; amounts keep two decimals.
     let footer = texts(&group.footer.elements);
     assert_eq!(footer, ["=\"Total: \" & TEXT([o.amount_total], \"#,##0.00\")", "Delivered", "Cancelled", "To deliver"]);
@@ -128,13 +130,13 @@ fn a_document_loop_becomes_a_group_and_its_lines_the_detail() {
 
 #[test]
 fn what_isnt_converted_is_reported_by_line() {
-    let out = import(DELIVERY, None).unwrap();
+    let out = import(&DELIVERY.replace("line.price_unit * 1.2", "line.price_unit * o.rate()"), None).unwrap();
     let messages: Vec<String> = out.diagnostics.iter().map(|d| format!("{}: {}", d.location, d.message)).collect();
     let has = |needle: &str| messages.iter().any(|m| m.contains(needle));
     assert!(has("the file holds 2 templates"), "{messages:?}");
     assert!(has("line 15: `t-set=\"lines\"`: filters and sorts aren't applied, `lines` reads every record of `o.line_ids`"), "{messages:?}");
     assert!(!has("web.external_layout"), "the letterhead is converted: {messages:?}");
-    assert!(messages.iter().any(|m| m.starts_with("line 20: expression `line.price_unit * 1.2`")), "{messages:?}");
+    assert!(messages.iter().any(|m| m.starts_with("line 20: expression `line.price_unit * o.rate()`")), "{messages:?}");
     assert!(out.diagnostics.iter().all(|d| d.severity == Severity::Warning));
 }
 
@@ -153,6 +155,7 @@ fn sample_data_has_a_row_per_line_of_each_document() {
             "o.company_id.logo",
             "line.product_id.name",
             "line.quantity",
+            "line.price_unit",
             "o.amount_total",
             "o.state",
             // Read by the letterhead.
@@ -488,4 +491,36 @@ fn records_joined_into_a_text_read_as_one_column() {
             "`o.tax_ids.name` holds the values of the records joined with \", \": the query joins them (`string_agg`)",
         ]
     );
+}
+
+#[test]
+fn calculations_and_comparisons_between_fields_become_formulas() {
+    let xml = r#"<odoo><template id="report_delivery"><t t-foreach="docs" t-as="o"><table>
+        <thead><tr><th>Item</th><th>Left</th><th>Rate</th></tr></thead>
+        <tbody><tr t-foreach="o.move_ids" t-as="move">
+          <td t-field="move.product_id.name"/>
+          <td t-if="move.quantity != move.product_uom_qty"><span t-esc="move.product_uom_qty - move.quantity"/></td>
+          <td><span t-esc="move.weight * company.rate"/></td>
+        </tr></tbody></table>
+        <p>Paid: <span t-esc="round(o.amount_total - o.amount_residual, 2)"/></p>
+    </t></template></odoo>"#;
+    let out = import(xml, None).unwrap();
+    let r = &out.report;
+    assert_eq!(texts(&r.detail.elements), ["[move.product_id.name]", "=[move.product_uom_qty] - [move.quantity]", "{move.weight * company.rate}"]);
+    let left = &r.detail.elements[1];
+    assert_eq!(left.visible_if.as_deref(), Some("[move.quantity] <> [move.product_uom_qty]"));
+    // Quantities aren't amounts: no forced decimals.
+    assert_eq!(left.format, None);
+    let footer = texts(&r.groups[0].footer.elements);
+    assert_eq!(footer, ["Paid: ", "=ROUND([o.amount_total] - [o.amount_residual], 2)"]);
+    assert_eq!(r.groups[0].footer.elements[1].format, Some(Format::Number { decimals: 2, grouping: true }));
+    // `company` isn't a field of the documents: said, and shown as written.
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["expression `move.weight * company.rate` isn't converted: shown as written"]);
+    let names: Vec<&str> = out.sample.columns.iter().map(|c| c.name.as_str()).collect();
+    for n in ["move.quantity", "move.product_uom_qty", "o.amount_total", "o.amount_residual"] {
+        assert!(names.contains(&n), "{names:?}");
+    }
+    let problems = r.check_with_datasets(Some(&out.sample.columns), &Default::default());
+    assert!(problems.is_empty(), "{problems:?}");
 }
