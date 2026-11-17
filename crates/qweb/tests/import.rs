@@ -453,3 +453,37 @@ fn title_lines_group_the_lines_by_section() {
     let problems = r.check_with_datasets(Some(&out.sample.columns), &Default::default());
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+#[test]
+fn records_joined_into_a_text_read_as_one_column() {
+    let xml = r#"<odoo><template id="report_bill"><t t-foreach="docs" t-as="o"><table>
+        <thead><tr><th>Item</th><th>Taxes</th><th>Lots</th></tr></thead>
+        <tbody><t t-foreach="o.line_ids" t-as="line">
+          <tr>
+            <t t-set="taxes" t-value="', '.join(tax.tax_label for tax in line.tax_ids if tax.tax_label)"/>
+            <td t-field="line.name"/>
+            <td><span t-out="taxes"/></td>
+            <td t-out="' / '.join(line.lot_ids.mapped('name'))"/>
+          </tr>
+        </t></tbody></table>
+        <p>All taxes: <span t-out="', '.join(o.tax_ids.mapped('name'))"/></p>
+    </t></template></odoo>"#;
+    let out = import(xml, None).unwrap();
+    assert_eq!(texts(&out.report.detail.elements), ["[line.name]", "[line.tax_ids.tax_label]", "[line.lot_ids.name]"]);
+    // Text, not an amount, though the name speaks of taxes.
+    assert!(out.report.detail.elements.iter().all(|e| e.format.is_none()));
+    let footer = texts(&out.report.groups[0].footer.elements);
+    assert!(footer.contains(&"[o.tax_ids.name]".to_owned()), "{footer:?}");
+    let column = |name: &str| out.sample.columns.iter().find(|c| c.name == name).map(|c| c.field_type);
+    assert_eq!(column("line.tax_ids.tax_label"), Some(FieldType::Text));
+    assert_eq!(column("o.tax_ids.name"), Some(FieldType::Text));
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "`line.tax_ids.tax_label` holds the values of the records joined with \", \": the query joins them (`string_agg`)",
+            "`line.lot_ids.name` holds the values of the records joined with \" / \": the query joins them (`string_agg`)",
+            "`o.tax_ids.name` holds the values of the records joined with \", \": the query joins them (`string_agg`)",
+        ]
+    );
+}
