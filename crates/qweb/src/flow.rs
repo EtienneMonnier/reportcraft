@@ -169,6 +169,8 @@ pub(crate) struct Builder<'a, 'i> {
     conditions: Vec<(String, String)>,
     /// Names given by `t-set` to Python that isn't converted, with that Python, latest last.
     unread: Vec<(String, String)>,
+    /// Columns that hold records' values joined into one text (`line.tax_ids.tax_label`).
+    joined: Vec<String>,
     pub header: Band,
     pub detail: Band,
     pub footer: Band,
@@ -202,6 +204,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             aliases: Vec::new(),
             conditions: Vec::new(),
             unread: Vec::new(),
+            joined: Vec::new(),
             detail_loop: None,
             header: Band::default(),
             detail: Band::default(),
@@ -288,6 +291,12 @@ impl<'a, 'i> Builder<'a, 'i> {
             _ => &mut self.fields,
         };
         add_field(fields, name, level);
+        if self.joined.iter().any(|j| j.eq_ignore_ascii_case(name)) {
+            if let Some(f) = fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(name)) {
+                f.field_type = FieldType::Text;
+            }
+            return None;
+        }
         money(name).then_some(Format::Number { decimals: 2, grouping: true })
     }
 
@@ -542,6 +551,11 @@ impl<'a, 'i> Builder<'a, 'i> {
             self.warn(format!("`t-set=\"{var}\"` with a body is ignored"));
             return;
         };
+        if let Some(column) = self.join(&value, scope) {
+            self.forget(var);
+            self.aliases.push((var.to_owned(), column));
+            return;
+        }
         let cut = [".filtered(", ".sorted(", ".with_context(", ".sudo(", ".with_company("].iter().filter_map(|m| value.find(m)).min();
         let (base, tail) = cut.map_or((value.as_str(), ""), |i| value.split_at(i));
         let Some(base) = expr::path(base) else {
@@ -728,10 +742,13 @@ impl<'a, 'i> Builder<'a, 'i> {
     fn value(&mut self, value: &str, node: Node<'a, 'i>, scope: &Scope) {
         let style = scope.style.text();
         let (path, helper) = match expr::path(value) {
-            Some(p) => (Some(p), None),
-            None => expr::formatted(value).map_or((None, None), |(p, numeric)| (Some(p), Some(numeric))),
+            Some(p) => (Some(p.to_owned()), None),
+            None => match expr::formatted(value) {
+                Some((p, numeric)) => (Some(p.to_owned()), Some(numeric)),
+                None => (self.join(value, scope), None),
+            },
         };
-        let path = path.map(|p| self.resolve(p)).filter(|p| self.known(p, scope));
+        let path = path.map(|p| self.resolve(&p)).filter(|p| self.known(p, scope));
         match path {
             Some(p) => {
                 let monetary = helper == Some(true)
@@ -748,6 +765,21 @@ impl<'a, 'i> Builder<'a, 'i> {
                 }
             },
         }
+    }
+
+    /// Records' values joined into a text (`', '.join(line.tax_ids.mapped('name'))`): the column
+    /// that holds them, which the query fills (`string_agg`), said once per column.
+    fn join(&mut self, value: &str, scope: &Scope) -> Option<String> {
+        let (column, separator) = expr::joined(value)?;
+        let column = self.resolve(&column);
+        if !self.known(&column, scope) {
+            return None;
+        }
+        if !self.joined.contains(&column) {
+            self.warn(format!("`{column}` holds the values of the records joined with \"{separator}\": the query joins them (`string_agg`)"));
+            self.joined.push(column.clone());
+        }
+        Some(column)
     }
 
     /// A section's total on a line of the detail (`section_subtotal`,

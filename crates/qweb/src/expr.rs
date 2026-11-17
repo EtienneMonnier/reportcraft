@@ -227,6 +227,39 @@ pub(crate) fn formatted(expr: &str) -> Option<(&str, bool)> {
     Some((field, numeric))
 }
 
+/// Records' values joined into one text: `', '.join(line.tax_ids.mapped('name'))`,
+/// `', '.join(t.tax_label for t in line.tax_ids if t.tax_label)`, `','.join(line.taxes)`. Gives
+/// the column that holds them (`line.tax_ids.name`, `line.tax_ids.tax_label`, `line.taxes`) and the
+/// separator. A filter (`if …`) is dropped: blanks are what it usually leaves out, and joining in
+/// SQL leaves them out too.
+pub(crate) fn joined(expr: &str) -> Option<(String, String)> {
+    let e = expr.trim();
+    let quote = e.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let close = e[1..].find(quote)? + 1;
+    let separator = &e[1..close];
+    let inner = e[close + 1..].trim_start().strip_prefix(".join(")?.strip_suffix(')')?.trim();
+    if separator.contains('\\') {
+        return None;
+    }
+    // `records.mapped('field')`
+    if let Some((records, field)) = inner.strip_suffix("')").or_else(|| inner.strip_suffix("\")")).and_then(|i| i.split_once(".mapped(")) {
+        let field = field.trim_matches(|c| c == '\'' || c == '"');
+        let records = path(records)?;
+        path(field)?;
+        return Some((format!("{records}.{field}"), separator.to_owned()));
+    }
+    // `x.field for x in records [if …]`
+    if let [value, rest] = split_top(inner, " for ")?.as_slice() {
+        let rest = split_top(rest, " if ")?.first().copied()?;
+        let parts = split_top(rest, " in ")?;
+        let [var, records] = parts.as_slice() else { return None };
+        let (var, records) = (var.trim(), path(records)?);
+        let field = path(value)?.strip_prefix(var)?.strip_prefix('.')?;
+        return Some((format!("{records}.{field}"), separator.to_owned()));
+    }
+    path(inner).map(|p| (p.to_owned(), separator.to_owned()))
+}
+
 /// The field a picture shows: `image_data_uri(o.image_128)`, Odoo's helper for a binary field.
 pub(crate) fn image_field(src: &str) -> Option<&str> {
     let inner = src.trim().strip_prefix("image_data_uri(")?.strip_suffix(')')?;
@@ -302,6 +335,20 @@ mod tests {
         assert_eq!(formatted("format_date(env, o.f())"), None);
         assert_eq!(formatted("len(o.line_ids)"), None);
         assert_eq!(condition("False").as_deref(), Some("FALSE"));
+    }
+
+    #[test]
+    fn joined_records_read_as_one_text_column() {
+        let j = |e: &str| joined(e).map(|(c, s)| format!("{c}|{s}"));
+        assert_eq!(j("', '.join(line.tax_ids.mapped('name'))").as_deref(), Some("line.tax_ids.name|, "));
+        assert_eq!(j("', '.join(tax.tax_label for tax in line.tax_ids if tax.tax_label)").as_deref(), Some("line.tax_ids.tax_label|, "));
+        assert_eq!(j("\" / \".join(s.lot_id.name for s in move.move_line_ids)").as_deref(), Some("move.move_line_ids.lot_id.name| / "));
+        assert_eq!(j("','.join(grouped_line.taxes)").as_deref(), Some("grouped_line.taxes|,"));
+        assert_eq!(j("', '.join(str(t.amount) for t in line.tax_ids)"), None);
+        assert_eq!(j("', '.join(x.name for y in line.tax_ids)"), None);
+        assert_eq!(j("', '.join(line.tax_ids.mapped(lambda t: t.name))"), None);
+        assert_eq!(j("line.name"), None);
+        assert_eq!(j("'"), None);
     }
 
     #[test]

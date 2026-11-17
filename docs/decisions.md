@@ -740,3 +740,15 @@ the same column), the PDF branch of `t-attf-class` (Odoo hides screen-only cells
 of a cell under different conditions laid over each other rather than joined. Sample rows take,
 for a field compared with a text, that text, so the preview opens the branch the template
 expects (`o.document_tax_mode == 'tax_excluded'`).
+
+## A line's records joined into a text read one column (R4.1)
+
+Templates show a line's taxes, lots or tags as one text: `', '.join(line.tax_ids.mapped('name'))`
+or a generator over the records. Repeating them as a subreport would draw a list where the
+template draws a phrase. The converter reads such an expression (directly, or through the `t-set`
+that names it) as one text column named after the records and the field
+(`line.tax_ids.tax_label`), consistent with the other columns, and notes the separator so the
+query can fill it (`string_agg(t.name, ', ')` in a subquery, aliased to that name). The column is
+text even when its name speaks of taxes or amounts. A filter after `if` is dropped: in Odoo's
+templates it leaves out blanks, which `string_agg` leaves out too; other filters, and values that
+aren't a plain field (`str(t.amount)`), aren't read yet.

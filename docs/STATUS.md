@@ -215,6 +215,10 @@
   `line.subsection_number` (numbers the query gives: 0 before the first title, then 1, 2…), whose
   header is the title's row in bold, its total (`section_subtotal`, `_get_section_totals`) the
   sum of `line.price_subtotal` over the group; the title lines take no room among the lines.
+  Records joined into a text (`', '.join(line.tax_ids.mapped('name'))`,
+  `', '.join(t.tax_label for t in line.tax_ids if …)`, directly or through a `t-set`) read one
+  text column named after them (`line.tax_ids.tax_label`), which the query fills with
+  `string_agg`; the separator is given in the import's notes.
   Sample rows give fields compared with a text that text (`o.state == 'posted'` → `posted`) and
   start each document with a section.
   Columns are named as the template writes them (`o.partner_id.name`, `line.quantity`); sample
@@ -230,7 +234,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 248 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 250 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

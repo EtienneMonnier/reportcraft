@@ -160,7 +160,8 @@ Anything marked **decision** waits for a maintainer.
   - [x] Nested loops (serial numbers under each line, payments under the lines) as subreports over datasets of their own, linked by `o.id` and the line's id; elements below a subreport follow its end
     - [ ] Several repeated loops in one band (today the first; the next is shown once)
     - [ ] Loops three deep (a nested loop inside a nested loop)
-    - [ ] A line's records shown inline (`', '.join(line.tax_ids.mapped('name'))`, taxes per line) as a text field
+    - [x] A line's records shown inline (`', '.join(line.tax_ids.mapped('name'))`, taxes per line) as a text field
+      - [ ] Values that aren't a field (`str(t.amount)`, formatted amounts) and the filter after `if` (today dropped)
     - [x] Lines grouped by section (`display_type == 'line_section'` rows with their total) as inner groups, subsections inside sections
       - [ ] The section total from `price_total` when the company's prices include taxes (today `price_subtotal`)
       - [ ] Older templates' subtotal row after a section's lines (`current_subtotal` summed in a `t-set`) as the group footer
