@@ -14,6 +14,7 @@
 
 mod expr;
 mod flow;
+mod letterhead;
 
 use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value};
 use reportcraft_model::{Diagnostic, Group, Report, Severity};
@@ -146,6 +147,9 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
             report.report_header = header;
             report.report_footer = footer;
         }
+    }
+    if let Some((layout, doc)) = b.letterhead.clone() {
+        letterhead::apply(&mut report, layout, &doc, &mut b.fields);
     }
     report
 }

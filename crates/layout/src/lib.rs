@@ -282,6 +282,7 @@ fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Wr
         .collect::<Result<Vec<_>>>()?;
     let order = sorted_rows(report, rows, &group_cols)?;
     let mut w = Writer::new(report, rows, ctx);
+    w.next_row = order.first().copied();
     // Page one: the report header comes first, then the page header.
     w.start_page(false, &order)?;
     w.full_band(&report.report_header, Scope::new(&order, order.first().copied()), &order)?;
@@ -301,6 +302,9 @@ fn run<'a>(report: &'a Report, rows: &'a RowSet, ctx: &Context<'a>) -> Result<Wr
                 open_from = group_cols.len();
             }
         }
+        // Group footers closed above belong to the rows before; a page started from here on
+        // starts with this row.
+        w.next_row = Some(row);
         for level in open_from..group_cols.len() {
             let end = group_end(rows, &order, pos, level, &group_cols);
             let Some(group) = report.groups.get(level) else { continue };
@@ -503,6 +507,10 @@ struct Writer<'a> {
     row_height: f64,
     /// Items that show the page number, by page.
     page_number_items: Vec<(usize, usize)>,
+    /// The row being placed (what a page header started now reads) and the last row a band was
+    /// drawn for (what a page footer reads).
+    next_row: Option<usize>,
+    last_row: Option<usize>,
     datasets: &'a Datasets,
     cancel: &'a Cancel,
     files: &'a dyn PictureFiles,
@@ -549,6 +557,8 @@ impl<'a> Writer<'a> {
             column_bottom: 0.0,
             row_height: 0.0,
             page_number_items: Vec::new(),
+            next_row: None,
+            last_row: None,
         }
     }
 
@@ -600,11 +610,16 @@ impl<'a> Writer<'a> {
         self.report.page.margin_mm + self.report.page_header.height_mm + repeated
     }
 
+    /// The page header, reading the row the page starts with (a document's letterhead when each
+    /// document starts a page). It summarises no rows.
     fn page_header(&mut self) {
         let report = self.report;
-        // A hidden page header takes no room; it has no current row, only parameters to go by.
-        if self.band_visible(&report.page_header, Scope::new(&[], None)) {
-            self.draw(&report.page_header, Scope::new(&[], None), false);
+        let scope = Scope::new(&[], self.next_row);
+        // A hidden page header takes no room.
+        if self.band_visible(&report.page_header, scope) {
+            let last = self.last_row;
+            self.draw(&report.page_header, scope, false);
+            self.last_row = last;
             self.y += report.page_header.height_mm;
         }
         // Columns start below the page header (and below the report header on page one).
@@ -615,9 +630,11 @@ impl<'a> Writer<'a> {
     fn finish_page(&mut self) -> Result<()> {
         self.y = self.body_bottom();
         let report = self.report;
-        // A hidden page footer keeps its room: the body ends at the same place on every page.
-        if self.band_visible(&report.page_footer, Scope::new(&[], None)) {
-            self.draw(&report.page_footer, Scope::new(&[], None), false);
+        // The page footer reads the last row drawn on the page (or before it, on a page that
+        // holds none). A hidden one keeps its room: the body ends at the same place on every page.
+        let scope = Scope::new(&[], self.last_row.or(self.next_row));
+        if self.band_visible(&report.page_footer, scope) {
+            self.draw(&report.page_footer, scope, false);
         }
         self.pages.push(std::mem::take(&mut self.page));
         Ok(())
@@ -853,6 +870,9 @@ impl<'a> Writer<'a> {
 
     /// Draws a band at the current height; `columned` bands go into the current column.
     fn draw(&mut self, band: &Band, scope: Scope<'_>, columned: bool) {
+        if scope.current.is_some() {
+            self.last_row = scope.current;
+        }
         let page = &self.report.page;
         let column = if columned { self.column as f64 } else { 0.0 };
         let left = page.margin_mm + column * (page.column_width() + page.column_gap_mm);
@@ -1247,6 +1267,44 @@ mod tests {
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 2);
         assert!(texts(&doc).contains(&"2 / 2".to_owned()));
+    }
+
+    #[test]
+    fn page_headers_read_the_first_row_of_their_page_and_footers_the_last() {
+        let band = |h: f64, field: &str| Band {
+            height_mm: h,
+            elements: vec![el(Content::Field { field: field.into() })],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+        };
+        let mut r = Report::new("t");
+        r.page.height_mm = 60.0;
+        r.page.margin_mm = 10.0;
+        // 60 - 2 * 10 - 5 - 5 = 30 mm of body: one 20 mm row per page.
+        r.page_header = band(5.0, "branch");
+        r.page_footer = band(5.0, "amount");
+        r.detail = band(20.0, "amount");
+        r.groups.push(Group {
+            field: "branch".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: true,
+            header: Band::default(),
+            // Too tall to fit under a row: it starts a page of its own.
+            footer: band(15.0, "branch"),
+        });
+        let doc = layout(&r, &rows(), &Params::new()).unwrap();
+        let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();
+        // Lyon's footer goes to the next page with the row after it, but belongs to Lyon.
+        assert_eq!(
+            pages,
+            [vec!["Lyon", "10", "10"], vec!["Lyon", "2.5", "2.5"], vec!["Lyon", "Lyon", "2.5"], vec!["Paris", "5", "5"], vec!["Paris", "Paris", "5"]]
+        );
+        // A page header hidden on a field of its row.
+        r.page_header.visible_if = Some("[branch] = \"Paris\"".into());
+        let doc = layout(&r, &rows(), &Params::new()).unwrap();
+        assert_eq!(texts(&doc).iter().filter(|t| *t == "Paris").count(), 3, "Paris's pages only: two headers and the group footer");
     }
 
     #[test]

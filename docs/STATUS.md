@@ -1,6 +1,6 @@
 # Status
 
-> **Last updated:** 2026-11-14 · Stage: foundation (pre-alpha)
+> **Last updated:** 2026-11-17 · Stage: foundation (pre-alpha)
 
 ## Works
 - Report definitions in JSON, validated, with a format version.
@@ -202,10 +202,15 @@
   (truth tests, comparisons, `and`/`or`), `t-set` names for paths, headings, bold, alignment
   classes, tables in equal columns with their header row, pictures from `image_data_uri(field)`.
   Columns are named as the template writes them (`o.partner_id.name`, `line.quantity`); sample
-  rows (two documents of three lines) preview the report at once. What isn't converted (Python
-  calls, nested loops, the `web.external_layout` letterhead) is listed by template line and shown
-  in place as `{expression}`.
-- CLI and MCP server reaching every command. 239 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+  rows (two documents of three lines) preview the report at once. Odoo's `web.external_layout`
+  becomes a letterhead of each document's company (logo, name and address in the page header;
+  phone, e-mail, website and page numbers in the footer), `web.internal_layout` a one-line page
+  header (date, company, page numbers). What isn't converted (Python calls, nested loops) is
+  listed by template line and shown in place as `{expression}`.
+- Page headers and footers read a row: the header the first row placed on its page, the footer
+  the last one (a field in a page header shows the document the page belongs to); they still
+  total no rows.
+- CLI and MCP server reaching every command. 241 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

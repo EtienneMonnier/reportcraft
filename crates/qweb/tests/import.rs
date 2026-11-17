@@ -130,7 +130,7 @@ fn what_isnt_converted_is_reported_by_line() {
     let has = |needle: &str| messages.iter().any(|m| m.contains(needle));
     assert!(has("the file holds 2 templates"), "{messages:?}");
     assert!(has("line 15: `t-set=\"lines\"`: filters and sorts aren't applied, `lines` reads every record of `o.line_ids`"), "{messages:?}");
-    assert!(has("web.external_layout"), "{messages:?}");
+    assert!(!has("web.external_layout"), "the letterhead is converted: {messages:?}");
     assert!(messages.iter().any(|m| m.starts_with("line 20: expression `line.price_unit * 1.2`")), "{messages:?}");
     assert!(out.diagnostics.iter().all(|d| d.severity == Severity::Warning));
 }
@@ -142,7 +142,27 @@ fn sample_data_has_a_row_per_line_of_each_document() {
     let names: Vec<&str> = s.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(
         names,
-        ["o.id", "o.name", "o.partner_id.name", "o.note", "o.company_id.logo", "line.product_id.name", "line.quantity", "o.amount_total", "o.state"]
+        [
+            "o.id",
+            "o.name",
+            "o.partner_id.name",
+            "o.note",
+            "o.company_id.logo",
+            "line.product_id.name",
+            "line.quantity",
+            "o.amount_total",
+            "o.state",
+            // Read by the letterhead.
+            "o.company_id.name",
+            "o.company_id.street",
+            "o.company_id.street2",
+            "o.company_id.zip",
+            "o.company_id.city",
+            "o.company_id.country_id.name",
+            "o.company_id.phone",
+            "o.company_id.email",
+            "o.company_id.website"
+        ]
     );
     assert_eq!(s.rows.len(), 6);
     let col = |n: &str| s.column_index(n).unwrap();
@@ -153,6 +173,41 @@ fn sample_data_has_a_row_per_line_of_each_document() {
     assert_eq!(s.rows[2][col("line.product_id.name")], Value::Text("Product 3".into()));
     assert_eq!(s.rows[4][col("o.amount_total")], Value::Number(250.0));
     assert_eq!(s.rows[0][col("o.company_id.logo")], Value::Null);
+    assert_eq!(s.rows[3][col("o.company_id.name")], Value::Text("Company 2".into()));
+}
+
+#[test]
+fn odoo_page_layouts_become_the_page_header_and_footer() {
+    let r = import(DELIVERY, None).unwrap().report;
+    // `web.external_layout`: the document's company above, its contacts and page numbers below.
+    assert_eq!(
+        texts(&r.page_header.elements),
+        [
+            "image o.company_id.logo",
+            "[o.company_id.name]",
+            "[o.company_id.street]",
+            "[o.company_id.street2]",
+            "=TRIM([o.company_id.zip] & \" \" & [o.company_id.city])",
+            "[o.company_id.country_id.name]",
+            "line"
+        ]
+    );
+    assert!(r.page_header.elements.iter().all(|e| e.x_mm + e.width_mm <= 180.0 + 1e-9 && e.y_mm + e.height_mm <= r.page_header.height_mm));
+    assert_eq!(texts(&r.page_footer.elements), ["line", "[o.company_id.phone]", "[o.company_id.email]", "[o.company_id.website]", "PageNumber"]);
+    assert!(r.validate().is_ok());
+
+    // `web.internal_layout`: one line, the document variable followed.
+    let internal = r#"<t t-name="m.list"><t t-call="web.html_container"><t t-foreach="docs" t-as="doc">
+        <t t-call="web.internal_layout"><p t-field="doc.name"/></t></t></t></t>"#;
+    let out = import(internal, None).unwrap();
+    assert_eq!(texts(&out.report.page_header.elements), ["=TEXT(TODAY(), \"yyyy-mm-dd\")", "[doc.company_id.name]", "PageNumber", "line"]);
+    assert!(out.report.page_footer.elements.is_empty());
+    assert!(out.sample.column_index("doc.company_id.name").is_some());
+    // Both in one template: the first is kept, and that is said.
+    let both = r#"<t t-name="x"><t t-foreach="docs" t-as="o"><t t-call="web.internal_layout"/><t t-call="web.external_layout"/></t></t>"#;
+    let out = import(both, None).unwrap();
+    assert_eq!(out.report.page_header.elements.len(), 4);
+    assert!(out.diagnostics.iter().any(|d| d.message.contains("another page layout")));
 }
 
 #[test]
