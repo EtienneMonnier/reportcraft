@@ -9,6 +9,7 @@ use reportcraft_model::{Align, Band, Content, Element, Format, ImageFit, Severit
 use roxmltree::Node;
 
 use crate::expr;
+use crate::letterhead::Layout;
 
 /// The width laid out on: A4 less two 15 mm margins.
 pub(crate) const CONTENT_MM: f64 = 180.0;
@@ -133,6 +134,8 @@ pub(crate) struct Builder<'a, 'i> {
     /// Found the document loop and the line loop.
     pub doc_loop: Option<String>,
     pub line_loop: bool,
+    /// The page wrapper the template calls, with the document variable its company is read from.
+    pub letterhead: Option<(Layout, String)>,
     /// The line of text being gathered, with the condition it shows under.
     pending: Vec<Piece>,
     pending_condition: Option<String>,
@@ -158,6 +161,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             findings: Vec::new(),
             doc_loop: None,
             line_loop: false,
+            letterhead: None,
             pending: Vec::new(),
             pending_condition: None,
             cell: None,
@@ -376,8 +380,9 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 
     /// Follows a `t-call`: a template of the same file is read in place (`true`, the element's own
-    /// content is then what Odoo passes as `0`, left out); the suite's page wrappers are see-through
-    /// and their content is read; any other is reported and its content read.
+    /// content is then what Odoo passes as `0`, left out); Odoo's page wrappers are see-through,
+    /// their content is read and the external and internal layouts become the page header and
+    /// footer; any other is reported and its content read.
     fn call(&mut self, call: &str, scope: &Scope, depth: usize) -> bool {
         let short = call.rsplit('.').next().unwrap_or(call);
         let local = self.library.iter().find(|(n, _)| n == call || n.rsplit('.').next() == Some(short)).map(|(n, node)| (n.clone(), *node));
@@ -392,8 +397,17 @@ impl<'a, 'i> Builder<'a, 'i> {
             return true;
         }
         match call {
-            "web.html_container" | "web.basic_layout" | "web.internal_layout" => {}
-            "web.external_layout" => self.warn("the company letterhead of `web.external_layout` (logo, address, footer) isn't reproduced"),
+            "web.html_container" | "web.basic_layout" => {}
+            "web.external_layout" | "web.internal_layout" => {
+                let layout = if call == "web.external_layout" { Layout::External } else { Layout::Internal };
+                // The company is the document's; a document template read alone names it `o`.
+                let doc = scope.doc_var.clone().unwrap_or_else(|| "o".to_owned());
+                if self.letterhead.as_ref().is_some_and(|(l, _)| *l != layout) {
+                    self.warn(format!("`t-call=\"{call}\"`: the template already calls another page layout; the first one is kept"));
+                } else {
+                    self.letterhead.get_or_insert((layout, doc));
+                }
+            }
             other => self.warn(format!("`t-call=\"{other}\"`: the called template isn't in this file; the content passed to it is read")),
         }
         false

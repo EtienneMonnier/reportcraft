@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last updated:** 2026-11-14
+> **Last updated:** 2026-11-17
 
 Items have an id (`R<milestone>.<n>`), an owner (**maintainers** or **open**) and pending changes
 (`- [ ]`). Each item points to the requirement it serves in [specification.md](specification.md)
@@ -156,7 +156,10 @@ Anything marked **decision** waits for a maintainer.
 - [x] R4.1 Odoo QWeb templates: edit visually and preview on sample data — decided 2026-11-14: import and preview, no writing back to QWeb; the format from Odoo's documentation only (#20)
   - [ ] File ▸ Import QWeb… in the designer (today `file.importQweb`, `reportcraft-cli import-qweb`)
   - [ ] Nested loops (a document's lines grouped by section, taxes per line) as subreports or inner groups
-  - [ ] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer
+  - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
+    - [ ] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them
+    - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)
+    - [ ] Totals in page headers and footers (the rows of the page: carried forward, page totals)
   - [ ] More Python expressions: `in [...]`, parentheses, arithmetic on fields as formulas
   - [ ] Templates called from other modules (`t-call` to a file that isn't given), and `inherit_id` views applied
   - [ ] An SQL query proposed for the columns the report reads (`o.partner_id.name` → joins on the Odoo model)

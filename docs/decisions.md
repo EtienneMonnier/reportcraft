@@ -667,3 +667,22 @@ How the template maps to the model:
 The converter is its own crate at L2 (`reportcraft-qweb`, on `roxmltree`, already in the lock file
 through the PDF stack): it needs only the model, stays wasm-safe, and caps its input (4 MB,
 200,000 nodes, no DTD, nesting 64 deep, `t-call` chains 8 deep, 512 elements per band).
+
+## Page bands read the page's row; Odoo's page layouts become them (R4.1)
+
+Page headers and footers used to have no current row, only parameters. They now read one: the
+header the row its page starts with (the row being placed when the page broke, or the group's row
+when a group footer moved to the new page), the footer the last row drawn on its page. That is
+what banded report users expect from a field placed in a page band, and it is what lets a page
+header carry a letterhead per document when each document starts a page. Page bands still
+summarise no rows: a page total needs the rows of the page, a later change (roadmap). Existing
+reports change only where a page band held a field, which used to print blank.
+
+`web.external_layout` and `web.internal_layout` are wrappers from Odoo's report module, never in
+the file being imported. Their documented content (the company's logo, name and address above,
+its contacts and page numbers below; for the internal one a line with the date, company and page
+numbers) is rebuilt in a layout of our own, not copied from Odoo's templates. The company is read
+through the document (`o.company_id.name`…), so a report over documents of several companies
+shows each its own, and the columns are added to the sample data like any other. Page numbers
+count the whole report, not each document, and the company's layout choices (boxed, colours,
+tagline, footer text) aren't followed yet: both are on the roadmap.
