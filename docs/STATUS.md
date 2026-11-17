@@ -133,7 +133,9 @@
   links that keep the rows matching the current row (`1` matches `"1"`; a missing value matches
   nothing). It flows below its band across columns and pages, band by band; with no rows it is
   hidden (or shows its headers and footers); a missing dataset is an error; reports nest 3 deep.
-  `report.validate` checks subreport fields and links against the datasets.
+  Elements of the band below a subreport follow its end (a total under a list of payments).
+  `report.validate` checks subreport fields and links against the datasets; `data.preview` shows
+  a dataset's rows.
 - Query cache: a load with `cacheSeconds` reuses the same query's rows (same source, SQL, values
   and limits) read less than that long ago; at most 8 results and 1 GiB are kept, for the session
   (`data.clearCache`). Loads and `report.render` answer `refreshedAt`; reports can show it
@@ -206,12 +208,16 @@
   rows (two documents of three lines) preview the report at once. Odoo's `web.external_layout`
   becomes a letterhead of each document's company (logo, name and address in the page header;
   phone, e-mail, website and page numbers in the footer), `web.internal_layout` a one-line page
-  header (date, company, page numbers). What isn't converted (Python calls, nested loops) is
-  listed by template line and shown in place as `{expression}`.
+  header (date, company, page numbers). A loop inside a document's or a line's (serial numbers
+  under each line, payments under the lines) becomes a subreport over a dataset of its own (named
+  after the loop, `o_payment_ids`), linked to the document and the line by `o.id`/`line.id`, with
+  sample rows (two items each; `import-qweb --sample-data ROWS.csv` writes them to
+  `ROWS.NAME.csv`). What isn't converted (Python calls, a second repeated loop in a band, loops
+  three deep) is listed by template line and shown in place as `{expression}`.
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 242 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 244 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

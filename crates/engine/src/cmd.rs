@@ -186,7 +186,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "data.preview",
         label: "Preview data",
         menu: "Data",
-        params: r#"{"limit"?: integer (default 20, at most 1000)}"#,
+        params: r#"{"limit"?: integer (default 20, at most 1000), "dataset"?: string (a subreport's dataset instead of the report's rows)}"#,
         access: Access::Read,
         run: data_preview,
     },
@@ -342,12 +342,18 @@ fn file_import_qweb(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let columns = import.sample.columns.clone();
     set_rows(s, import.sample);
     s.datasets.clear();
+    let mut datasets = Vec::new();
+    for (name, rows) in import.datasets {
+        datasets.push(json!({"name": name, "columns": rows.columns, "rows": rows.rows.len()}));
+        s.datasets.insert(name, std::sync::Arc::new(rows));
+    }
     s.report = import.report;
     Ok(json!({
         "title": s.report.title,
         "templates": import.templates,
         "columns": columns,
         "rows": s.rows.rows.len(),
+        "datasets": datasets,
         "diagnostics": import.diagnostics,
     }))
 }
@@ -969,8 +975,12 @@ fn data_load_sqlite(_: &mut Session, _: &Json) -> EngineResult<Json> {
 fn data_preview(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let limit = params.get("limit").and_then(Json::as_u64).unwrap_or(20).min(1_000);
     let limit = usize::try_from(limit).unwrap_or(1_000);
-    let rows: Vec<_> = s.rows.rows.iter().take(limit).collect();
-    Ok(json!({"columns": s.rows.columns, "rows": rows, "total": s.rows.rows.len()}))
+    let data = match dataset_of("data.preview", params)? {
+        Some(name) => std::sync::Arc::clone(s.datasets.get(&name).ok_or_else(|| reportcraft_core::Error::NotFound(format!("dataset `{name}`")))?),
+        None => std::sync::Arc::clone(&s.rows),
+    };
+    let rows: Vec<_> = data.rows.iter().take(limit).collect();
+    Ok(json!({"columns": data.columns, "rows": rows, "total": data.rows.len()}))
 }
 
 fn data_query_log(s: &mut Session, params: &Json) -> EngineResult<Json> {

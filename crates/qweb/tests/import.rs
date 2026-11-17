@@ -54,6 +54,7 @@ fn texts(els: &[Element]) -> Vec<String> {
             Content::Formula { expression } => format!("={expression}"),
             Content::Image { field, .. } => format!("image {}", field.as_deref().unwrap_or("")),
             Content::Line { .. } => "line".into(),
+            Content::Subreport { .. } => "Subreport".into(),
             other => format!("{other:?}"),
         })
         .collect()
@@ -250,4 +251,93 @@ fn hostile_files_are_refused_or_bounded() {
     let out = import(&many, None).unwrap();
     assert_eq!(out.report.report_header.elements.len(), reportcraft_core::limits::MAX_ELEMENTS_PER_BAND);
     let _ = Format::Number { decimals: 2, grouping: true };
+}
+
+/// An original template with loops inside the document's: serial numbers under each line, payments
+/// below the lines, and one more loop in the same band.
+const RETURNS: &str = r#"<odoo><template id="report_rental_return">
+<t t-call="web.html_container"><t t-foreach="docs" t-as="o">
+  <div class="page">
+    <h2 t-field="o.name"/>
+    <table class="table">
+      <thead><tr><th>Item</th><th>Quantity</th></tr></thead>
+      <tbody>
+        <t t-foreach="o.move_ids" t-as="move">
+          <tr><td t-field="move.product_id.name"/><td t-field="move.quantity"/></tr>
+          <t t-foreach="move.move_line_ids" t-as="ml">
+            <tr t-if="ml.lot_id"><td>Serial <span t-field="ml.lot_id.name"/></td><td t-field="ml.quantity"/></tr>
+          </t>
+        </t>
+        <tr><td>Returned in good order</td></tr>
+      </tbody>
+    </table>
+    <p>Payments</p>
+    <div t-foreach="o.payment_ids" t-as="pay"><span t-field="pay.date"/> <span t-field="pay.amount"/></div>
+    <p class="text-end">Total: <span t-field="o.amount_total"/></p>
+    <div t-foreach="o.note_ids" t-as="n"><span t-field="n.text"/></div>
+  </div>
+</t></t></template></odoo>"#;
+
+#[test]
+fn nested_loops_become_linked_subreports_with_sample_rows() {
+    let out = import(RETURNS, None).unwrap();
+    let r = &out.report;
+    let subreport = |els: &[Element]| -> Option<(String, Vec<String>, Vec<String>, f64)> {
+        els.iter().find_map(|e| match &e.content {
+            Content::Subreport { report, dataset, links, .. } => {
+                Some((dataset.clone(), links.iter().map(|l| format!("{}={}", l.parent, l.child)).collect(), texts(&report.detail.elements), e.y_mm))
+            }
+            _ => None,
+        })
+    };
+    // Under each line, its serial numbers: a subreport linked to the document and the line.
+    assert_eq!(texts(&r.detail.elements), ["[move.product_id.name]", "[move.quantity]", "Subreport"]);
+    let (name, links, rows, y) = subreport(&r.detail.elements).unwrap();
+    assert_eq!(name, "move_move_line_ids");
+    assert_eq!(links, ["o.id=o.id", "move.id=move.id"]);
+    assert_eq!(rows, ["Serial ", "[ml.lot_id.name]", "[ml.quantity]"]);
+    assert!(y >= 5.0, "below the line's row: {y}");
+    let Some(Content::Subreport { report: serials, .. }) = r.detail.elements.last().map(|e| &e.content) else { panic!() };
+    // The row's condition hides the whole row (a row without serial number takes no room).
+    assert_eq!(serials.detail.visible_if.as_deref(), Some("NOT(ISBLANK([ml.lot_id]))"));
+    assert!(serials.detail.elements.iter().all(|e| e.visible_if.is_none()));
+    // The row after the loops is the group footer's; payments are the footer's subreport, the
+    // total after them (the layout moves it below the payments).
+    let footer = texts(&r.groups[0].footer.elements);
+    assert_eq!(footer[0], "Returned in good order");
+    let (name, links, rows, y) = subreport(&r.groups[0].footer.elements).unwrap();
+    assert_eq!((name.as_str(), links), ("o_payment_ids", vec!["o.id=o.id".to_owned()]));
+    assert_eq!(rows, ["[pay.date]", "[pay.amount]"]);
+    let total =
+        r.groups[0].footer.elements.iter().find(|e| matches!(&e.content, Content::Formula { expression } if expression.contains("Total"))).unwrap();
+    assert!(total.y_mm > y);
+    // One loop per band: the next is shown once, and said.
+    assert!(footer.contains(&"{n.text}".to_owned()), "{footer:?}");
+    let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert!(messages.contains(&"one loop per band is repeated as a subreport"), "{messages:?}");
+    assert!(!messages.iter().any(|m| m.contains("move_line_ids") || m.contains("payment_ids")), "{messages:?}");
+
+    // The main rows know the line's id, not the nested loops' columns.
+    let names: Vec<&str> = out.sample.columns.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"move.id") && !names.iter().any(|n| n.starts_with("ml.") || n.starts_with("pay.")), "{names:?}");
+    // Each nested loop has its sample rows: two per line, or per document.
+    let data: Vec<(&str, Vec<&str>, usize)> =
+        out.datasets.iter().map(|(n, rows)| (n.as_str(), rows.columns.iter().map(|c| c.name.as_str()).collect(), rows.rows.len())).collect();
+    assert_eq!(
+        data,
+        [
+            ("move_move_line_ids", vec!["o.id", "move.id", "ml.lot_id.name", "ml.quantity", "ml.lot_id"], 12),
+            ("o_payment_ids", vec!["o.id", "pay.date", "pay.amount"], 4)
+        ]
+    );
+    let (_, serial_rows) = &out.datasets[0];
+    // Document 2, line 3, its second serial number.
+    assert_eq!(serial_rows.rows[11][..3], [Value::Int(2), Value::Int(3), Value::Text("Lot 2".into())]);
+    let mut columns = std::collections::BTreeMap::new();
+    for (n, rows) in &out.datasets {
+        columns.insert(n.clone(), rows.columns.clone());
+    }
+    // Valid against the sample rows and the nested loops' rows, links included.
+    let problems = r.check_with_datasets(Some(&out.sample.columns), &columns);
+    assert!(problems.is_empty(), "{problems:?}");
 }

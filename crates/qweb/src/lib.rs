@@ -9,7 +9,9 @@
 //! The data a converted report reads has one row per line of each document: columns are named as
 //! the template writes the fields (`o.partner_id.name`, `line.quantity`), the document's columns
 //! repeated on each of its lines, and `o.id` (the document loop's variable) telling documents
-//! apart. Each document starts a new page.
+//! apart. Each document starts a new page. Another loop over a document's or a line's records
+//! reads a dataset of its own, one row per item, shown by a subreport linked to its document (and
+//! line); its sample rows come with the import.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod expr;
@@ -20,7 +22,7 @@ use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value};
 use reportcraft_model::{Diagnostic, Group, Report, Severity};
 use roxmltree::{Document, Node, ParsingOptions};
 
-use crate::flow::{Builder, Field, Scope};
+use crate::flow::{Builder, Dataset, Field, Level, Scope};
 
 /// Largest template file read.
 pub const MAX_XML_BYTES: usize = 4 << 20;
@@ -29,6 +31,8 @@ const MAX_NODES: u32 = 200_000;
 /// Documents and lines per document in the sample data.
 const SAMPLE_DOCS: usize = 2;
 const SAMPLE_LINES: usize = 3;
+/// Items per document (or line) in a nested loop's sample data.
+const SAMPLE_ITEMS: usize = 2;
 
 /// A converted template.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +40,8 @@ pub struct Import {
     pub report: Report,
     /// Rows shaped like the data the report reads, with made-up values, to preview it.
     pub sample: RowSet,
+    /// The datasets of the nested loops (subreports), by name, with made-up rows.
+    pub datasets: Vec<(String, RowSet)>,
     /// What wasn't converted, by template line (`line 12`).
     pub diagnostics: Vec<Diagnostic>,
     /// Every template in the file, by name; the one converted is `report.title`.
@@ -80,7 +86,8 @@ pub fn import(xml: &str, template: Option<&str>) -> Result<Import> {
     }
     let report = assemble(title, &mut builder);
     let sample = sample(&builder.fields);
-    Ok(Import { report, sample, diagnostics, templates: names })
+    let datasets = builder.datasets.iter().map(|d| (d.name.clone(), nested_sample(d))).collect();
+    Ok(Import { report, sample, datasets, diagnostics, templates: names })
 }
 
 /// Reads one template into bands.
@@ -139,7 +146,7 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
         Some(var) => {
             let key = format!("{var}.id");
             if !b.fields.iter().any(|f| f.name.eq_ignore_ascii_case(&key)) {
-                b.fields.insert(0, Field { name: key.clone(), field_type: FieldType::Integer, per_line: false });
+                b.fields.insert(0, Field { name: key.clone(), field_type: FieldType::Integer, level: Level::Doc });
             }
             report.groups.push(Group { field: key, keep_together: false, repeat_header: false, page_break_before: true, header, footer });
         }
@@ -158,25 +165,49 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
 /// numbers for fields whose names say amount or quantity, text naming the field otherwise.
 fn sample(fields: &[Field]) -> RowSet {
     let columns: Vec<Column> = fields.iter().map(|f| Column { name: f.name.clone(), field_type: f.field_type }).collect();
-    let lines = if fields.iter().any(|f| f.per_line) { SAMPLE_LINES } else { 1 };
+    let lines = if fields.iter().any(|f| f.level == Level::Line) { SAMPLE_LINES } else { 1 };
     let mut rows = Vec::new();
     for d in 1..=SAMPLE_DOCS {
         for l in 1..=lines {
-            rows.push(fields.iter().map(|f| sample_value(f, d, l)).collect());
+            rows.push(fields.iter().map(|f| sample_value(f, d, l, 1)).collect());
         }
     }
     RowSet { columns, rows }
 }
 
-fn sample_value(f: &Field, doc: usize, line: usize) -> Value {
-    let n = if f.per_line { line } else { doc };
+/// A nested loop's made-up rows: two items for each document of the sample data, or for each of
+/// its lines, with the same document and line values as the main rows so the links match.
+fn nested_sample(d: &Dataset) -> RowSet {
+    let columns: Vec<Column> = d.fields.iter().map(|f| Column { name: f.name.clone(), field_type: f.field_type }).collect();
+    let lines = if d.under_line { SAMPLE_LINES } else { 1 };
+    let mut rows = Vec::new();
+    for doc in 1..=SAMPLE_DOCS {
+        for line in 1..=lines {
+            for item in 1..=SAMPLE_ITEMS {
+                rows.push(d.fields.iter().map(|f| sample_value(f, doc, line, item)).collect());
+            }
+        }
+    }
+    RowSet { columns, rows }
+}
+
+fn sample_value(f: &Field, doc: usize, line: usize, item: usize) -> Value {
+    let n = match f.level {
+        Level::Doc => doc,
+        Level::Line => line,
+        Level::Item => item,
+    };
     let leaf = f.name.rsplit('.').next().unwrap_or(&f.name);
     let picture = ["image", "logo", "photo", "picture", "signature"].iter().any(|w| leaf.to_ascii_lowercase().contains(w));
     match f.field_type {
         _ if picture => Value::Null,
         FieldType::Integer => Value::Int(i64::try_from(n).unwrap_or(1)),
         FieldType::Number => {
-            let base = if f.per_line { 12.5 } else { 125.0 };
+            let base = match f.level {
+                Level::Doc => 125.0,
+                Level::Line => 12.5,
+                Level::Item => 10.0,
+            };
             Value::Number(base * n as f64)
         }
         FieldType::Bool => Value::Bool(n % 2 == 1),
