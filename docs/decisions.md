@@ -766,3 +766,16 @@ there already reads the new group's row. Crystal-style "reset page number after 
 separate "total pages of the group" was considered: one flag covers both, since a per-group
 number with a whole-report total reads wrong. Imported QWeb templates set it on the document
 group, as Odoo prints them.
+
+## Calculations on fields become formulas (R4.1)
+
+Templates compute in Python where a banded report computes in formulas: `line.price_unit * 1.2`,
+`o.amount_total - o.amount_residual`, `move.quantity != move.product_uom_qty`. The converter
+reads the part of Python that means the same in the formula language — fields of the documents
+and lines, numbers, `+ - * / **`, parentheses, `round`, `abs`, `min`, `max`, and at most one
+comparison (a chained `a < b < c` means something else in a formula) — token by token, and
+checks the result parses as a formula before using it. What would change meaning is refused and
+shown as written, as before: `%` (modulo in Python, percent in a formula), `//`, text joined with
+`+` (a formula joins with `&`), method calls. A calculation reading an amount gets two decimals,
+like the amount fields themselves; a field whose root isn't a loop's variable (`company.rate`)
+still isn't a column.

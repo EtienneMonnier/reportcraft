@@ -172,7 +172,8 @@ Anything marked **decision** waits for a maintainer.
     - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)
     - [ ] Totals in page headers and footers (the rows of the page: carried forward, page totals)
   - [ ] More Python expressions — `in (…)`, `not in`, `not (…)`, parentheses and `t-set` names for conditions done
-    - [ ] Arithmetic on fields as formulas (`line.price_unit * 1.2`), comparisons between two fields
+    - [x] Arithmetic on fields as formulas (`line.price_unit * 1.2`, `round(…, 2)`, `abs`, `min`, `max`), comparisons between two fields
+      - [ ] Text joined with `+`, `%` and `//`, method calls (`o.currency_id.round(…)`)
     - [ ] Odoo's `groups="…"` (shown to some users only) and `is_html_empty(…)`
   - [ ] Templates called from other modules (`t-call` to a file that isn't given), and `inherit_id` views applied
   - [ ] An SQL query proposed for the columns the report reads (`o.partner_id.name` → joins on the Odoo model)

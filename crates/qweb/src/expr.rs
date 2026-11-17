@@ -169,11 +169,119 @@ fn simple(e: &str, named: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     // Longest operators first, so `>=` isn't read as `>`.
     for (py, formula) in [("==", "="), ("!=", "<>"), (">=", ">="), ("<=", "<="), (">", ">"), ("<", "<")] {
         if let Some((left, right)) = e.split_once(py) {
-            let p = path(left)?;
-            return Some(format!("[{p}] {formula} {}", literal(right)?));
+            if let (Some(p), Some(l)) = (path(left), literal(right)) {
+                return Some(format!("[{p}] {formula} {l}"));
+            }
+            break;
         }
     }
-    None
+    // Two fields, or a calculation, compared: `line.product_uom_id != line.product_id.uom_id`.
+    arithmetic(e).filter(|f| COMPARISONS.iter().any(|c| f.contains(&format!(" {c} "))))
+}
+
+/// The comparison operators a formula written by `arithmetic` may hold.
+const COMPARISONS: [&str; 6] = ["=", "<>", "<", ">", "<=", ">="];
+
+/// A Python calculation over fields and numbers as a formula: `line.price_unit * 1.2` →
+/// `[line.price_unit] * 1.2`, `o.amount_total - o.amount_residual`, `a ** 2` → `a ^ 2`,
+/// `round(…, 2)`, `abs(…)`, `min(…)`, `max(…)`, and one comparison between two sides. `None` when
+/// anything else appears (a method, `%`, `//`, text joined with `+`, a chained comparison) or
+/// there is no operator nor function (a plain field is read elsewhere).
+pub(crate) fn arithmetic(expr: &str) -> Option<String> {
+    let mut out: Vec<String> = Vec::new();
+    let (mut operators, mut comparisons, mut texts, mut plus) = (0, 0, false, false);
+    let chars: Vec<char> = expr.trim().chars().collect();
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        let next = chars.get(i + 1).copied();
+        let token: String = match c {
+            _ if c.is_whitespace() => {
+                i += 1;
+                continue;
+            }
+            '0'..='9' | '.' if c != '.' || next.is_some_and(|n| n.is_ascii_digit()) => {
+                let start = i;
+                while chars.get(i).is_some_and(|d| d.is_ascii_digit() || *d == '.' || *d == 'e' || *d == 'E') {
+                    i += 1;
+                }
+                let n: String = chars.get(start..i)?.iter().collect();
+                n.parse::<f64>().ok().filter(|x| x.is_finite())?;
+                out.push(n);
+                continue;
+            }
+            '\'' | '"' => {
+                let end = chars.iter().skip(i + 1).position(|d| *d == c)? + i + 1;
+                let text: String = chars.get(i + 1..end)?.iter().collect();
+                if text.contains(['"', '\'', '\\']) {
+                    return None;
+                }
+                texts = true;
+                i = end + 1;
+                out.push(format!("\"{text}\""));
+                continue;
+            }
+            _ if c.is_ascii_alphabetic() || c == '_' => {
+                let start = i;
+                while chars.get(i).is_some_and(|d| d.is_ascii_alphanumeric() || *d == '_' || *d == '.') {
+                    i += 1;
+                }
+                let name: String = chars.get(start..i)?.iter().collect();
+                let call = chars.iter().skip(i).find(|d| !d.is_whitespace()) == Some(&'(');
+                let token = if call {
+                    operators += 1;
+                    match name.as_str() {
+                        "round" => "ROUND".to_owned(),
+                        "abs" => "ABS".to_owned(),
+                        "min" => "MIN".to_owned(),
+                        "max" => "MAX".to_owned(),
+                        _ => return None,
+                    }
+                } else {
+                    format!("[{}]", path(&name)?)
+                };
+                out.push(token);
+                continue;
+            }
+            '*' if next == Some('*') => {
+                i += 1;
+                "^".to_owned()
+            }
+            '=' | '!' | '<' | '>' => {
+                let op = match (c, next) {
+                    ('=', Some('=')) => "=",
+                    ('!', Some('=')) => "<>",
+                    ('<', Some('=')) => "<=",
+                    ('>', Some('=')) => ">=",
+                    ('<', _) => "<",
+                    ('>', _) => ">",
+                    _ => return None,
+                };
+                if next == Some('=') {
+                    i += 1;
+                }
+                comparisons += 1;
+                op.to_owned()
+            }
+            '/' if next == Some('/') => return None,
+            '+' | '-' | '*' | '/' | '(' | ')' | ',' => {
+                plus |= c == '+';
+                c.to_string()
+            }
+            _ => return None,
+        };
+        if !matches!(token.as_str(), "(" | ")" | ",") {
+            operators += 1;
+        }
+        out.push(token);
+        i += 1;
+    }
+    if operators == 0 || comparisons > 1 || (texts && plus) {
+        return None;
+    }
+    let formula = out.join(" ").replace("( ", "(").replace(" )", ")").replace(" ,", ",");
+    let formula = ["ROUND", "ABS", "MIN", "MAX"].iter().fold(formula, |f, name| f.replace(&format!("{name} ("), &format!("{name}(")));
+    // Only what the formula language reads back.
+    reportcraft_expr::parse(&formula).ok().map(|_| formula)
 }
 
 /// `path in (a, b)` as `OR([path] = a, [path] = b)`, `path not in [a, b]` as
@@ -294,7 +402,7 @@ mod tests {
         assert_eq!(condition("o.s == 'x and y'").as_deref(), Some("[o.s] = \"x and y\""));
         assert_eq!(condition("o.s in ['a', 'b']").as_deref(), Some("OR([o.s] = \"a\", [o.s] = \"b\")"));
         assert_eq!(condition("o.x == 'a\"b'"), None);
-        assert_eq!(condition("o.x == y.z"), None);
+        assert_eq!(condition("o.x == y.z").as_deref(), Some("[o.x] = [y.z]"), "the builder checks `y` is a loop's variable");
     }
 
     #[test]
@@ -335,6 +443,30 @@ mod tests {
         assert_eq!(formatted("format_date(env, o.f())"), None);
         assert_eq!(formatted("len(o.line_ids)"), None);
         assert_eq!(condition("False").as_deref(), Some("FALSE"));
+    }
+
+    #[test]
+    fn calculations_on_fields_become_formulas() {
+        assert_eq!(arithmetic("line.price_unit * 1.2").as_deref(), Some("[line.price_unit] * 1.2"));
+        assert_eq!(arithmetic("o.amount_total - o.amount_residual").as_deref(), Some("[o.amount_total] - [o.amount_residual]"));
+        assert_eq!(
+            arithmetic("round(line.qty * (1 - line.discount / 100), 2)").as_deref(),
+            Some("ROUND([line.qty] * (1 - [line.discount] / 100), 2)")
+        );
+        assert_eq!(arithmetic("abs(o.amount) ** 2").as_deref(), Some("ABS([o.amount]) ^ 2"));
+        assert_eq!(arithmetic("-o.amount").as_deref(), Some("- [o.amount]"));
+        assert_eq!(arithmetic("line.a != line.b").as_deref(), Some("[line.a] <> [line.b]"));
+        assert_eq!(arithmetic("o.name"), None, "a plain field");
+        assert_eq!(arithmetic("o.f(1) + 1"), None);
+        assert_eq!(arithmetic("o.n % 2"), None);
+        assert_eq!(arithmetic("o.n // 2"), None);
+        assert_eq!(arithmetic("'a' + o.name"), None);
+        assert_eq!(arithmetic("1 < o.n < 3"), None);
+        assert_eq!(arithmetic("o.a * (o.b"), None);
+        assert_eq!(arithmetic("o.a + 1e999"), None);
+        assert_eq!(condition("line.product_uom_id != line.product_id.uom_id").as_deref(), Some("[line.product_uom_id] <> [line.product_id.uom_id]"));
+        assert_eq!(condition("o.amount_total > o.amount_residual * 2").as_deref(), Some("[o.amount_total] > [o.amount_residual] * 2"));
+        assert_eq!(condition("o.state == 'posted'").as_deref(), Some("[o.state] = \"posted\""));
     }
 
     #[test]

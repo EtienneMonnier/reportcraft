@@ -515,8 +515,14 @@ impl<'a, 'i> Builder<'a, 'i> {
     fn test(&self, test: &str, scope: &Scope) -> Option<String> {
         let named = |name: &str| self.conditions.iter().rev().find(|(n, _)| n == name).map(|(_, f)| f.clone());
         let formula = expr::condition_with(&expr::keys(&collapse(test)), &named)?;
+        self.read_fields(&formula, scope)
+    }
+
+    /// A formula with its fields read through the `t-set` names, when each is a field of the
+    /// documents or their lines (`None` otherwise).
+    fn read_fields(&self, formula: &str, scope: &Scope) -> Option<String> {
         let mut out = String::new();
-        let mut rest = formula.as_str();
+        let mut rest = formula;
         while let Some(open) = rest.find('[') {
             let close = rest[open..].find(']').map(|c| open + c)?;
             let field = self.resolve(&rest[open + 1..close]);
@@ -757,14 +763,29 @@ impl<'a, 'i> Builder<'a, 'i> {
                 let format = self.field(&p, scope).or(monetary.then_some(Format::Number { decimals: 2, grouping: true }));
                 self.piece(Piece::Field(p, style, format), scope);
             }
-            None => match self.section_total(value, scope) {
-                Some(formula) => self.piece(Piece::Formula(formula, style, Some(Format::Number { decimals: 2, grouping: true })), scope),
+            None => match self
+                .calculation(value, scope)
+                .or_else(|| self.section_total(value, scope).map(|f| (f, Some(Format::Number { decimals: 2, grouping: true }))))
+            {
+                Some((formula, format)) => self.piece(Piece::Formula(formula, style, format), scope),
                 None => {
                     self.warn(format!("expression `{}` isn't converted: shown as written", collapse(value)));
                     self.piece(Piece::Raw(collapse(value), style), scope);
                 }
             },
         }
+    }
+
+    /// A calculation over fields (`line.price_unit * 1.2`) as a formula, with two decimals when
+    /// it reads an amount.
+    fn calculation(&mut self, value: &str, scope: &Scope) -> Option<(String, Option<Format>)> {
+        let formula = self.read_fields(&expr::arithmetic(&collapse(value))?, scope)?;
+        let mut amount = false;
+        for field in formula.split('[').skip(1).filter_map(|f| f.split(']').next()) {
+            amount |= self.field(field, scope).is_some();
+        }
+        let compares = [" = ", " <> ", " < ", " > ", " <= ", " >= "].iter().any(|c| formula.contains(c));
+        Some((formula, (amount && !compares).then_some(Format::Number { decimals: 2, grouping: true })))
     }
 
     /// Records' values joined into a text (`', '.join(line.tax_ids.mapped('name'))`): the column
