@@ -699,13 +699,15 @@ impl<'a> Writer<'a> {
     /// Draws a band at the current height and moves below it, flowing its subreport if it has one.
     fn place(&mut self, band: &Band, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
         let (top, item) = (self.y, self.page.items.len());
-        self.draw(band, scope, columned);
         let mut subreport = None;
         for el in band.elements.iter().filter(|e| matches!(e.content, Content::Subreport { .. })) {
             if self.element_visible(el, scope) {
                 subreport = Some(el);
             }
         }
+        // What lies below a subreport follows it, wherever it ends.
+        let cut = subreport.map_or(f64::INFINITY, |el| el.y_mm + el.height_mm);
+        self.draw_part(band, scope, columned, f64::NEG_INFINITY, cut);
         match subreport {
             None => {
                 self.marks.push(Mark { item, top, height: band.height_mm });
@@ -736,7 +738,8 @@ impl<'a> Writer<'a> {
             let ctx = Context { datasets: self.datasets, params: self.params, cancel: self.cancel, files: self.files, depth: self.depth + 1 };
             subreport_blocks(&report, &rows, &ctx)?
         };
-        let below = (band.height_mm - el.y_mm - el.height_mm).max(0.0);
+        let cut = el.y_mm + el.height_mm;
+        let below = (band.height_mm - cut).max(0.0);
         let mut y = top + el.y_mm;
         let (mut moved, mut fresh) = (false, false);
         for block in blocks {
@@ -757,8 +760,19 @@ impl<'a> Writer<'a> {
             }
             y += block.height;
         }
-        let end = if moved { y + below } else { (top + band.height_mm).max(y + below) };
-        self.marks.push(Mark { item: self.page.items.len(), top: y, height: end - y });
+        // The elements below the subreport, under its end (never above where the band put them),
+        // on the next page when they don't fit.
+        let mut tail = if moved { y } else { y.max(top + cut) };
+        let has_tail = band.elements.iter().any(|e| e.y_mm >= cut && !matches!(e.content, Content::Subreport { .. }));
+        if has_tail && !fresh && tail + below > self.body_bottom() + 1e-9 {
+            self.next_column_or_page(columned, order)?;
+            tail = self.y;
+        }
+        let item = self.page.items.len();
+        self.y = tail - cut;
+        self.draw_part(band, scope, columned, cut, f64::INFINITY);
+        let end = tail + below;
+        self.marks.push(Mark { item, top: y.min(tail), height: end - y.min(tail) });
         self.y = end;
         Ok(())
     }
@@ -870,13 +884,18 @@ impl<'a> Writer<'a> {
 
     /// Draws a band at the current height; `columned` bands go into the current column.
     fn draw(&mut self, band: &Band, scope: Scope<'_>, columned: bool) {
+        self.draw_part(band, scope, columned, f64::NEG_INFINITY, f64::INFINITY);
+    }
+
+    /// Draws the band's elements whose top is from `from` to before `to` (millimetres in the band).
+    fn draw_part(&mut self, band: &Band, scope: Scope<'_>, columned: bool, from: f64, to: f64) {
         if scope.current.is_some() {
             self.last_row = scope.current;
         }
         let page = &self.report.page;
         let column = if columned { self.column as f64 } else { 0.0 };
         let left = page.margin_mm + column * (page.column_width() + page.column_gap_mm);
-        for el in &band.elements {
+        for el in band.elements.iter().filter(|e| (from..to).contains(&e.y_mm)) {
             if !self.element_visible(el, scope) {
                 continue;
             }
@@ -1305,6 +1324,68 @@ mod tests {
         r.page_header.visible_if = Some("[branch] = \"Paris\"".into());
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc).iter().filter(|t| *t == "Paris").count(), 3, "Paris's pages only: two headers and the group footer");
+    }
+
+    #[test]
+    fn what_lies_below_a_subreport_follows_its_end() {
+        let field = |f: &str| Content::Field { field: f.into() };
+        let mut child = Report::new("payments");
+        child.detail = Band { height_mm: 5.0, elements: vec![el(field("amount"))], ..Band::default() };
+        let sub = Content::Subreport {
+            report: Box::new(child),
+            dataset: "payments".into(),
+            links: vec![reportcraft_model::SubreportLink { parent: "branch".into(), child: "branch".into() }],
+            hide_when_empty: true,
+        };
+        let mut r = Report::new("t");
+        r.page.height_mm = 60.0;
+        r.page.margin_mm = 10.0;
+        // 40 mm of body: a 2 mm title, the payments, a total 1 mm below them, beside a note.
+        r.detail = Band {
+            height_mm: 10.0,
+            elements: vec![
+                Element { height_mm: 2.0, ..el(field("branch")) },
+                Element { x_mm: 0.0, y_mm: 2.0, height_mm: 2.0, ..el(sub) },
+                Element { x_mm: 60.0, y_mm: 2.0, height_mm: 2.0, ..el(Content::Text { text: "beside".into() }) },
+                Element { y_mm: 5.0, height_mm: 5.0, ..el(Content::Text { text: "total".into() }) },
+            ],
+            ..Band::default()
+        };
+        let mut datasets = Datasets::new();
+        let pay = |b: &str, a: f64| vec![Value::Text(b.into()), Value::Number(a)];
+        let payments =
+            RowSet { columns: rows().columns, rows: vec![pay("Lyon", 1.0), pay("Lyon", 2.0), pay("Lyon", 3.0), pay("Lyon", 3.5), pay("Paris", 9.0)] };
+        datasets.insert("payments".into(), Arc::new(payments));
+        let doc = render(&r, &rows(), &datasets, &Params::new(), &Cancel::default()).unwrap();
+        let pages: Vec<Vec<(String, f64)>> = doc.pages.iter().map(|p| p.items.iter().map(|i| (i.text.clone(), i.y_mm)).collect()).collect();
+        let lyon = |top: f64| {
+            let mut v = vec![("Lyon", top), ("beside", top + 2.0)];
+            v.extend([("1", 2.0), ("2", 7.0), ("3", 12.0), ("3.5", 17.0)].map(|(t, y)| (t, top + y)));
+            v.push(("total", top + 23.0));
+            v
+        };
+        let own = |v: Vec<(&str, f64)>| v.into_iter().map(|(t, y)| (t.to_owned(), y)).collect::<Vec<_>>();
+        // Rows in data order: Lyon, Paris, Lyon (both Lyon rows link to Lyon's payments).
+        // Lyon: the total 1 mm below the payments (12–32); "beside" stays where the band put it.
+        // Paris at 38: its payment ends at 45 and the total no longer fits (45 + 6 > 50): next page.
+        let mut first = lyon(10.0);
+        first.extend([("Paris", 38.0), ("beside", 40.0), ("9", 40.0)]);
+        assert_eq!(pages[0], own(first));
+        let mut second = vec![("total", 11.0)];
+        second.extend(lyon(16.0));
+        assert_eq!(pages[1], own(second));
+        // A subreport with no rows: what lies below stays where the band put it.
+        let mut none = render(
+            &r,
+            &rows(),
+            &Datasets::from([("payments".to_owned(), Arc::new(RowSet { columns: rows().columns, rows: vec![] }))]),
+            &Params::new(),
+            &Cancel::default(),
+        )
+        .unwrap()
+        .pages;
+        let first = none.remove(0);
+        assert_eq!(first.items.iter().find(|i| i.text == "total").map(|i| i.y_mm), Some(15.0));
     }
 
     #[test]

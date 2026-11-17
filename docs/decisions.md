@@ -686,3 +686,25 @@ through the document (`o.company_id.name`…), so a report over documents of sev
 shows each its own, and the columns are added to the sample data like any other. Page numbers
 count the whole report, not each document, and the company's layout choices (boxed, colours,
 tagline, footer text) aren't followed yet: both are on the roadmap.
+
+## Nested QWeb loops become linked subreports; what lies below a subreport follows it (R4.1)
+
+A QWeb template reads records through records (an invoice's payments, a delivery's lines and each
+line's serial numbers); the banded model reads rows. The first loop over a document's records
+stays the detail band (R4.1). Another loop over a path of the document or of the line becomes a
+subreport over a dataset of its own, named after the path (`o.payment_ids` → `o_payment_ids`),
+with the same naming of columns (`pay.amount`), the document's (and line's) columns it reads
+repeated on each row, and links on `o.id` (and the line's `id`) so a query can return all the
+items at once. A subreport rather than an inner group: the items are other records than the
+lines, with their own count, and a group can't hold rows that aren't lines. Its sample rows (two
+per document or line, the same ids as the main rows) come with the import, so the preview works
+at once. Only one loop per band becomes a subreport, as the model allows one per band, and only
+one level deep; the rest is shown once with a warning. A condition every element of a nested row
+shares is set on its band, so a hidden row takes no room.
+
+Bands used to draw every element at its place and let a subreport flow over what lay below it.
+Now the elements whose top is below the subreport's bottom are drawn after it, at the same
+distance under its end (never higher than the band put them), on the next page when they don't
+fit: a total under a list of payments stays under it. Elements beside the subreport keep their
+place. No golden snapshot had an element below a subreport, so none changed.
+

@@ -10,7 +10,7 @@
 use reportcraft_core::FieldType;
 use reportcraft_model::{Align, Band, Content, Element, ImageFit, Report, TextStyle};
 
-use crate::flow::{CONTENT_MM, Field};
+use crate::flow::{CONTENT_MM, Field, Level};
 
 /// Which wrapper the template calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ pub(crate) fn apply(report: &mut Report, layout: Layout, doc: &str, fields: &mut
     let company = |leaf: &str| format!("{doc}.company_id.{leaf}");
     let mut read = |name: String| {
         if !fields.iter().any(|f| f.name.eq_ignore_ascii_case(&name)) {
-            fields.push(Field { name: name.clone(), field_type: FieldType::Text, per_line: false });
+            fields.push(Field { name: name.clone(), field_type: FieldType::Text, level: Level::Doc });
         }
         name
     };

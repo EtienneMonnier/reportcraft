@@ -157,7 +157,11 @@ Anything marked **decision** waits for a maintainer.
   - [x] File ▸ Import Odoo QWeb template… in the designer, what isn't converted in the status line
     - [ ] Choose the template of a file that holds several (today the report template the import picks)
     - [ ] A window listing what wasn't converted, each finding leading to its element
-  - [ ] Nested loops (a document's lines grouped by section, taxes per line) as subreports or inner groups
+  - [x] Nested loops (serial numbers under each line, payments under the lines) as subreports over datasets of their own, linked by `o.id` and the line's id; elements below a subreport follow its end
+    - [ ] Several repeated loops in one band (today the first; the next is shown once)
+    - [ ] Loops three deep (a nested loop inside a nested loop)
+    - [ ] A line's records shown inline (`', '.join(line.tax_ids.mapped('name'))`, taxes per line) as a text field
+    - [ ] Lines grouped by section (`display_type == 'line_section'` rows with subtotals) as an inner group
   - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
     - [ ] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them
     - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)

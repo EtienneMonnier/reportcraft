@@ -44,6 +44,7 @@ reportcraft-cli <subcommand>
   import-qweb FILE.xml [--template ID] [--out REPORT.json] [--sample-data ROWS.csv]
                                             convert an Odoo QWeb report template (what isn't converted
                                             is listed); preview it with `render REPORT.json --data ROWS.csv`
+                                            (nested loops' rows go to ROWS.NAME.csv: add `--sub NAME=ROWS.NAME.csv`)
   mcp [--allow-paths] [--allow-actions]     MCP server on stdio; an agent uses saved connections only and
                                             can't confirm prints or connection changes unless allowed
   version
@@ -593,6 +594,14 @@ fn import_qweb(args: &[String]) -> Result<(), String> {
     if let Some(path) = rows {
         let preview = exec(&mut s, "data.preview", json!({"limit": 1000}))?;
         std::fs::write(&path, csv_of(&preview)).map_err(|e| format!("{path}: {e}"))?;
+        // Each nested loop's rows next to them, named after its dataset.
+        let stem = path.strip_suffix(".csv").unwrap_or(&path);
+        for name in result.get("datasets").and_then(Json::as_array).into_iter().flatten().filter_map(|d| d.get("name").and_then(Json::as_str)) {
+            let preview = exec(&mut s, "data.preview", json!({"limit": 1000, "dataset": name}))?;
+            let file = format!("{stem}.{name}.csv");
+            std::fs::write(&file, csv_of(&preview)).map_err(|e| format!("{file}: {e}"))?;
+            eprintln!("note: subreport rows in {file} (render with `--sub {name}={file}`)");
+        }
     }
     Ok(())
 }

@@ -2,10 +2,12 @@
 //! text and fields of a block (`p`, `div`, `h2`…), tables as rows of equal columns. The document
 //! loop (`t-foreach="docs"`) becomes a group with a page break, the loop over its lines the detail
 //! band; what comes before the lines goes in the group header, what follows in its footer.
+//! Another loop over a document's or a line's records (`o.payment_ids`, `move.move_line_ids`)
+//! becomes a subreport over a dataset of its own, linked to the document (and the line).
 
 use reportcraft_core::FieldType;
 use reportcraft_core::limits::MAX_ELEMENTS_PER_BAND;
-use reportcraft_model::{Align, Band, Content, Element, Format, ImageFit, Severity, TextStyle};
+use reportcraft_model::{Align, Band, Content, Element, Format, ImageFit, Report, Severity, SubreportLink, TextStyle};
 use roxmltree::Node;
 
 use crate::expr;
@@ -28,6 +30,8 @@ pub(crate) enum Target {
     Header,
     Detail,
     Footer,
+    /// The band of the nested loop being read.
+    Nested,
 }
 
 /// A finding while reading, located by line.
@@ -37,13 +41,42 @@ pub(crate) struct Finding {
     pub message: String,
 }
 
+/// The loop a column varies with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Level {
+    Doc,
+    Line,
+    /// A nested loop's item.
+    Item,
+}
+
 /// A column the template reads, with the type its name suggests (for sample data and formats).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Field {
     pub name: String,
     pub field_type: FieldType,
-    /// Belongs to the line loop (varies on each detail row) rather than to the document.
-    pub per_line: bool,
+    pub level: Level,
+}
+
+/// The rows a nested loop reads: one per item, the document's (and the line's) columns repeated,
+/// linked to the main data by `links` (the document's id, and the line's).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Dataset {
+    pub name: String,
+    pub fields: Vec<Field>,
+    pub links: Vec<String>,
+    pub under_line: bool,
+}
+
+/// A nested loop being read: its band, the band it goes into, and its data.
+struct Nested {
+    node: roxmltree::NodeId,
+    /// The table whose rows it repeats, if it is a table row loop.
+    table: Option<roxmltree::NodeId>,
+    outer: Target,
+    band: Band,
+    dataset: Dataset,
+    vars: (String, Option<String>, String),
 }
 
 /// One piece of a line of text.
@@ -67,6 +100,8 @@ impl Piece {
 pub(crate) struct Scope {
     pub doc_var: Option<String>,
     pub line_var: Option<String>,
+    /// A nested loop's variable.
+    pub item_var: Option<String>,
     pub condition: Option<String>,
     pub style: Style,
 }
@@ -136,6 +171,9 @@ pub(crate) struct Builder<'a, 'i> {
     pub line_loop: bool,
     /// The page wrapper the template calls, with the document variable its company is read from.
     pub letterhead: Option<(Layout, String)>,
+    /// The nested loop being read, and those read.
+    nested: Option<Nested>,
+    pub datasets: Vec<Dataset>,
     /// The line of text being gathered, with the condition it shows under.
     pending: Vec<Piece>,
     pending_condition: Option<String>,
@@ -162,6 +200,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             doc_loop: None,
             line_loop: false,
             letterhead: None,
+            nested: None,
+            datasets: Vec::new(),
             pending: Vec::new(),
             pending_condition: None,
             cell: None,
@@ -193,6 +233,10 @@ impl<'a, 'i> Builder<'a, 'i> {
             Target::Header => &mut self.header,
             Target::Detail => &mut self.detail,
             Target::Footer => &mut self.footer,
+            Target::Nested => match self.nested.as_mut() {
+                Some(n) => &mut n.band,
+                None => &mut self.footer,
+            },
         }
     }
 
@@ -214,14 +258,111 @@ impl<'a, 'i> Builder<'a, 'i> {
         self.band().height_mm
     }
 
-    /// Records a column the template reads; the first use decides whether it is per line.
+    /// Records a column the template reads, in the nested loop's data while one is read; the
+    /// first use decides which loop it varies with.
     fn field(&mut self, name: &str, scope: &Scope) -> Option<Format> {
-        let per_line = scope.line_var.as_deref().is_some_and(|v| name.split('.').next() == Some(v));
-        let field_type = guess_type(name);
-        if !self.fields.iter().any(|f| f.name.eq_ignore_ascii_case(name)) {
-            self.fields.push(Field { name: name.to_owned(), field_type, per_line });
-        }
+        let root = name.split('.').next();
+        let level = if scope.item_var.as_deref().is_some() && scope.item_var.as_deref() == root {
+            Level::Item
+        } else if scope.line_var.as_deref().is_some() && scope.line_var.as_deref() == root {
+            Level::Line
+        } else {
+            Level::Doc
+        };
+        let fields = match (self.target, self.nested.as_mut()) {
+            (Target::Nested, Some(n)) => &mut n.dataset.fields,
+            // A condition on a nested loop's row, read before the loop opens: its rows carry it.
+            _ if level == Level::Item => return None,
+            _ => &mut self.fields,
+        };
+        add_field(fields, name, level);
         money(name).then_some(Format::Number { decimals: 2, grouping: true })
+    }
+
+    /// Starts reading a nested loop over `each` (a path from the document's or the line's
+    /// variable) into a band of its own; `false` when it can't be one (another nested loop is
+    /// being read, the band already holds one, it isn't a path of the document or line).
+    fn open_nested(&mut self, node: Node<'a, 'i>, var: &str, each: &str, scope: &Scope, table: Option<roxmltree::NodeId>) -> bool {
+        let Some(doc) = scope.doc_var.clone() else { return false };
+        let root = each.split('.').next().unwrap_or(each);
+        let line = scope.line_var.clone().filter(|l| l == root && self.target == Target::Detail);
+        if self.nested.is_some() || self.cell.is_some() || expr::path(each).is_none() || !each.contains('.') || (root != doc && line.is_none()) {
+            return false;
+        }
+        if self.band().elements.iter().any(|e| matches!(e.content, Content::Subreport { .. })) {
+            self.warn("one loop per band is repeated as a subreport");
+            return false;
+        }
+        self.flush(scope);
+        let mut links = vec![(format!("{doc}.id"), Level::Doc)];
+        if let Some(l) = &line {
+            links.push((format!("{l}.id"), Level::Line));
+        }
+        let mut fields = Vec::new();
+        for (name, level) in &links {
+            add_field(&mut self.fields, name, *level);
+            add_field(&mut fields, name, *level);
+        }
+        let mut name: String = each.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).take(56).collect();
+        let base = name.clone();
+        for n in 2.. {
+            if !self.datasets.iter().any(|d| d.name == name) {
+                break;
+            }
+            name = format!("{base}_{n}");
+        }
+        let dataset = Dataset { name, fields, links: links.into_iter().map(|(n, _)| n).collect(), under_line: line.is_some() };
+        let vars = (doc, line, var.to_owned());
+        self.nested = Some(Nested { node: node.id(), table, outer: self.target, band: Band::default(), dataset, vars });
+        self.target = Target::Nested;
+        true
+    }
+
+    /// Ends the nested loop being read: its band becomes a subreport at the bottom of the band it
+    /// was in, linked to the document (and the line).
+    fn close_nested(&mut self) {
+        if self.nested.is_none() {
+            return;
+        }
+        self.flush(&Scope::default());
+        let Some(mut n) = self.nested.take() else { return };
+        self.target = n.outer;
+        // Conditions may read the document's columns: the nested rows carry them.
+        let (doc, line, item) = &n.vars;
+        for condition in n.band.elements.iter().filter_map(|e| e.visible_if.as_deref()) {
+            for f in condition.split('[').skip(1).filter_map(|f| f.split(']').next()) {
+                let root = f.split('.').next().unwrap_or(f);
+                let level = if root == item {
+                    Level::Item
+                } else if line.as_deref() == Some(root) {
+                    Level::Line
+                } else if root == doc {
+                    Level::Doc
+                } else {
+                    continue;
+                };
+                add_field(&mut n.dataset.fields, f, level);
+            }
+        }
+        if n.band.elements.is_empty() {
+            return;
+        }
+        // A condition every element shares hides the row, which then takes no room.
+        let shared = n.band.elements.first().and_then(|e| e.visible_if.clone());
+        if shared.is_some() && n.band.elements.iter().all(|e| e.visible_if == shared) {
+            for e in &mut n.band.elements {
+                e.visible_if = None;
+            }
+            n.band.visible_if = shared;
+        }
+        let height = n.band.height_mm.max(1.0);
+        let mut child = Report::new(&n.dataset.name);
+        child.detail = n.band;
+        let links = n.dataset.links.iter().map(|l| SubreportLink { parent: l.clone(), child: l.clone() }).collect();
+        let content = Content::Subreport { report: Box::new(child), dataset: n.dataset.name.clone(), links, hide_when_empty: true };
+        let y = self.bottom();
+        self.push(element(0.0, y, CONTENT_MM, height, Style::default().text(), content, &Scope::default()));
+        self.datasets.push(n.dataset);
     }
 
     /// Walks a node and its children.
@@ -439,6 +580,14 @@ impl<'a, 'i> Builder<'a, 'i> {
                 self.flush(&scope);
             }
             self.target = Target::Footer;
+        } else if self.open_nested(node, &var, each, &scope, None) {
+            scope.item_var = Some(var);
+            if node.tag_name().name() == "tr" {
+                self.row(node, &scope, depth, &[]);
+            } else {
+                self.children(node, &scope, depth);
+            }
+            self.close_nested();
         } else {
             self.warn(format!("loop `{each}` isn't repeated: its content is shown once"));
             self.children(node, &scope, depth);
@@ -551,7 +700,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         }
         match (&scope.doc_var, &scope.line_var) {
             (None, None) => self.doc_loop.is_none(),
-            (doc, line) => doc.as_deref() == Some(root) || line.as_deref() == Some(root),
+            (doc, line) => doc.as_deref() == Some(root) || line.as_deref() == Some(root) || scope.item_var.as_deref() == Some(root),
         }
     }
 
@@ -623,30 +772,49 @@ impl<'a, 'i> Builder<'a, 'i> {
             wrappers.reverse();
             wrappers.push(tr);
             let mut skipped = false;
+            let mut loops = Vec::new();
             for w in &wrappers {
                 skipped |= !self.conditions(*w, &mut row_scope);
-                // Inside the detail loop, conditions read the line's variable.
-                if w.has_attribute("t-foreach") && (self.detail_loop == Some(w.id()) || (!self.line_loop && row_scope.doc_var.is_some())) {
-                    row_scope.line_var = Some(w.attribute("t-as").unwrap_or("item").to_owned());
+                // Inside the loops, conditions read their variables: the detail loop's is the
+                // line's, another's an item's.
+                if let Some(each) = w.attribute("t-foreach") {
+                    let var = w.attribute("t-as").unwrap_or("item").to_owned();
+                    let detail = self.detail_loop == Some(w.id()) || (!self.line_loop && row_scope.doc_var.is_some());
+                    if loops.is_empty() && detail {
+                        row_scope.line_var = Some(var);
+                    } else {
+                        row_scope.item_var = Some(var);
+                    }
+                    loops.push((*w, each));
+                }
+            }
+            // A nested loop of this table ends at the first row outside it.
+            if self.nested.as_ref().is_some_and(|n| n.table == Some(node.id()) && !loops.iter().any(|(w, _)| w.id() == n.node)) {
+                self.close_nested();
+                if loops.is_empty() && self.target == Target::Detail {
+                    self.target = Target::Footer;
                 }
             }
             if skipped {
                 continue;
             }
-            let looped = wrappers.iter().find_map(|w| w.attribute("t-foreach").map(|e| (*w, e)));
-            match looped {
-                Some((w, each)) => {
+            match loops.as_slice() {
+                [(w, each), inner @ ..] => {
                     let header = tr.ancestors().any(|a| a.tag_name().name() == "thead");
                     if header {
                         self.warn(format!("loop `{each}` in a table header isn't repeated"));
                         self.row(tr, &row_scope, depth, &widths);
                     } else {
                         let mut s = row_scope.clone();
-                        s.style = s.style.inside(w);
-                        self.table_loop(tr, w, each, s, depth, &widths);
+                        s.style = s.style.inside(*w);
+                        if let Some((deeper, each)) = inner.get(1) {
+                            self.line = node.document().text_pos_at(deeper.range().start).row;
+                            self.warn(format!("loop `{}` inside a nested loop isn't repeated", collapse(each)));
+                        }
+                        self.table_loop(tr, (*w, each), inner.first().copied(), s, depth, (&widths, node.id()));
                     }
                 }
-                None => {
+                [] => {
                     let header = tr.ancestors().any(|a| a.tag_name().name() == "thead");
                     self.row(tr, &row_scope, depth, &widths);
                     if header {
@@ -657,21 +825,33 @@ impl<'a, 'i> Builder<'a, 'i> {
                 }
             }
         }
+        if self.nested.as_ref().is_some_and(|n| n.table == Some(node.id())) {
+            self.close_nested();
+            if self.target == Target::Detail {
+                self.target = Target::Footer;
+            }
+        }
         let after = self.bottom() + 2.0;
         self.band().height_mm = after;
     }
 
     /// A table row repeated by a loop: the detail band when it is the first loop of a document's
     /// table (whatever it loops over: the report's data gives the lines), each of its rows a part
-    /// of the detail band.
-    fn table_loop(&mut self, tr: Node<'a, 'i>, w: Node<'a, 'i>, each: &str, mut scope: Scope, depth: usize, widths: &[f64]) {
-        let var = w.attribute("t-as").unwrap_or("item").to_owned();
+    /// of the detail band; another loop, or one inside the detail loop (`inner`), a nested loop.
+    fn table_loop(
+        &mut self,
+        tr: Node<'a, 'i>,
+        (w, each): (Node<'a, 'i>, &str),
+        inner: Option<(Node<'a, 'i>, &str)>,
+        scope: Scope,
+        depth: usize,
+        (widths, table): (&[f64], roxmltree::NodeId),
+    ) {
         let each = self.resolve(each.trim());
         let same = self.detail_loop == Some(w.id());
         let first = !self.line_loop && scope.doc_var.is_some();
         if !same && !first {
-            self.warn(format!("loop `{}` isn't repeated: its row is shown once", collapse(&each)));
-            self.row(tr, &scope, depth, widths);
+            self.nested_row(tr, (w, &each), scope, depth, (widths, table));
             return;
         }
         if first {
@@ -682,10 +862,42 @@ impl<'a, 'i> Builder<'a, 'i> {
             self.line_loop = true;
             self.detail_loop = Some(w.id());
         }
-        self.target = Target::Detail;
-        scope.line_var = Some(var);
+        if self.nested.as_ref().is_some_and(|n| n.table == Some(table) && inner.is_none_or(|(i, _)| i.id() != n.node)) {
+            self.close_nested();
+        }
+        if self.target != Target::Nested {
+            self.target = Target::Detail;
+        }
+        match inner {
+            Some((i, e)) => {
+                let e = self.resolve(e.trim());
+                self.nested_row(tr, (i, &e), scope, depth, (widths, table));
+            }
+            None => self.row(tr, &scope, depth, widths),
+        }
+        if self.target == Target::Detail {
+            self.target = Target::Footer;
+        }
+    }
+
+    /// A row of a nested loop: into that loop's band, opened at its first row (else shown once).
+    fn nested_row(
+        &mut self,
+        tr: Node<'a, 'i>,
+        (w, each): (Node<'a, 'i>, &str),
+        scope: Scope,
+        depth: usize,
+        (widths, table): (&[f64], roxmltree::NodeId),
+    ) {
+        if !self.nested.as_ref().is_some_and(|n| n.node == w.id()) {
+            let var = w.attribute("t-as").unwrap_or("item").to_owned();
+            if !self.open_nested(w, &var, each, &scope, Some(table)) {
+                self.warn(format!("loop `{}` isn't repeated: its row is shown once", collapse(each)));
+                self.row(tr, &scope, depth, widths);
+                return;
+            }
+        }
         self.row(tr, &scope, depth, widths);
-        self.target = Target::Footer;
     }
 
     /// One table row at the bottom of the current band: each cell's pieces in its column.
@@ -730,6 +942,13 @@ impl<'a, 'i> Builder<'a, 'i> {
         }
         let bottom = y + height + 1.0;
         self.band().height_mm = bottom;
+    }
+}
+
+/// Adds a column to a list unless it is there.
+fn add_field(fields: &mut Vec<Field>, name: &str, level: Level) {
+    if !fields.iter().any(|f| f.name.eq_ignore_ascii_case(name)) {
+        fields.push(Field { name: name.to_owned(), field_type: guess_type(name), level });
     }
 }
 

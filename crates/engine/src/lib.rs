@@ -440,6 +440,20 @@ mod tests {
         assert_eq!(s.report.title, "Untitled report");
         assert!(s.execute("file.importQweb", &json!({"xml": "<odoo/>"})).is_err());
         assert!(s.execute("file.importQweb", &json!({})).is_err());
+
+        // A nested loop: its sample rows are loaded as the subreport's dataset.
+        let nested = xml.replace("</tr></tbody>", "</tr><tr t-foreach=\"o.payment_ids\" t-as=\"pay\"><td t-field=\"pay.amount\"/></tr></tbody>");
+        let out = s.execute("file.importQweb", &json!({"xml": nested})).unwrap();
+        assert_eq!(
+            out["datasets"],
+            json!([{"name": "o_payment_ids", "columns": [{"name": "o.id", "field_type": "integer"}, {"name": "pay.amount", "field_type": "number"}], "rows": 4}])
+        );
+        let preview = s.execute("data.preview", &json!({"dataset": "o_payment_ids", "limit": 1})).unwrap();
+        assert_eq!(preview["rows"], json!([[1, 10.0]]));
+        assert!(s.execute("data.preview", &json!({"dataset": "nope"})).is_err());
+        let html = s.execute("report.render", &json!({"format": "html"})).unwrap();
+        let html = html.get("html").and_then(Json::as_str).unwrap();
+        assert_eq!(html.matches(">20.00<").count(), 2, "each order's second payment: {html}");
     }
 
     #[test]
