@@ -854,3 +854,32 @@ off by default, so a report that places its boxes by hand keeps exactly the layo
 - The QWeb importer marks the bands it makes as able to shrink and the text fields that end a line
   (a table cell, a value after its label) as able to grow, which is what the template's HTML does.
   Amounts don't grow: a number cut onto two lines would be misread.
+
+## The external layout's blocks, grid rows and the contact widget (R4.1)
+
+Odoo's invoice doesn't write its title or the customer's address itself: it sets them as blocks
+of HTML (`<t t-set="address">…</t>`, `layout_document_title`, `information_block`) and calls
+`web.external_layout`, whose own templates place them. The importer used to drop a `t-set` with a
+body, so a real invoice came out with no title and no address. Such a block is now kept with the
+condition it was set under, shown where its name is written out (`t-out="address"`), and placed
+by the external layout as Odoo's documented layout places it: the information block on the left
+half, the address in the right five twelfths, then the title as a heading. The layout's templates
+aren't in the file and aren't read; their arrangement is written here from what they print.
+
+- **Grid rows**: a `<div class="row">` whose children are columns (`col`, `col-6`, `col-md-5`,
+  `offset-1`, `ms-auto`) lays them side by side, each from the row's top, the row as tall as its
+  tallest column; plain `col`s share the twelfths left. A row holding a loop or a call is still
+  read top to bottom, as those become bands or subreports of their own. Columns are placed once:
+  a column hidden by its condition keeps its width, and a blank line in one column closes up only
+  if the columns beside it have nothing at that height (the band shrinks by strips across its
+  whole width).
+- **The contact widget** (`t-options='{"widget": "contact", "fields": [...]}'`) writes a partner
+  as lines: its name (after its company's, for a contact of a company), street, second street,
+  postcode and city, country, then the phone, e-mail, website or VAT number when listed. Each line
+  is a column of the query; a blank one takes no room. Countries that write addresses in another
+  order are on the roadmap.
+- **Words under different conditions on one line** (`<span t-if>Invoice</span><span
+  t-elif>Credit Note</span> <span t-field="o.name"/>`) used to become a line each. They are now
+  one formula, each word under its own condition (`TRIM(IF(…, "Invoice ", "") & … & [o.name])`),
+  which reads as the HTML does; the same holds in a table cell whose pieces mix the cell's
+  condition and their own.

@@ -84,6 +84,24 @@ struct Nested {
     vars: (String, Option<String>, String),
 }
 
+/// A column of a Bootstrap grid row being read: its lines go from `x`, `width` wide, the next one
+/// at `bottom`.
+#[derive(Clone, Copy)]
+struct Frame {
+    x: f64,
+    width: f64,
+    bottom: f64,
+}
+
+/// A block of HTML a `t-set` names (`<t t-set="address">…</t>`), shown where the name is written
+/// out, with the condition it was set under.
+#[derive(Clone)]
+struct Slot<'a, 'i> {
+    name: String,
+    node: Node<'a, 'i>,
+    condition: Option<String>,
+}
+
 /// One piece of a line of text.
 enum Piece {
     Text(String, TextStyle),
@@ -192,9 +210,13 @@ pub(crate) struct Builder<'a, 'i> {
     /// The nested loop being read, and those read.
     nested: Option<Nested>,
     pub datasets: Vec<Dataset>,
-    /// The line of text being gathered, with the condition it shows under.
-    pending: Vec<Piece>,
-    pending_condition: Option<String>,
+    /// The line of text being gathered, each piece with the condition it shows under.
+    pending: Vec<(Piece, Option<String>)>,
+    /// The grid column being read, if any.
+    frame: Option<Frame>,
+    /// Blocks named by `t-set`, latest last, and whether the page layout's blocks were placed.
+    slots: Vec<Slot<'a, 'i>>,
+    layout_blocks: bool,
     /// A table cell gathers its pieces here, with the condition each shows under, instead of
     /// laying out lines.
     cell: Option<Vec<(Piece, Option<String>)>>,
@@ -226,7 +248,9 @@ impl<'a, 'i> Builder<'a, 'i> {
             nested: None,
             datasets: Vec::new(),
             pending: Vec::new(),
-            pending_condition: None,
+            frame: None,
+            slots: Vec::new(),
+            layout_blocks: false,
             cell: None,
             line: 0,
             full_bands: false,
@@ -273,12 +297,36 @@ impl<'a, 'i> Builder<'a, 'i> {
             }
             return;
         }
-        band.height_mm = band.height_mm.max(element.y_mm + element.height_mm);
+        let end = element.y_mm + element.height_mm;
+        band.height_mm = band.height_mm.max(end);
         band.elements.push(element);
+        if let Some(f) = self.frame.as_mut() {
+            f.bottom = f.bottom.max(end);
+        }
     }
 
+    /// Where the next line goes: below the grid column being read, or the band.
     fn bottom(&mut self) -> f64 {
-        self.band().height_mm
+        match self.frame {
+            Some(f) => f.bottom,
+            None => self.band().height_mm,
+        }
+    }
+
+    /// Moves where the next line goes (room after a paragraph or a table).
+    fn set_bottom(&mut self, y: f64) {
+        if let Some(f) = self.frame.as_mut() {
+            f.bottom = y;
+            let band = self.band();
+            band.height_mm = band.height_mm.max(y);
+        } else {
+            self.band().height_mm = y;
+        }
+    }
+
+    /// The left edge and width lines are laid in: the grid column's, or the page's.
+    fn area(&self) -> (f64, f64) {
+        self.frame.map_or((0.0, CONTENT_MM), |f| (f.x, f.width))
     }
 
     /// Records a column the template reads, in the nested loop's data while one is read; the
@@ -415,7 +463,8 @@ impl<'a, 'i> Builder<'a, 'i> {
         let links = n.dataset.links.iter().map(|l| SubreportLink { parent: l.clone(), child: l.clone() }).collect();
         let content = Content::Subreport { report: Box::new(child), dataset: n.dataset.name.clone(), links, hide_when_empty: true };
         let y = self.bottom();
-        self.push(element(0.0, y, CONTENT_MM, height, Style::default().text(), content, &Scope::default()));
+        let (x, width) = self.area();
+        self.push(element(x, y, width, height, Style::default().text(), content, &Scope::default()));
         self.datasets.push(n.dataset);
     }
 
@@ -446,15 +495,33 @@ impl<'a, 'i> Builder<'a, 'i> {
             return;
         }
         if let Some(call) = node.attribute("t-call")
-            && self.call(call, &scope, depth)
+            && self.call(call, node, &scope, depth)
         {
             return;
         }
         if let Some(var) = node.attribute("t-set") {
-            self.set(var, node.attribute("t-value"), &scope);
+            let body = node.children().any(|c| c.is_element() || c.text().is_some_and(|t| !t.trim().is_empty()));
+            if node.attribute("t-value").is_none() && body {
+                self.forget(var);
+                self.slots.push(Slot { name: var.to_owned(), node, condition: scope.condition.clone() });
+            } else {
+                self.set(var, node.attribute("t-value"), &scope);
+            }
             return;
         }
         if let Some(value) = ["t-field", "t-out", "t-esc", "t-raw"].iter().find_map(|a| node.attribute(*a)) {
+            // A block a `t-set` named (`t-out="address"`, `t-out="information_block or None"`).
+            if let Some(slot) = self.slot(value.split(" or ").next().unwrap_or(value).trim()) {
+                let block = is_block(node.tag_name().name());
+                if block {
+                    self.flush(&scope);
+                }
+                self.show_slot(&slot, &scope, depth);
+                if block {
+                    self.flush(&scope);
+                }
+                return;
+            }
             let value = &expr::keys(value);
             // A heading or paragraph that is a field is a line of its own.
             let block = is_block(node.tag_name().name());
@@ -607,13 +674,68 @@ impl<'a, 'i> Builder<'a, 'i> {
         self.aliases.retain(|(n, _)| n != var);
         self.conditions.retain(|(n, _)| n != var);
         self.unread.retain(|(n, _)| n != var);
+        self.slots.retain(|s| s.name != var);
+    }
+
+    /// The block a `t-set` named `name`, if one did.
+    fn slot(&self, name: &str) -> Option<Slot<'a, 'i>> {
+        self.slots.iter().rev().find(|s| s.name == name).cloned()
+    }
+
+    /// Reads a named block where it is shown, under the condition it was set under too.
+    fn show_slot(&mut self, slot: &Slot<'a, 'i>, scope: &Scope, depth: usize) {
+        let mut inner = scope.clone();
+        if let Some(c) = &slot.condition {
+            inner.condition = Some(match inner.condition.take() {
+                Some(outer) if outer != *c => format!("AND({outer}, {c})"),
+                _ => c.clone(),
+            });
+        }
+        self.children(slot.node, &inner, depth + 1);
+    }
+
+    /// The blocks a page layout shows above the document (`web.external_layout`'s `address`,
+    /// `information_block` and `layout_document_title`, passed by name or set before the call),
+    /// placed as Odoo's layout places them: the information block on the left half, the address
+    /// in the right five twelfths, then the title as a heading.
+    fn layout_blocks(&mut self, call: Node<'a, 'i>, scope: &Scope, depth: usize) {
+        if self.layout_blocks {
+            return;
+        }
+        self.layout_blocks = true;
+        let find = |b: &Self, param: &str| call.attribute(param).and_then(|v| b.slot(v.trim())).or_else(|| b.slot(param));
+        let (info, address, title) = (find(self, "information_block"), find(self, "address"), find(self, "layout_document_title"));
+        self.flush(scope);
+        if info.is_some() || address.is_some() {
+            let (x, width) = self.area();
+            let top = self.bottom();
+            let outer = self.frame;
+            let mut bottom = top;
+            for (slot, left, w) in [(info, x, width * 6.0 / 12.0), (address, x + width * 7.0 / 12.0, width * 5.0 / 12.0)] {
+                let Some(slot) = slot else { continue };
+                self.frame = Some(Frame { x: left, width: w, bottom: top });
+                self.show_slot(&slot, scope, depth);
+                self.flush(scope);
+                bottom = bottom.max(self.frame.map_or(top, |f| f.bottom));
+            }
+            self.frame = outer;
+            self.set_bottom(bottom + 4.0);
+        }
+        if let Some(slot) = title {
+            let mut heading = scope.clone();
+            (heading.style.size_pt, heading.style.bold) = (16.0, true);
+            self.show_slot(&slot, &heading, depth);
+            self.flush(&heading);
+            let after = self.bottom() + 2.0;
+            self.set_bottom(after);
+        }
     }
 
     /// Follows a `t-call`: a template of the same file is read in place (`true`, the element's own
     /// content is then what Odoo passes as `0`, left out); Odoo's page wrappers are see-through,
     /// their content is read and the external and internal layouts become the page header and
     /// footer; any other is reported and its content read.
-    fn call(&mut self, call: &str, scope: &Scope, depth: usize) -> bool {
+    fn call(&mut self, call: &str, node: Node<'a, 'i>, scope: &Scope, depth: usize) -> bool {
         let short = call.rsplit('.').next().unwrap_or(call);
         let local = self.library.iter().find(|(n, _)| n == call || n.rsplit('.').next() == Some(short)).map(|(n, node)| (n.clone(), *node));
         if let Some((name, template)) = local {
@@ -636,6 +758,9 @@ impl<'a, 'i> Builder<'a, 'i> {
                     self.warn(format!("`t-call=\"{call}\"`: the template already calls another page layout; the first one is kept"));
                 } else {
                     self.letterhead.get_or_insert((layout, doc));
+                }
+                if layout == Layout::External {
+                    self.layout_blocks(node, scope, depth);
                 }
             }
             other => self.warn(format!("`t-call=\"{other}\"`: the called template isn't in this file; the content passed to it is read")),
@@ -701,22 +826,70 @@ impl<'a, 'i> Builder<'a, 'i> {
                 self.flush(scope);
                 let y = self.bottom() + 1.0;
                 let line = Content::Line { thickness_mm: 0.2, color: "#000000".into() };
-                self.push(element(0.0, y, CONTENT_MM, 0.0, Style::default().text(), line, scope));
-                self.band().height_mm = y + 1.0;
+                let (x, width) = self.area();
+                self.push(element(x, y, width, 0.0, Style::default().text(), line, scope));
+                self.set_bottom(y + 1.0);
             }
             "img" => self.image(node, scope),
             "script" | "style" | "head" | "title" => {}
+            "div" if self.grid(node, scope, depth) => {}
             tag if is_block(tag) => {
                 self.flush(scope);
                 self.children(node, scope, depth);
                 self.flush(scope);
                 if matches!(tag, "h1" | "h2" | "h3" | "h4" | "p") {
                     let after = self.bottom() + 1.5;
-                    self.band().height_mm = after;
+                    self.set_bottom(after);
                 }
             }
             _ => self.children(node, scope, depth),
         }
+    }
+
+    /// A Bootstrap grid row (`<div class="row">` whose children are `col…` divs) laid out side by
+    /// side: each column from the row's top, as wide as its class says (`col-6`, `offset-1`,
+    /// `ms-auto`; plain `col`s share what is left), the row as tall as its tallest column. `false`
+    /// when it isn't one, or holds a loop or a call (bands of their own), and is read top down.
+    fn grid(&mut self, node: Node<'a, 'i>, scope: &Scope, depth: usize) -> bool {
+        if self.cell.is_some() || !print_classes(node).split_whitespace().any(|c| c == "row") {
+            return false;
+        }
+        let cols: Vec<Node<'a, 'i>> = node.children().filter(|n| n.is_element()).collect();
+        let specs: Option<Vec<ColumnSpec>> = cols.iter().map(|c| column_spec(*c)).collect();
+        let Some(specs) = specs.filter(|s| !s.is_empty()) else { return false };
+        if node.descendants().any(|n| n.has_attribute("t-foreach") || n.has_attribute("t-call")) {
+            return false;
+        }
+        self.flush(scope);
+        let (x0, width) = self.area();
+        let unit = width / 12.0;
+        let fixed: f64 = specs.iter().map(|s| f64::from(s.span.unwrap_or(0) + s.offset)).sum();
+        let autos = specs.iter().filter(|s| s.span.is_none()).count();
+        let auto = if autos == 0 { 0.0 } else { ((12.0 - fixed).max(0.0) / autos as f64).max(1.0) };
+        let widths: Vec<f64> = specs.iter().map(|s| s.span.map_or(auto, f64::from) * unit).collect();
+        let top = self.bottom();
+        let outer = self.frame;
+        let (mut x, mut bottom) = (x0, top);
+        for (i, (col, spec)) in cols.iter().zip(&specs).enumerate() {
+            x += f64::from(spec.offset) * unit;
+            if spec.push_right {
+                let rest: f64 = widths.iter().skip(i).sum();
+                x = x.max(x0 + width - rest);
+            }
+            let w = widths.get(i).copied().unwrap_or(0.0).min((x0 + width - x).max(0.0));
+            if w < 1.0 {
+                self.warn("a grid column beyond the row's width is left out");
+                continue;
+            }
+            self.frame = Some(Frame { x, width: w, bottom: top });
+            self.walk(*col, scope, depth + 1);
+            self.flush(scope);
+            bottom = bottom.max(self.frame.map_or(top, |f| f.bottom));
+            x += w;
+        }
+        self.frame = outer;
+        self.set_bottom(bottom);
+        true
     }
 
     fn text(&mut self, raw: &str, scope: &Scope) {
@@ -737,7 +910,7 @@ impl<'a, 'i> Builder<'a, 'i> {
     fn space(&mut self) {
         let last = match self.cell.as_mut() {
             Some(cell) => cell.last_mut().map(|(p, _)| p),
-            None => self.pending.last_mut(),
+            None => self.pending.last_mut().map(|(p, _)| p),
         };
         if let Some(Piece::Text(t, _)) = last
             && !t.ends_with(' ')
@@ -747,18 +920,10 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 
     fn piece(&mut self, piece: Piece, scope: &Scope) {
-        if let Some(cell) = self.cell.as_mut() {
-            cell.push((piece, scope.condition.clone()));
-            return;
+        match self.cell.as_mut() {
+            Some(cell) => cell.push((piece, scope.condition.clone())),
+            None => self.pending.push((piece, scope.condition.clone())),
         }
-        if self.pending.is_empty() {
-            self.pending_condition.clone_from(&scope.condition);
-        } else if self.pending_condition != scope.condition {
-            // A condition that changes inside a line: the line keeps the first one.
-            self.flush(scope);
-            self.pending_condition.clone_from(&scope.condition);
-        }
-        self.pending.push(piece);
     }
 
     fn value(&mut self, value: &str, node: Node<'a, 'i>, scope: &Scope) {
@@ -771,6 +936,12 @@ impl<'a, 'i> Builder<'a, 'i> {
             },
         };
         let path = path.map(|p| self.resolve(&p)).filter(|p| self.known(p, scope));
+        if let Some(p) = &path
+            && node.attribute("t-options").is_some_and(|o| o.contains("contact"))
+        {
+            self.contact(p, node, scope);
+            return;
+        }
         match path {
             Some(p) => {
                 let monetary = helper == Some(true)
@@ -789,6 +960,53 @@ impl<'a, 'i> Builder<'a, 'i> {
                     self.piece(Piece::Raw(collapse(value), style), scope);
                 }
             },
+        }
+    }
+
+    /// A partner shown with Odoo's `contact` widget (`t-options='{"widget": "contact", "fields":
+    /// ["address", "name"]}'`): a line per part it lists, the name (with its company's before it,
+    /// for a contact of a company), then the street, the second street, the postcode and city and
+    /// the country, then the phone and email. A part with nothing to show takes no room (the band
+    /// shrinks).
+    fn contact(&mut self, partner: &str, node: Node<'a, 'i>, scope: &Scope) {
+        let options = node.attribute("t-options").unwrap_or("");
+        let listed = options.contains("fields");
+        let wants = |part: &str| {
+            if listed {
+                options.contains(&format!("'{part}'")) || options.contains(&format!("\"{part}\""))
+            } else {
+                matches!(part, "name" | "address")
+            }
+        };
+        let mut lines: Vec<String> = Vec::new();
+        let f = |leaf: &str| format!("[{partner}.{leaf}]");
+        if wants("name") {
+            let (name, company) = (f("name"), f("parent_id.name"));
+            lines.push(format!("IF(OR(ISBLANK({company}), {company} = {name}), {name}, {company} & \", \" & {name})"));
+        }
+        if wants("address") {
+            lines.push(f("street"));
+            lines.push(f("street2"));
+            lines.push(format!("TRIM({} & \" \" & {})", f("zip"), f("city")));
+            lines.push(f("country_id.name"));
+        }
+        for part in ["phone", "mobile", "email", "website", "vat"] {
+            if wants(part) {
+                lines.push(f(part));
+            }
+        }
+        self.flush(scope);
+        let style = scope.style.text();
+        for formula in lines {
+            for field in formula.split('[').skip(1).filter_map(|x| x.split(']').next()) {
+                self.field(field, scope);
+            }
+            let piece = match formula.strip_prefix('[').and_then(|r| r.strip_suffix(']')).filter(|r| !r.contains('[')) {
+                Some(field) => Piece::Field(field.to_owned(), style, None),
+                None => Piece::Formula(formula, style, None),
+            };
+            self.piece(piece, scope);
+            self.flush(scope);
         }
     }
 
@@ -870,29 +1088,41 @@ impl<'a, 'i> Builder<'a, 'i> {
         }
         self.field(field, scope);
         let height = style_mm(node, "height").or_else(|| style_mm(node, "max-height")).unwrap_or(20.0).clamp(2.0, 200.0);
-        let width = style_mm(node, "width").or_else(|| style_mm(node, "max-width")).unwrap_or(height * 2.0).clamp(2.0, CONTENT_MM);
+        let (x, room) = self.area();
+        let width = style_mm(node, "width").or_else(|| style_mm(node, "max-width")).unwrap_or(height * 2.0).clamp(2.0, room.max(2.0));
         self.flush(scope);
         let y = self.bottom();
         let picture = Content::Image { data: None, field: Some(field.to_owned()), fit: ImageFit::Contain };
-        self.push(element(0.0, y, width, height, scope.style.text(), picture, scope));
+        self.push(element(x, y, width, height, scope.style.text(), picture, scope));
     }
 
-    /// Lays the pending pieces out as one line at the bottom of the current band.
+    /// Lays the pending pieces out as one line at the bottom of the current band (or grid
+    /// column). Pieces shown under different conditions (`<span t-if>Invoice</span><span
+    /// t-elif>Credit Note</span> <span t-field="o.name"/>`) are one formula, each piece under its
+    /// own condition, so the line reads as Odoo prints it.
     pub(crate) fn flush(&mut self, scope: &Scope) {
         if self.cell.is_some() {
             self.space();
             return;
         }
-        let mut pieces = std::mem::take(&mut self.pending);
-        trim(&mut pieces);
-        if pieces.is_empty() {
+        let mut pending = std::mem::take(&mut self.pending);
+        trim(&mut pending);
+        let Some(first) = pending.first().map(|(_, c)| c.clone()) else { return };
+        let (x, width) = self.area();
+        let y = self.bottom();
+        if pending.iter().all(|(_, c)| *c == first) {
+            let pieces: Vec<Piece> = pending.into_iter().map(|(p, _)| p).collect();
+            let height = line_height(&pieces);
+            let scope = Scope { condition: first, ..scope.clone() };
+            for el in line(pieces, x, width, y, height, &scope) {
+                self.push(el);
+            }
             return;
         }
-        let condition = self.pending_condition.take();
-        let height = line_height(&pieces);
-        let y = self.bottom();
-        let scope = Scope { condition, ..scope.clone() };
-        for el in line(pieces, 0.0, CONTENT_MM, y, height, &scope) {
+        let outer = scope.condition.clone();
+        let piece = merged(pending, outer.as_ref());
+        let height = line_height(std::slice::from_ref(&piece));
+        for el in line(vec![piece], x, width, y, height, &Scope { condition: outer, ..scope.clone() }) {
             self.push(el);
         }
     }
@@ -908,7 +1138,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         if columns == 0 {
             return;
         }
-        let widths = vec![CONTENT_MM / columns as f64; columns];
+        let widths = vec![self.area().1 / columns as f64; columns];
         for tr in rows {
             self.line = node.document().text_pos_at(tr.range().start).row;
             if let Some(var) = tr.attribute("t-set") {
@@ -969,8 +1199,9 @@ impl<'a, 'i> Builder<'a, 'i> {
                     self.row(tr, &row_scope, depth, &widths);
                     if header {
                         let y = self.bottom();
+                        let (x, width) = self.area();
                         let rule = Content::Line { thickness_mm: 0.3, color: "#000000".into() };
-                        self.push(element(0.0, y, CONTENT_MM, 0.0, Style::default().text(), rule, &row_scope));
+                        self.push(element(x, y, width, 0.0, Style::default().text(), rule, &row_scope));
                     }
                 }
             }
@@ -982,7 +1213,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             }
         }
         let after = self.bottom() + 2.0;
-        self.band().height_mm = after;
+        self.set_bottom(after);
     }
 
     /// A table row repeated by a loop: the detail band when it is the first loop of a document's
@@ -1085,10 +1316,11 @@ impl<'a, 'i> Builder<'a, 'i> {
             }
         }
         let row_cells = cells(tr);
-        let widths = if widths.is_empty() { vec![CONTENT_MM / row_cells.len().max(1) as f64; row_cells.len().max(1)] } else { widths.to_vec() };
+        let (left, room) = self.area();
+        let widths = if widths.is_empty() { vec![room / row_cells.len().max(1) as f64; row_cells.len().max(1)] } else { widths.to_vec() };
         let branches: Vec<Option<Node<'a, 'i>>> = row_cells.iter().map(|c| branch_of(tr, *c)).collect();
         let y = self.bottom();
-        let (mut x, mut column) = (0.0, 0);
+        let (mut x, mut column) = (left, 0);
         let mut chain: (Option<roxmltree::NodeId>, f64, usize) = (None, 0.0, 0);
         let mut laid = Vec::new();
         for (i, cell) in row_cells.iter().copied().enumerate() {
@@ -1145,7 +1377,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             }
         }
         let bottom = y + height + 1.0;
-        self.band().height_mm = bottom;
+        self.set_bottom(bottom);
     }
 }
 
@@ -1161,15 +1393,68 @@ fn variants(pieces: Vec<(Piece, Option<String>)>, base: &Option<String>) -> Vec<
         }
     }
     for (run, _) in &mut runs {
-        trim(run);
+        let mut pairs: Vec<(Piece, ())> = std::mem::take(run).into_iter().map(|p| (p, ())).collect();
+        trim(&mut pairs);
+        *run = pairs.into_iter().map(|(p, ())| p).collect();
     }
     runs.retain(|(run, _)| !run.is_empty());
     if runs.len() > 1 && runs.iter().all(|(_, c)| c != base) {
         return runs;
     }
-    let mut all: Vec<Piece> = runs.into_iter().flat_map(|(run, _)| run).collect();
+    // Pieces of the cell's own and pieces under conditions: one formula.
+    let mut all: Vec<(Piece, Option<String>)> = runs.into_iter().flat_map(|(run, c)| run.into_iter().map(move |p| (p, c.clone()))).collect();
     trim(&mut all);
-    if all.is_empty() { Vec::new() } else { vec![(all, base.clone())] }
+    if all.is_empty() {
+        return Vec::new();
+    }
+    if all.iter().all(|(_, c)| c == base) {
+        return vec![(all.into_iter().map(|(p, _)| p).collect(), base.clone())];
+    }
+    vec![(vec![merged(all, base.as_ref())], base.clone())]
+}
+
+/// Pieces shown under different conditions as one formula: a piece under a condition other than
+/// `outer` (the line's own) shows only when it holds.
+fn merged(pieces: Vec<(Piece, Option<String>)>, outer: Option<&String>) -> Piece {
+    let parts: Vec<String> = pieces
+        .iter()
+        .map(|(p, c)| match c {
+            Some(c) if outer != Some(c) => format!("IF({c}, {}, \"\")", formula_part(p)),
+            _ => formula_part(p),
+        })
+        .collect();
+    let style = pieces.first().map(|(p, _)| *p.style()).unwrap_or_default();
+    Piece::Formula(format!("TRIM({})", parts.join(" & ")), style, None)
+}
+
+/// A grid column's width in twelfths (`None` for a plain `col`, which shares what is left), the
+/// twelfths left empty before it, and whether `ms-auto` pushes it to the right.
+struct ColumnSpec {
+    span: Option<u8>,
+    offset: u8,
+    push_right: bool,
+}
+
+/// A grid column's classes (`col`, `col-6`, `col-md-5`, `offset-1`, `ms-auto`); `None` when the
+/// element isn't a column.
+fn column_spec(node: Node<'_, '_>) -> Option<ColumnSpec> {
+    let classes = print_classes(node);
+    let twelfths = |c: &str| c.rsplit('-').next().and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=12).contains(n));
+    let mut spec: Option<ColumnSpec> = None;
+    let (mut offset, mut push_right) = (0, false);
+    for c in classes.split_whitespace() {
+        if c == "col" || c.starts_with("col-") {
+            let span = twelfths(c);
+            if spec.as_ref().is_none_or(|s| s.span.is_none()) {
+                spec = Some(ColumnSpec { span, offset: 0, push_right: false });
+            }
+        } else if c.starts_with("offset-") {
+            offset = twelfths(c).unwrap_or(0);
+        } else if c == "ms-auto" || c == "ml-auto" {
+            push_right = true;
+        }
+    }
+    spec.map(|s| ColumnSpec { offset, push_right, ..s })
 }
 
 fn is_cell(n: Node<'_, '_>) -> bool {
@@ -1328,14 +1613,14 @@ fn style_mm(node: Node<'_, '_>, property: &str) -> Option<f64> {
 }
 
 /// Removes the spaces at both ends of a line.
-fn trim(pieces: &mut Vec<Piece>) {
-    if let Some(Piece::Text(t, _)) = pieces.first_mut() {
+fn trim<C>(pieces: &mut Vec<(Piece, C)>) {
+    if let Some((Piece::Text(t, _), _)) = pieces.first_mut() {
         *t = t.trim_start().to_owned();
     }
-    if let Some(Piece::Text(t, _)) = pieces.last_mut() {
+    if let Some((Piece::Text(t, _), _)) = pieces.last_mut() {
         *t = t.trim_end().to_owned();
     }
-    pieces.retain(|p| !matches!(p, Piece::Text(t, _) if t.is_empty()));
+    pieces.retain(|(p, _)| !matches!(p, Piece::Text(t, _) if t.is_empty()));
 }
 
 fn line_height(pieces: &[Piece]) -> f64 {
