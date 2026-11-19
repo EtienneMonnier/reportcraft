@@ -202,6 +202,41 @@ const KNOWN_DOMAINS: [(&str, &str, &str, &str); 1] =
 /// address is its partner's.
 const KNOWN_RELATED: [(&str, &[&str], &str); 1] = [("res.company", &["street", "street2", "zip", "city", "state_id", "country_id"], "partner_id")];
 
+/// Values an invoice computes in Python (its tax totals, a dictionary) that the query reads from
+/// stored fields, by their path under the document: `{d}` is the document's alias.
+const KNOWN_VALUES: [(&str, &str, &str); 12] = [
+    ("account.move", "tax_totals", "TRUE"),
+    ("account.move", "tax_totals.total_amount_currency", "{d}.amount_total"),
+    ("account.move", "tax_totals.total_amount", "abs({d}.amount_total_signed)"),
+    ("account.move", "tax_totals.base_amount_currency", "{d}.amount_untaxed"),
+    ("account.move", "tax_totals.base_amount", "abs({d}.amount_untaxed_signed)"),
+    ("account.move", "tax_totals.tax_amount_currency", "{d}.amount_tax"),
+    ("account.move", "tax_totals.same_tax_base", "TRUE"),
+    (
+        "account.move",
+        "tax_totals.display_in_company_currency",
+        "{d}.currency_id IS DISTINCT FROM (SELECT rc.currency_id FROM res_company rc WHERE rc.id = {d}.company_id)",
+    ),
+    ("account.move", "tax_totals.subtotals.name", "'Untaxed Amount'"),
+    ("account.move", "tax_totals.subtotals.base_amount_currency", "{d}.amount_untaxed"),
+    ("account.move", "tax_totals.subtotals.base_amount", "abs({d}.amount_untaxed_signed)"),
+    (
+        "account.move",
+        "tax_totals.subtotals.tax_groups",
+        "EXISTS (SELECT 1 FROM account_move_line x WHERE x.move_id = {d}.id AND x.display_type = 'tax')",
+    ),
+];
+
+/// The tax groups of an invoice's totals: its tax lines summed by tax group.
+const TAX_GROUPS: &str = "tax_totals.subtotals.tax_groups";
+
+/// Whether a loop goes over a value that holds one item per document, read once with its
+/// variable naming that value: an invoice's tax subtotals (one, "Untaxed Amount", as Odoo prints
+/// an invoice with no subtotals of its own).
+pub(crate) fn single_loop(each: &str) -> bool {
+    each.ends_with(".tax_totals.subtotals")
+}
+
 /// A computed label (`display_name`, `tax_label`): Python builds it, mostly from the record's name.
 fn is_label(field: &str) -> bool {
     field == "display_name" || field == "label" || field.ends_with("_label")
@@ -470,6 +505,15 @@ impl<'s> Query<'s> {
         if *seg == "id" && rest.is_empty() {
             return Read::Sql(format!("{alias}.id"));
         }
+        let full = path.join(".");
+        if let Some((_, _, sql)) = KNOWN_VALUES.iter().find(|(m, p, _)| *m == model && *p == full) {
+            self.note(
+                Severity::Warning,
+                &format!("{model}.{full}"),
+                format!("`{model}.{full}` is computed in Python: the query reads `{}`", sql.replace("{d}.", "")),
+            );
+            return Read::Sql(sql.replace("{d}", alias));
+        }
         let field = match self.lookup(model, seg) {
             Lookup::Pending => return Read::Pending,
             Lookup::Unknown if *seg == "display_name" && rest.is_empty() => return self.value(alias, model, &["name"], depth + 1),
@@ -648,6 +692,47 @@ impl<'s> Query<'s> {
         )
     }
 
+    /// An invoice's tax groups (`tax_totals['subtotals'][…]['tax_groups']`, computed in Python):
+    /// its tax lines summed by tax group, amounts signed as the invoice shows them (a customer
+    /// invoice's taxes are credits), the base from the tax lines' own base (company currency).
+    fn tax_groups(&mut self, shape: &Shape, nested: &NestedShape, doc: &Root) -> String {
+        self.note(
+            Severity::Warning,
+            &nested.name,
+            "an invoice's tax groups are computed in Python: the query sums its tax lines by tax group (the base in the company's currency)",
+        );
+        let name = match self.value("g", "account.tax.group", &["name"], 0) {
+            Read::Sql(sql) => sql,
+            _ => "NULL".into(),
+        };
+        let sign = "(CASE WHEN d.move_type IN ('out_invoice', 'out_receipt', 'in_refund') THEN -1 ELSE 1 END)";
+        let leaf = |c: &str| c.strip_prefix(&nested.var).and_then(|r| r.strip_prefix('.')).map(str::to_owned);
+        let refs = [doc];
+        let mut select = Vec::new();
+        for c in &nested.columns {
+            let sql = match leaf(c).as_deref() {
+                Some("group_name" | "group_label" | "name") => name.clone(),
+                Some("tax_amount_currency") => format!("{sign} * i.amount_currency"),
+                Some("tax_amount") => format!("{sign} * i.balance"),
+                Some("base_amount_currency" | "display_base_amount_currency" | "base_amount" | "display_base_amount") => "abs(i.base)".into(),
+                Some(other) => {
+                    self.note(Severity::Warning, c, format!("a tax group has no `{other}` the query can read: the column reads NULL"));
+                    "NULL".into()
+                }
+                None => self.column(c, &refs, shape),
+            };
+            select.push(format!("{sql} AS {}", ident(c)));
+        }
+        let joins: String = self.joins.iter().map(|j| format!("\n{}", j.sql)).collect();
+        format!(
+            "SELECT\n  {}\nFROM {} d\nJOIN LATERAL (SELECT x.tax_group_id, sum(x.amount_currency) AS amount_currency, sum(x.balance) AS balance, \
+             sum(x.tax_base_amount) AS base FROM account_move_line x WHERE x.move_id = d.id AND x.display_type = 'tax' GROUP BY x.tax_group_id) i ON TRUE\n\
+             LEFT JOIN account_tax_group g ON g.id = i.tax_group_id{joins}\nWHERE d.id IN (:{IDS_PARAMETER})\nORDER BY d.id, g.sequence, g.id",
+            select.join(",\n  "),
+            table(&doc.model)
+        )
+    }
+
     /// A nested loop's query: one row per item, with the document's (and line's) columns.
     fn nested(&mut self, shape: &Shape, nested: &NestedShape, doc: &Root, lines: Option<&Lines>) -> String {
         let mut from = format!("FROM {} d", table(&doc.model));
@@ -663,6 +748,9 @@ impl<'s> Query<'s> {
             None => doc.clone(),
         };
         let path: Vec<&str> = nested.source.split('.').skip(1).collect();
+        if doc.model == "account.move" && !nested.under_line && path.join(".") == TAX_GROUPS {
+            return self.tax_groups(shape, nested, doc);
+        }
         let item = match self.records(&parent.alias, &parent.model, &path, "i", &nested.name) {
             Some((join, model)) => {
                 from.push_str(&format!("\nJOIN {}", join.join()));
@@ -837,6 +925,52 @@ mod tests {
         let p = propose(&shape, &options, &schema()).unwrap();
         assert!(p.datasets[0].1.contains("WHERE d.id IN (:ids) AND FALSE"), "{}", p.datasets[0].1);
         assert!(p.diagnostics.iter().any(|d| d.severity == Severity::Error && d.message.contains("not records to loop over")));
+    }
+
+    #[test]
+    fn an_invoices_tax_totals_read_its_stored_amounts_and_tax_lines() {
+        let options = QueryOptions { lang: "fr_FR".into(), ..QueryOptions::default() };
+        let mut schema = schema();
+        schema.insert("account.tax.group", "name", OdooField { translate: true, ..f("char") });
+        let mut shape = invoice();
+        shape.columns = [
+            "o.id",
+            "o.tax_totals",
+            "o.tax_totals.total_amount_currency",
+            "o.tax_totals.subtotals.name",
+            "o.tax_totals.subtotals.base_amount_currency",
+        ]
+        .map(String::from)
+        .to_vec();
+        shape.datasets = vec![NestedShape {
+            name: "o_tax_totals_subtotals_tax_groups".into(),
+            var: "tax_group".into(),
+            source: "o.tax_totals.subtotals.tax_groups".into(),
+            columns: ["o.id", "tax_group.group_name", "tax_group.tax_amount_currency", "tax_group.display_base_amount_currency", "tax_group.odd"]
+                .map(String::from)
+                .to_vec(),
+            under_line: false,
+        }];
+        let p = propose(&shape, &options, &schema).unwrap();
+        assert!(p.missing.is_empty(), "{:?}", p.missing);
+        let q = &p.query;
+        assert!(q.contains("TRUE AS \"o.tax_totals\""), "{q}");
+        assert!(q.contains("d.amount_total AS \"o.tax_totals.total_amount_currency\""), "{q}");
+        assert!(q.contains("'Untaxed Amount' AS \"o.tax_totals.subtotals.name\""), "{q}");
+        assert!(q.contains("d.amount_untaxed AS \"o.tax_totals.subtotals.base_amount_currency\""), "{q}");
+        assert!(p.diagnostics.iter().any(|d| d.message.contains("computed in Python: the query reads `amount_total`")), "{:?}", p.diagnostics);
+        let (name, sub) = &p.datasets[0];
+        assert_eq!(name, "o_tax_totals_subtotals_tax_groups");
+        assert!(sub.contains("x.move_id = d.id AND x.display_type = 'tax' GROUP BY x.tax_group_id) i ON TRUE"), "{sub}");
+        assert!(sub.contains("coalesce(g.\"name\" ->> 'fr_FR', g.\"name\" ->> 'en_US') AS \"tax_group.group_name\""), "{sub}");
+        // A customer invoice's taxes are credits: shown positive.
+        assert!(sub.contains("(CASE WHEN d.move_type IN ('out_invoice', 'out_receipt', 'in_refund') THEN -1 ELSE 1 END) * i.amount_currency AS \"tax_group.tax_amount_currency\""), "{sub}");
+        assert!(sub.contains("abs(i.base) AS \"tax_group.display_base_amount_currency\""), "{sub}");
+        assert!(sub.contains("NULL AS \"tax_group.odd\"") && sub.contains("d.id AS \"o.id\""), "{sub}");
+        assert!(sub.ends_with("WHERE d.id IN (:ids)\nORDER BY d.id, g.sequence, g.id"), "{sub}");
+        // The tax group's model is asked for when it isn't known yet.
+        let p = propose(&shape, &options, &self::schema()).unwrap();
+        assert_eq!(p.missing, ["account.tax.group"]);
     }
 
     #[test]

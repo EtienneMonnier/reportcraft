@@ -257,11 +257,17 @@
   attachment's file, section numbers as window counts, lines in their sequence (an invoice's
   without its tax lines), and one query per nested loop; the documents are those of a required
   `ids` parameter (`render REPORT.json --param ids=7`). The model comes from the file's report
-  action when it has one. Fields computed in Python read NULL, each with a warning.
+  action when it has one. Fields computed in Python read NULL, each with a warning, except an
+  invoice's tax totals (`tax_totals`): its untaxed and total amounts read its stored fields and
+  its tax groups are a dataset of its tax lines summed by tax group. A `t-call` inside a table
+  is followed (its attributes are names in the called template, as QWeb passes them), the loop
+  over an invoice's one subtotal is read once, a name nothing in the template sets reads false
+  (`print_with_payments`, with a warning), and a block floated right (`float-end`) takes the
+  right half.
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 265 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 267 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
