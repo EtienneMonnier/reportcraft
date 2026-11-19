@@ -236,7 +236,14 @@
   becomes a letterhead of each document's company (logo, name and address in the page header;
   phone, e-mail, website and page numbers in the footer), `web.internal_layout` a one-line page
   header (date, company, page numbers); each document numbers its own pages ("page 1 / 2" of
-  each invoice). A loop inside a document's or a line's (serial numbers
+  each invoice). The blocks a template sets for the external layout (`address`,
+  `information_block`, `layout_document_title`) are placed as Odoo places them: the information
+  block on the left half, the recipient's address on the right, the title as a heading below.
+  A partner shown with the `contact` widget is a line per part (name with its company's, street,
+  second street, postcode and city, country, and phone or e-mail when listed). Bootstrap grid
+  rows (`row` of `col`, `col-6`, `offset-1`, `ms-auto`) sit side by side. Words of a line shown
+  under different conditions (an invoice's title by type and state, then its number) are one
+  formula, each under its condition. A loop inside a document's or a line's (serial numbers
   under each line, payments under the lines) becomes a subreport over a dataset of its own (named
   after the loop, `o_payment_ids`), linked to the document and the line by `o.id`/`line.id`, with
   sample rows (two items each; `import-qweb --sample-data ROWS.csv` writes them to
@@ -254,7 +261,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 264 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 265 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

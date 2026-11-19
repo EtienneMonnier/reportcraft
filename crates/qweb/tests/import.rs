@@ -556,3 +556,81 @@ fn the_import_describes_its_data_for_a_query() {
     assert_eq!((lots.var.as_str(), lots.source.as_str(), lots.under_line), ("lot", "line.lot_ids", true));
     assert!(lots.columns.iter().any(|c| c == "lot.name"), "{:?}", lots.columns);
 }
+
+/// An original order template in the shape Odoo's layout expects: the title and the addresses set
+/// as blocks for `web.external_layout`, a grid row of dates, a title line chosen by state.
+const ORDER: &str = r#"<t t-name="shop.report_order">
+  <t t-foreach="docs" t-as="o">
+    <t t-set="layout_document_title">
+      <span t-if="o.state == 'draft'">Quotation</span>
+      <span t-elif="o.state == 'sale'">Order</span>
+      <span t-field="o.name"/>
+    </t>
+    <t t-set="information_block" t-if="o.partner_shipping_id != o.partner_id">
+      <strong>Ship to</strong>
+      <div t-field="o.partner_shipping_id" t-options='{"widget": "contact", "fields": ["address", "name"]}'/>
+    </t>
+    <t t-set="address">
+      <address t-field="o.partner_id" t-options='{"widget": "contact", "fields": ["address", "name", "phone"]}'/>
+    </t>
+    <t t-call="web.external_layout" address="address">
+      <div class="row mb-4">
+        <div class="col" t-if="o.date_order"><strong>Date</strong><div t-field="o.date_order"/></div>
+        <div class="col-3 offset-1"><strong>Reference</strong><div t-field="o.client_order_ref"/></div>
+        <div class="col-4 ms-auto"><strong>Salesperson</strong><div t-field="o.user_id.name"/></div>
+      </div>
+      <p>Thank you.</p>
+    </t>
+  </t>
+</t>"#;
+
+#[test]
+fn the_page_layout_shows_the_title_and_addresses_and_grid_rows_sit_side_by_side() {
+    let out = import(ORDER, None).unwrap();
+    let header = &out.report.groups[0].header;
+    let at = |text: &str| {
+        header
+            .elements
+            .iter()
+            .find(|e| texts(std::slice::from_ref(e))[0] == text)
+            .unwrap_or_else(|| panic!("{text} in {:?}", texts(&header.elements)))
+    };
+    // The information block on the left half, under its condition; the address on the right.
+    let ship = at("Ship to");
+    assert!(ship.x_mm < 1.0 && ship.width_mm <= 90.0 + 1e-9);
+    assert_eq!(ship.visible_if.as_deref(), Some("[o.partner_shipping_id] <> [o.partner_id]"));
+    let street = at("[o.partner_id.street]");
+    assert!((street.x_mm - 105.0).abs() < 0.11 && (street.width_mm - 75.0).abs() < 0.11, "{street:?}");
+    // The contact widget: the name with its company's, then a line per part of the address.
+    let name = at(
+        "=IF(OR(ISBLANK([o.partner_id.parent_id.name]), [o.partner_id.parent_id.name] = [o.partner_id.name]), [o.partner_id.name], [o.partner_id.parent_id.name] & \", \" & [o.partner_id.name])",
+    );
+    assert!(name.y_mm < street.y_mm && name.y_mm == ship.y_mm);
+    for part in [
+        "[o.partner_id.street2]",
+        "=TRIM([o.partner_id.zip] & \" \" & [o.partner_id.city])",
+        "[o.partner_id.country_id.name]",
+        "[o.partner_id.phone]",
+    ] {
+        assert!(at(part).y_mm > street.y_mm, "{part}");
+    }
+    assert!(header.elements.iter().all(|e| !texts(std::slice::from_ref(e))[0].contains("email")));
+    // The title below both, a heading whose words show under their own conditions.
+    let title = at(
+        "=TRIM(IF([o.state] = \"draft\", \"Quotation \", \"\") & IF(AND(NOT([o.state] = \"draft\"), [o.state] = \"sale\"), \"Order \", \"\") & [o.name])",
+    );
+    assert!(title.style.bold && title.style.size_pt == 16.0 && title.visible_if.is_none());
+    assert!(title.y_mm > at("[o.partner_shipping_id.country_id.name]").y_mm);
+    // The grid row: columns side by side from the same top, as wide as their classes say.
+    let (date, reference, seller) = (at("Date"), at("Reference"), at("Salesperson"));
+    assert!(date.y_mm > title.y_mm && date.y_mm == reference.y_mm && date.y_mm == seller.y_mm);
+    assert!(date.x_mm < 1.0 && (date.width_mm - 60.0).abs() < 0.11, "a plain col shares the rest: {date:?}");
+    assert!((reference.x_mm - 75.0).abs() < 0.11 && (reference.width_mm - 45.0).abs() < 0.11, "{reference:?}");
+    assert!((seller.x_mm - 120.0).abs() < 0.11 && (seller.x_mm + seller.width_mm - 180.0).abs() < 0.11, "{seller:?}");
+    assert_eq!(at("[o.date_order]").visible_if.as_deref(), Some("NOT(ISBLANK([o.date_order]))"));
+    let thanks = at("Thank you.");
+    assert!(thanks.y_mm > at("[o.user_id.name]").y_mm && thanks.x_mm < 1.0);
+    assert!(!out.diagnostics.iter().any(|d| d.message.contains("t-set")), "{:?}", out.diagnostics);
+    let problems: Vec<_> = out.report.check(Some(&out.sample.columns)).into_iter().filter(|d| d.severity == Severity::Error).collect();
+    assert!(problems.is_empty(), "{problems:?}");
+}
