@@ -190,6 +190,10 @@ Anything marked **decision** waits for a maintainer.
     - [ ] Company-dependent fields (jsonb by company, read with the document's company) and datetimes in the user's time zone (UTC today)
     - [ ] Models whose table isn't named after them (`_table`), read from the database rather than assumed
     - [ ] Fields computed in Python (`amount_total_words`, `payment_term_details`): read NULL today, with a warning; labels (`display_name`, `tax_label`) read the record's name
+      - [x] An invoice's tax totals (`tax_totals`, a dictionary): its stored amounts, and its tax lines summed by tax group; calls inside a table followed with their parameters (and a template made primary under another name); the one subtotal's loop read once; names nothing sets read as false; `.get('key')` and `'key' in dict`
+      - [ ] Sale and purchase orders' tax totals (today an invoice's only)
+      - [ ] Tax bases in the invoice's currency (today the tax lines' base, in the company's)
+      - [ ] Payments printed with an invoice (`invoice_payments_widget`) and the amount due
     - [ ] Line domains other than an invoice's (`invoice_line_ids`), and a lines loop reached through a many2one (`o.partner_id.child_ids`)
 - [ ] R4.2 Power BI text project format (PBIP/TMDL) import, from public documentation
 - [ ] R4.3 Crystal Reports `.rpt` read-only import — **decision**: only if a clean-room route exists

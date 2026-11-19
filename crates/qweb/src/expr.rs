@@ -16,10 +16,12 @@ pub(crate) fn path(expr: &str) -> Option<&str> {
 }
 
 /// A field whose name says it is a yes/no flag (`is_downpayment`, `collapse_prices`,
-/// `show_payment_term_details`): Python's truth of a flag is its value, not whether it is blank.
+/// `show_payment_term_details`, `display_in_company_currency`): Python's truth of a flag is its
+/// value, not whether it is blank.
 pub(crate) fn flag(path: &str) -> bool {
     let leaf = path.rsplit('.').next().unwrap_or(path).to_ascii_lowercase();
-    ["is_", "has_", "show_", "hide_", "collapse_", "display_on_"].iter().any(|p| leaf.starts_with(p))
+    ["is_", "has_", "show_", "hide_", "collapse_", "display_"].iter().any(|p| leaf.starts_with(p))
+        && !matches!(leaf.as_str(), "display_name" | "display_type")
 }
 
 /// `path` true, as Python reads it: a flag's value, any other field's being there.
@@ -32,11 +34,12 @@ fn falsy(p: &str) -> String {
     if flag(p) { format!("NOT([{p}])") } else { format!("ISBLANK([{p}])") }
 }
 
-/// Dictionary keys written as fields: `line['label']` reads as `line.label` (Odoo's grouped
-/// lines and tax totals are dictionaries).
+/// Dictionary keys written as fields: `line['label']` and `totals.get('label')` read as
+/// `line.label` (Odoo's grouped lines and tax totals are dictionaries).
 pub(crate) fn keys(e: &str) -> String {
+    let e = &gets(e);
     let mut out = String::with_capacity(e.len());
-    let mut rest = e;
+    let mut rest = e.as_str();
     while let Some(open) = rest.find('[') {
         let after = &rest[open + 1..];
         // A key follows a name (`line['label']`), never a space (`in ['a']` is a list).
@@ -55,6 +58,32 @@ pub(crate) fn keys(e: &str) -> String {
             }
             _ => {
                 out.push_str(&rest[..=open]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `.get('key')` (one quoted name, no default) as `['key']`.
+fn gets(e: &str) -> String {
+    let mut out = String::with_capacity(e.len());
+    let mut rest = e;
+    while let Some(at) = rest.find(".get(") {
+        let after = &rest[at + 5..];
+        let quote = after.chars().next().filter(|c| *c == '\'' || *c == '"');
+        let key = quote.and_then(|q| after[1..].find(q).map(|end| &after[1..=end]));
+        match (quote, key) {
+            (Some(q), Some(k))
+                if !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && after[k.len() + 2..].starts_with(')') =>
+            {
+                out.push_str(&rest[..at]);
+                out.push_str(&format!("[{q}{k}{q}]"));
+                rest = &after[k.len() + 3..];
+            }
+            _ => {
+                out.push_str(&rest[..at + 5]);
                 rest = after;
             }
         }
@@ -294,6 +323,13 @@ fn membership(e: &str) -> Option<String> {
             _ => return None,
         },
     };
+    // A key of a dictionary (`'cash_rounding' in tax_totals`): there when it has a value.
+    let key =
+        left.trim().strip_prefix('\'').and_then(|k| k.strip_suffix('\'')).or_else(|| left.trim().strip_prefix('"').and_then(|k| k.strip_suffix('"')));
+    if let (Some(k), Some(dict)) = (key, path(right)) {
+        let field = path(&format!("{dict}.{k}"))?.to_owned();
+        return Some(if negated { falsy(&field) } else { truthy(&field) });
+    }
     let p = path(left)?;
     let list = right.trim();
     let inner = list.strip_prefix('(').and_then(|x| x.strip_suffix(')')).or_else(|| list.strip_prefix('[').and_then(|x| x.strip_suffix(']')))?;
@@ -433,6 +469,17 @@ mod tests {
         assert_eq!(keys("o.ids[0]"), "o.ids[0]");
         assert_eq!(keys("x['"), "x['");
         assert_eq!(keys("o.s in ['a']"), "o.s in ['a']");
+        assert_eq!(
+            keys("o.tax_totals and o.tax_totals.get('display_in_company_currency')"),
+            "o.tax_totals and o.tax_totals.display_in_company_currency"
+        );
+        assert_eq!(keys("t.get('a', 0) + t.get(\"b\")"), "t.get('a', 0) + t.b");
+        assert_eq!(keys("t.get("), "t.get(");
+        assert_eq!(condition("'cash_rounding' in tax_totals").as_deref(), Some("NOT(ISBLANK([tax_totals.cash_rounding]))"));
+        assert_eq!(condition("'a b' not in t").as_deref(), None);
+        assert_eq!(condition("o.display_in_company_currency").as_deref(), Some("[o.display_in_company_currency]"));
+        assert_eq!(condition("o.partner_id.display_name").as_deref(), Some("NOT(ISBLANK([o.partner_id.display_name]))"));
+        assert_eq!(condition("not line.display_type").as_deref(), Some("ISBLANK([line.display_type])"));
     }
 
     #[test]

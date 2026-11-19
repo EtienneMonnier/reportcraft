@@ -883,3 +883,30 @@ aren't in the file and aren't read; their arrangement is written here from what 
   one formula, each word under its own condition (`TRIM(IF(…, "Invoice ", "") & … & [o.name])`),
   which reads as the HTML does; the same holds in a table cell whose pieces mix the cell's
   condition and their own.
+
+## An invoice's tax totals, calls inside tables and names nothing sets (R4.1)
+
+Odoo prints an invoice's totals from `tax_totals`, a dictionary computed in Python (subtotals,
+tax groups, the total), through a template called inside the totals table. The first trial on
+real invoices printed them only by accident: the call inside the table wasn't followed, and the
+block in the company's currency, whose condition wasn't converted, showed in its place.
+
+- **Calls inside a table** are followed like rows of the table, and a call's attributes
+  (`tax_totals="o.tax_totals"`) are names in the called template, as QWeb passes them. A
+  template that only makes another one primary under a new name (`inherit_id`, no content) is
+  that one.
+- **The values** are read from what the database stores, written in a table of the converter
+  (`KNOWN_VALUES`), as the lines' domain and the company's address already are: the total and
+  untaxed amounts are the move's own fields, the subtotal is the untaxed amount ("Untaxed
+  Amount", as Odoo prints an invoice with no subtotals of its own), and the tax groups are a
+  dataset of the move's tax lines summed by tax group, signed as the invoice shows them. The
+  bases come from the tax lines' `tax_base_amount`, in the company's currency; for an invoice in
+  another currency that is on the roadmap. The loop over the one subtotal is read once, so the
+  tax groups inside it are a nested loop of the document like any other.
+- **A name nothing sets** (`print_with_payments`, `proforma`, when the template printed isn't the
+  one that sets them) is `None` in Odoo, so a condition on it is false. It is read that way, with
+  a warning naming it, unless it is one of the values Odoo gives every report (`docs`, `company`,
+  `report_type`…). A loop over something that isn't a path of the document (a Python list) no
+  longer makes its variable a record whose keys are columns.
+- `.get('key')` reads as a key, `'key' in dict` as the key having a value, and names starting with
+  `display_` (but `display_name` and `display_type`) are flags, read by their value.

@@ -634,3 +634,80 @@ fn the_page_layout_shows_the_title_and_addresses_and_grid_rows_sit_side_by_side(
     let problems: Vec<_> = out.report.check(Some(&out.sample.columns)).into_iter().filter(|d| d.severity == Severity::Error).collect();
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+/// An original invoice template in the shape of Odoo's: the totals called from a template of the
+/// same file inside the totals table (through a primary copy of it), a loop over the one subtotal
+/// and its tax groups, payments under a flag the printed template doesn't set, the totals floated
+/// right.
+const TOTALS: &str = r#"<odoo>
+<template id="report_bill">
+  <t t-call="web.html_container"><t t-foreach="docs" t-as="o">
+    <h2><span t-if="not proforma">Bill</span><span t-else="">Pro forma</span></h2>
+    <table class="table"><tbody>
+      <tr t-foreach="o.line_ids" t-as="line"><td t-field="line.name"/><td class="text-end" t-field="line.price_subtotal"/></tr>
+    </tbody></table>
+    <div class="float-end">
+      <table class="table">
+        <t t-if="o.tax_totals" t-call="shop.tax_totals" tax_totals="o.tax_totals"/>
+        <t t-if="print_with_payments">
+          <t t-set="payments_vals" t-value="o.sudo().invoice_payments_widget['content']"/>
+          <t t-foreach="payments_vals" t-as="payment_vals">
+            <tr t-if="payment_vals['is_exchange'] == 0"><td>Paid</td><td t-out="payment_vals['amount']"/></tr>
+          </t>
+        </t>
+      </table>
+    </div>
+    <p t-if="o.tax_totals.get('display_in_company_currency')">In the company's currency</p>
+  </t></t>
+</template>
+<template id="tax_totals_template">
+  <t t-foreach="tax_totals['subtotals']" t-as="subtotal">
+    <tr><td t-out="subtotal['name']"/><td class="text-end" t-out="subtotal['base_amount_currency']"/></tr>
+    <t t-foreach="subtotal['tax_groups']" t-as="tax_group">
+      <tr>
+        <t t-if="tax_group['same']"><td t-out="tax_group['group_name']"/><td class="text-end" t-out="tax_group['tax_amount_currency']"/></t>
+        <t t-else=""><td>on base</td><td class="text-end" t-out="tax_group['tax_amount_currency']"/></t>
+      </tr>
+    </t>
+  </t>
+  <tr t-if="'cash_rounding' in tax_totals"><td>Rounding</td><td t-out="tax_totals['cash_rounding']"/></tr>
+  <tr><td>Total</td><td class="text-end" t-out="tax_totals['total_amount_currency']"/></tr>
+</template>
+<template id="tax_totals" inherit_id="shop.tax_totals_template" primary="True"></template>
+</odoo>"#;
+
+#[test]
+fn called_totals_single_subtotals_and_unset_flags_read_as_odoo_prints_them() {
+    let out = import(TOTALS, Some("report_bill")).unwrap();
+    let r = &out.report;
+    let footer = &r.groups[0].footer;
+    let shown: Vec<(String, f64, Option<String>)> =
+        texts(&footer.elements).into_iter().zip(&footer.elements).map(|(t, e)| (t, e.x_mm, e.visible_if.clone())).collect();
+    let find = |t: &str| shown.iter().find(|(s, ..)| s == t).unwrap_or_else(|| panic!("{t} in {shown:?}"));
+    // The called template's rows, the call's names read through: the one subtotal is the
+    // document's, under the call's condition; the totals are in the right half, two columns.
+    let (_, x, cond) = find("[o.tax_totals.subtotals.name]");
+    assert!((x - 90.5).abs() < 0.11, "{x}");
+    assert_eq!(cond.as_deref(), Some("NOT(ISBLANK([o.tax_totals]))"));
+    assert!((find("[o.tax_totals.subtotals.base_amount_currency]").1 - 135.5).abs() < 0.11);
+    assert!((find("[o.tax_totals.total_amount_currency]").1 - 135.5).abs() < 0.11);
+    assert_eq!(find("Rounding").2.as_deref(), Some("AND(NOT(ISBLANK([o.tax_totals])), NOT(ISBLANK([o.tax_totals.cash_rounding])))"));
+    assert_eq!(find("In the company's currency").2.as_deref(), Some("[o.tax_totals.display_in_company_currency]"));
+    // The tax groups: a nested loop over the document, its subreport in the right half.
+    let sub = footer.elements.iter().find(|e| matches!(e.content, Content::Subreport { .. })).unwrap();
+    assert!((sub.x_mm - 90.0).abs() < 0.11 && (sub.width_mm - 90.0).abs() < 0.11, "{sub:?}");
+    let Content::Subreport { report: groups, dataset, .. } = &sub.content else { panic!() };
+    assert_eq!(dataset, "o_tax_totals_subtotals_tax_groups");
+    let rows = texts(&groups.detail.elements);
+    assert!(rows.contains(&"[tax_group.group_name]".to_owned()) && rows.contains(&"on base".to_owned()), "{rows:?}");
+    assert!(groups.detail.elements.iter().all(|e| e.x_mm < 90.0 + 1e-9), "laid out in the subreport's own width");
+    // A flag nothing sets is false, said once; the payments under it never read their Python
+    // list's items as fields.
+    assert_eq!(find("Paid").2.as_deref(), Some("FALSE"));
+    let says = |text: &str| out.diagnostics.iter().filter(|d| d.message.contains(text)).count();
+    assert_eq!(says("`print_with_payments` isn't set by the template: read as false"), 1);
+    assert_eq!(says("`proforma` isn't set"), 1);
+    assert!(!out.sample.columns.iter().any(|c| c.name.starts_with("payment_vals")), "{:?}", out.sample.columns);
+    let header = texts(&r.groups[0].header.elements);
+    assert_eq!(header, ["=TRIM(IF(NOT(FALSE), \"Bill\", \"\") & IF(NOT(NOT(FALSE)), \"Pro forma\", \"\"))"]);
+}

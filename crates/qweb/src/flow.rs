@@ -15,6 +15,30 @@ use crate::letterhead::Layout;
 
 /// The width laid out on: A4 less two 15 mm margins.
 pub(crate) const CONTENT_MM: f64 = 180.0;
+/// Values Odoo gives every report's template (and the layouts' own), never unset there.
+const REPORT_VALUES: [&str; 21] = [
+    "docs",
+    "doc_ids",
+    "doc_model",
+    "data",
+    "user",
+    "res_company",
+    "company",
+    "time",
+    "context_timestamp",
+    "report_type",
+    "web_base_url",
+    "env",
+    "request",
+    "lang",
+    "datetime",
+    "relativedelta",
+    "json",
+    "is_html_empty",
+    "html2plaintext",
+    "to_text",
+    "float_round",
+];
 /// Deepest element nesting followed; deeper content is left out with a warning.
 const MAX_DEPTH: usize = 64;
 /// Millimetres per point.
@@ -32,6 +56,14 @@ pub(crate) enum Target {
     Footer,
     /// The band of the nested loop being read.
     Nested,
+}
+
+/// What a table is read as, in order: a row (or a `t-set` between rows) with the calls it is
+/// in, or entering and leaving a called template.
+enum TableItem<'a, 'i> {
+    Row(Node<'a, 'i>, Vec<Node<'a, 'i>>),
+    Enter(Node<'a, 'i>, String),
+    Leave(Node<'a, 'i>),
 }
 
 /// A finding while reading, located by line.
@@ -91,6 +123,8 @@ struct Frame {
     x: f64,
     width: f64,
     bottom: f64,
+    /// The band it is in; a nested loop's band read inside it is a subreport as wide as it.
+    target: Target,
 }
 
 /// A block of HTML a `t-set` names (`<t t-set="address">…</t>`), shown where the name is written
@@ -217,6 +251,9 @@ pub(crate) struct Builder<'a, 'i> {
     /// Blocks named by `t-set`, latest last, and whether the page layout's blocks were placed.
     slots: Vec<Slot<'a, 'i>>,
     layout_blocks: bool,
+    /// Names a condition read that nothing sets (read as false), and those already reported.
+    undefined: std::cell::RefCell<Vec<String>>,
+    undefined_said: Vec<String>,
     /// A table cell gathers its pieces here, with the condition each shows under, instead of
     /// laying out lines.
     cell: Option<Vec<(Piece, Option<String>)>>,
@@ -251,6 +288,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             frame: None,
             slots: Vec::new(),
             layout_blocks: false,
+            undefined: std::cell::RefCell::new(Vec::new()),
+            undefined_said: Vec::new(),
             cell: None,
             line: 0,
             full_bands: false,
@@ -300,7 +339,8 @@ impl<'a, 'i> Builder<'a, 'i> {
         let end = element.y_mm + element.height_mm;
         band.height_mm = band.height_mm.max(end);
         band.elements.push(element);
-        if let Some(f) = self.frame.as_mut() {
+        let target = self.target;
+        if let Some(f) = self.frame.as_mut().filter(|f| f.target == target) {
             f.bottom = f.bottom.max(end);
         }
     }
@@ -308,14 +348,15 @@ impl<'a, 'i> Builder<'a, 'i> {
     /// Where the next line goes: below the grid column being read, or the band.
     fn bottom(&mut self) -> f64 {
         match self.frame {
-            Some(f) => f.bottom,
-            None => self.band().height_mm,
+            Some(f) if f.target == self.target => f.bottom,
+            _ => self.band().height_mm,
         }
     }
 
     /// Moves where the next line goes (room after a paragraph or a table).
     fn set_bottom(&mut self, y: f64) {
-        if let Some(f) = self.frame.as_mut() {
+        let target = self.target;
+        if let Some(f) = self.frame.as_mut().filter(|f| f.target == target) {
             f.bottom = y;
             let band = self.band();
             band.height_mm = band.height_mm.max(y);
@@ -326,7 +367,28 @@ impl<'a, 'i> Builder<'a, 'i> {
 
     /// The left edge and width lines are laid in: the grid column's, or the page's.
     fn area(&self) -> (f64, f64) {
-        self.frame.map_or((0.0, CONTENT_MM), |f| (f.x, f.width))
+        match self.frame {
+            Some(f) if f.target == self.target => (f.x, f.width),
+            // A nested loop's band, read inside the column: its subreport is the column's width.
+            Some(f) => (0.0, f.width),
+            None => (0.0, CONTENT_MM),
+        }
+    }
+
+    /// Reads `node` (or, when it is being read already, its children) in a column from `x`,
+    /// `width` wide, starting at `top`; returns where the column ends.
+    fn in_frame(&mut self, (node, itself): (Node<'a, 'i>, bool), (x, width): (f64, f64), top: f64, scope: &Scope, depth: usize) -> f64 {
+        let outer = self.frame;
+        self.frame = Some(Frame { x, width, bottom: top, target: self.target });
+        if itself {
+            self.walk(node, scope, depth + 1);
+        } else {
+            self.children(node, scope, depth);
+        }
+        self.flush(scope);
+        let bottom = self.frame.map_or(top, |f| f.bottom);
+        self.frame = outer;
+        bottom
     }
 
     /// Records a column the template reads, in the nested loop's data while one is read; the
@@ -372,6 +434,14 @@ impl<'a, 'i> Builder<'a, 'i> {
                 f.example.get_or_insert_with(|| text.to_owned());
             }
         }
+    }
+
+    /// Whether a loop over `each` can be a nested loop: a path from the document's variable, or
+    /// the line's. Over anything else (Python, a `t-set` list) its variable isn't a
+    /// record, and conditions on it aren't fields.
+    fn nestable(each: &str, scope: &Scope) -> bool {
+        let root = each.split('.').next().unwrap_or(each);
+        expr::path(each).is_some() && each.contains('.') && (scope.doc_var.as_deref() == Some(root) || scope.line_var.as_deref() == Some(root))
     }
 
     /// Starts reading a nested loop over `each` (a path from the document's or the line's
@@ -553,11 +623,13 @@ impl<'a, 'i> Builder<'a, 'i> {
             match self.test(test, scope) {
                 Some(f) => f,
                 None => {
+                    self.undefined.borrow_mut().clear();
                     self.warn(format!("condition `{}` isn't converted: its content is always shown", collapse(test)));
                     return true;
                 }
             }
         };
+        self.say_undefined();
         for field in formula.split('[').skip(1).filter_map(|f| f.split(']').next()) {
             self.field(field, scope);
         }
@@ -595,9 +667,45 @@ impl<'a, 'i> Builder<'a, 'i> {
 
     /// A condition as a formula, its fields read through the `t-set` names.
     fn test(&self, test: &str, scope: &Scope) -> Option<String> {
-        let named = |name: &str| self.conditions.iter().rev().find(|(n, _)| n == name).map(|(_, f)| f.clone());
+        let named = |name: &str| {
+            self.conditions.iter().rev().find(|(n, _)| n == name).map(|(_, f)| f.clone()).or_else(|| {
+                self.is_undefined(name, scope).then(|| {
+                    self.undefined.borrow_mut().push(name.to_owned());
+                    "FALSE".to_owned()
+                })
+            })
+        };
         let formula = expr::condition_with(&expr::keys(&collapse(test)), &named)?;
         self.read_fields(&formula, scope)
+    }
+
+    /// A bare name nothing in the template sets (no `t-set`, loop or call passes it) and that
+    /// isn't one of the values Odoo gives every report: Odoo reads it as `None`, so a condition
+    /// on it is false (`print_with_payments`, `proforma` when the template printed doesn't set
+    /// them).
+    fn is_undefined(&self, name: &str, scope: &Scope) -> bool {
+        let identifier =
+            name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        identifier
+            && !matches!(name, "True" | "False" | "None")
+            && !REPORT_VALUES.contains(&name)
+            && ![&scope.doc_var, &scope.line_var, &scope.item_var].iter().any(|v| v.as_deref() == Some(name))
+            && !self.aliases.iter().any(|(n, _)| n == name)
+            && !self.conditions.iter().any(|(n, _)| n == name)
+            && !self.unread.iter().any(|(n, _)| n == name)
+            && !self.slots.iter().any(|s| s.name == name)
+            && self.doc_loop.as_deref() != Some(name)
+    }
+
+    /// Says once per name that a condition read it as false.
+    fn say_undefined(&mut self) {
+        let names: Vec<String> = self.undefined.borrow_mut().drain(..).collect();
+        for name in names {
+            if !self.undefined_said.contains(&name) {
+                self.warn(format!("`{name}` isn't set by the template: read as false, as Odoo reads a name nothing sets"));
+                self.undefined_said.push(name);
+            }
+        }
     }
 
     /// A formula with its fields read through the `t-set` names, when each is a field of the
@@ -713,7 +821,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             let mut bottom = top;
             for (slot, left, w) in [(info, x, width * 6.0 / 12.0), (address, x + width * 7.0 / 12.0, width * 5.0 / 12.0)] {
                 let Some(slot) = slot else { continue };
-                self.frame = Some(Frame { x: left, width: w, bottom: top });
+                self.frame = Some(Frame { x: left, width: w, bottom: top, target: self.target });
                 self.show_slot(&slot, scope, depth);
                 self.flush(scope);
                 bottom = bottom.max(self.frame.map_or(top, |f| f.bottom));
@@ -736,16 +844,14 @@ impl<'a, 'i> Builder<'a, 'i> {
     /// their content is read and the external and internal layouts become the page header and
     /// footer; any other is reported and its content read.
     fn call(&mut self, call: &str, node: Node<'a, 'i>, scope: &Scope, depth: usize) -> bool {
-        let short = call.rsplit('.').next().unwrap_or(call);
-        let local = self.library.iter().find(|(n, _)| n == call || n.rsplit('.').next() == Some(short)).map(|(n, node)| (n.clone(), *node));
-        if let Some((name, template)) = local {
+        if let Some((name, template)) = self.local_template(call) {
             if self.calls.contains(&name) || self.calls.len() >= 8 {
                 self.warn(format!("`t-call=\"{call}\"` calls itself: left out"));
                 return true;
             }
-            self.calls.push(name);
+            self.enter_call(node, name, scope);
             self.children(template, scope, depth);
-            self.calls.pop();
+            self.leave_call(node);
             return true;
         }
         match call {
@@ -768,9 +874,79 @@ impl<'a, 'i> Builder<'a, 'i> {
         false
     }
 
+    /// The template of this file a `t-call` names (by its full or short name); a template that
+    /// only makes another one primary under its own name (`inherit_id`, no content) is that one.
+    fn local_template(&self, call: &str) -> Option<(String, Node<'a, 'i>)> {
+        let find = |wanted: &str| {
+            let short = wanted.rsplit('.').next().unwrap_or(wanted);
+            self.library.iter().find(|(n, _)| n == wanted || n.rsplit('.').next() == Some(short)).map(|(n, node)| (n.clone(), *node))
+        };
+        let mut found = find(call)?;
+        for _ in 0..4 {
+            match found.1.attribute("inherit_id") {
+                Some(base) if !found.1.children().any(|c| c.is_element()) => found = find(base)?,
+                _ => break,
+            }
+        }
+        Some(found)
+    }
+
+    /// Starts reading a called template: the call's attributes are names in it
+    /// (`tax_totals="o.tax_totals"`), as QWeb passes them.
+    fn enter_call(&mut self, node: Node<'a, 'i>, name: String, scope: &Scope) {
+        for a in node.attributes().filter(|a| a.namespace().is_none() && !a.name().starts_with("t-")) {
+            self.set(a.name(), Some(a.value()), scope);
+        }
+        self.calls.push(name);
+    }
+
+    /// Ends reading a called template: the names its call passed are gone.
+    fn leave_call(&mut self, node: Node<'a, 'i>) {
+        self.calls.pop();
+        for a in node.attributes().filter(|a| a.namespace().is_none() && !a.name().starts_with("t-")) {
+            self.forget(a.name());
+        }
+    }
+
+    /// A table's rows and the `t-set`s between them, in order, with the rows of the templates its
+    /// `t-call`s between rows name (an invoice's tax totals), each row with the calls it is in.
+    fn table_items(&self, table: Node<'a, 'i>) -> Vec<TableItem<'a, 'i>> {
+        let mut out = Vec::new();
+        self.rows_of(table, table, &mut Vec::new(), &mut out);
+        out
+    }
+
+    fn rows_of(&self, root: Node<'a, 'i>, table: Node<'a, 'i>, chain: &mut Vec<Node<'a, 'i>>, out: &mut Vec<TableItem<'a, 'i>>) {
+        // Inside the table, its own rows; inside a called template, those of no table of its own.
+        let mine = |n: &Node<'a, 'i>, tags: &[&str]| {
+            let owner = n.ancestors().skip(1).find(|a| tags.contains(&a.tag_name().name()));
+            if root == table { owner == Some(table) } else { owner.is_none() }
+        };
+        for n in root.descendants().skip(1) {
+            if n.tag_name().name() == "tr" && mine(&n, &["table"]) || n.has_attribute("t-set") && mine(&n, &["table", "tr"]) {
+                out.push(TableItem::Row(n, chain.clone()));
+            } else if let Some(call) = n.attribute("t-call").filter(|_| mine(&n, &["table", "tr"]) && chain.len() < 8)
+                && let Some((name, template)) = self.local_template(call)
+                && !self.calls.contains(&name)
+            {
+                out.push(TableItem::Enter(n, name));
+                chain.push(n);
+                self.rows_of(template, table, chain, out);
+                chain.pop();
+                out.push(TableItem::Leave(n));
+            }
+        }
+    }
+
     fn foreach(&mut self, node: Node<'a, 'i>, each: &str, mut scope: Scope, depth: usize) {
         let var = node.attribute("t-as").unwrap_or("item").to_owned();
-        let each = &self.resolve(each.trim());
+        let each = &self.resolve(&expr::keys(each.trim()));
+        if crate::odoo::single_loop(each) {
+            self.forget(&var);
+            self.aliases.push((var, each.clone()));
+            self.html(node, &scope, depth);
+            return;
+        }
         let is_docs = self.doc_loop.is_none() && scope.doc_var.is_none() && each == "docs";
         let is_lines = !self.line_loop
             && scope.line_var.is_none()
@@ -832,7 +1008,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             }
             "img" => self.image(node, scope),
             "script" | "style" | "head" | "title" => {}
-            "div" if self.grid(node, scope, depth) => {}
+            "div" if self.grid(node, scope, depth) || self.float_right(node, scope, depth) => {}
             tag if is_block(tag) => {
                 self.flush(scope);
                 self.children(node, scope, depth);
@@ -881,13 +1057,25 @@ impl<'a, 'i> Builder<'a, 'i> {
                 self.warn("a grid column beyond the row's width is left out");
                 continue;
             }
-            self.frame = Some(Frame { x, width: w, bottom: top });
-            self.walk(*col, scope, depth + 1);
-            self.flush(scope);
-            bottom = bottom.max(self.frame.map_or(top, |f| f.bottom));
+            bottom = bottom.max(self.in_frame((*col, true), (x, w), top, scope, depth));
             x += w;
         }
         self.frame = outer;
+        self.set_bottom(bottom);
+        true
+    }
+
+    /// A block floated to the right (`float-end`, an invoice's totals): read in the right half.
+    /// Not when it holds the lines' loop (its rows are the detail band).
+    fn float_right(&mut self, node: Node<'a, 'i>, scope: &Scope, depth: usize) -> bool {
+        let floats = print_classes(node).split_whitespace().any(|c| c == "float-end" || c == "float-right");
+        if !floats || self.cell.is_some() || (!self.line_loop && node.descendants().any(|n| n.has_attribute("t-foreach"))) {
+            return false;
+        }
+        self.flush(scope);
+        let (x, width) = self.area();
+        let top = self.bottom();
+        let bottom = self.in_frame((node, false), (x + width / 2.0, width / 2.0), top, scope, depth);
         self.set_bottom(bottom);
         true
     }
@@ -1128,10 +1316,13 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 
     fn table(&mut self, node: Node<'a, 'i>, scope: &Scope, depth: usize) {
-        let rows = table_rows(node);
+        let items = self.table_items(node);
+        let rows: Vec<Node<'a, 'i>> = items.iter().filter_map(|i| if let TableItem::Row(r, _) = i { Some(*r) } else { None }).collect();
         // The header row decides the columns when there is one (a `colspan="99"` row spans them
         // all), else the widest row.
-        let width = |r: &Node<'a, 'i>| cells(*r).iter().map(|c| span(*c)).sum::<usize>();
+        // Cells of a `t-elif` / `t-else` branch stand in for the `t-if` branch's: not counted.
+        let alternative = |r: Node<'a, 'i>, c: Node<'a, 'i>| branch_of(r, c).is_some_and(|b| !b.has_attribute("t-if"));
+        let width = |r: &Node<'a, 'i>| cells(*r).iter().filter(|c| !alternative(*r, **c)).map(|c| span(*c)).sum::<usize>();
         let trs: Vec<Node<'a, 'i>> = rows.iter().copied().filter(|r| r.tag_name().name() == "tr").collect();
         let head = trs.iter().find(|r| r.ancestors().any(|a| a.tag_name().name() == "thead")).map(width);
         let columns = head.filter(|n| *n > 0).or_else(|| trs.iter().map(width).max()).unwrap_or(0);
@@ -1139,7 +1330,18 @@ impl<'a, 'i> Builder<'a, 'i> {
             return;
         }
         let widths = vec![self.area().1 / columns as f64; columns];
-        for tr in rows {
+        for item in items {
+            let (tr, calls) = match item {
+                TableItem::Row(tr, calls) => (tr, calls),
+                TableItem::Enter(call, name) => {
+                    self.enter_call(call, name, scope);
+                    continue;
+                }
+                TableItem::Leave(call) => {
+                    self.leave_call(call);
+                    continue;
+                }
+            };
             self.line = node.document().text_pos_at(tr.range().start).row;
             if let Some(var) = tr.attribute("t-set") {
                 let set_scope = self.loop_scope(tr, node, scope);
@@ -1150,6 +1352,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             // A `t-foreach` or `t-if` on the row or on a `t` wrapping it.
             let mut wrappers: Vec<Node<'a, 'i>> = tr.ancestors().skip(1).take_while(|a| *a != node && a.tag_name().name() == "t").collect();
             wrappers.reverse();
+            // The calls it is in come first (their `t-if`: `<t t-if="o.tax_totals" t-call=…>`).
+            let mut wrappers: Vec<Node<'a, 'i>> = calls.into_iter().chain(wrappers).collect();
             wrappers.push(tr);
             let mut skipped = false;
             let mut loops = Vec::new();
@@ -1159,10 +1363,18 @@ impl<'a, 'i> Builder<'a, 'i> {
                 // line's, another's an item's.
                 if let Some(each) = w.attribute("t-foreach") {
                     let var = w.attribute("t-as").unwrap_or("item").to_owned();
+                    let resolved = self.resolve(&expr::keys(each.trim()));
+                    // A loop over a value that holds one item (an invoice's tax subtotals) is read
+                    // once, its variable naming that item.
+                    if crate::odoo::single_loop(&resolved) {
+                        self.forget(&var);
+                        self.aliases.push((var, resolved));
+                        continue;
+                    }
                     let detail = self.detail_loop == Some(w.id()) || (!self.line_loop && row_scope.doc_var.is_some());
                     if loops.is_empty() && detail {
                         row_scope.line_var = Some(var);
-                    } else {
+                    } else if Self::nestable(&resolved, &row_scope) {
                         row_scope.item_var = Some(var);
                     }
                     loops.push((*w, each));
@@ -1228,7 +1440,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         depth: usize,
         (widths, table): (&[f64], roxmltree::NodeId),
     ) {
-        let each = self.resolve(each.trim());
+        let each = self.resolve(&expr::keys(each.trim()));
         let same = self.detail_loop == Some(w.id());
         let first = !self.line_loop && scope.doc_var.is_some();
         if !same && !first {
@@ -1252,7 +1464,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         }
         match inner {
             Some((i, e)) => {
-                let e = self.resolve(e.trim());
+                let e = self.resolve(&expr::keys(e.trim()));
                 self.nested_row(tr, (i, &e), scope, depth, (widths, table));
             }
             None => self.row(tr, &scope, depth, widths),
@@ -1570,19 +1782,6 @@ fn is_block(tag: &str) -> bool {
             | "article"
             | "blockquote"
     )
-}
-
-/// The rows of a table and the `t-set`s between them (those inside a row are the row's), in
-/// order, with those of nested tables left to them.
-fn table_rows<'a, 'i>(table: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
-    let owner = |n: &Node<'a, 'i>, tags: &[&str]| n.ancestors().skip(1).find(|a| tags.contains(&a.tag_name().name()));
-    table
-        .descendants()
-        .filter(|n| {
-            (n.tag_name().name() == "tr" && owner(n, &["table"]) == Some(table))
-                || (n.has_attribute("t-set") && owner(n, &["table", "tr"]) == Some(table))
-        })
-        .collect()
 }
 
 /// A row's cells, with those inside `t` wrappers (`<t t-if>` around a `td`), less those a
