@@ -223,10 +223,26 @@ fn assemble(title: &str, b: &mut Builder) -> Report {
         }
     }
     sections::apply(&mut report, &mut b.fields);
+    shrink(&mut report);
     if let Some((layout, doc)) = b.letterhead.clone() {
         letterhead::apply(&mut report, layout, &doc, &mut b.fields);
     }
     report
+}
+
+/// The body's bands, and their subreports', give back the room of what Odoo wouldn't print (a
+/// hidden branch, an empty field), as HTML collapses an empty block.
+fn shrink(report: &mut Report) {
+    let groups = report.groups.iter_mut().flat_map(|g| [&mut g.header, &mut g.footer]);
+    let bands = [&mut report.report_header, &mut report.detail, &mut report.report_footer].into_iter().chain(groups);
+    for band in bands {
+        band.can_shrink = true;
+        for el in &mut band.elements {
+            if let reportcraft_model::Content::Subreport { report: child, .. } = &mut el.content {
+                shrink(child);
+            }
+        }
+    }
 }
 
 /// Made-up rows: two documents of three lines (or one row per document without a line loop),

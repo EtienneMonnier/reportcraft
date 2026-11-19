@@ -112,6 +112,11 @@ fn a_document_loop_becomes_a_group_and_its_lines_the_detail() {
     assert_eq!(footer, ["=\"Total: \" & TEXT([o.amount_total], \"#,##0.00\")", "Delivered", "Cancelled", "To deliver"]);
     assert_eq!(group.footer.elements[0].style.align, Align::Right);
     assert!(group.footer.elements[0].style.bold);
+    // As the HTML does, the bands give back the room of hidden branches, and text values that end
+    // a line wrap; amounts don't.
+    assert!(group.header.can_shrink && group.footer.can_shrink && r.detail.can_shrink);
+    assert!(name.can_grow && group.header.elements[5].can_grow && r.detail.elements[0].can_grow);
+    assert!(!r.detail.elements[2].can_grow && !group.header.elements[0].can_grow);
     // `t-elif` and `t-else` show when the branches before them don't.
     let conditions: Vec<_> = group.footer.elements[1..].iter().map(|e| e.visible_if.as_deref().unwrap_or("")).collect();
     assert_eq!(

@@ -112,6 +112,10 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Hide a band whose elements all come out blank (no formula needed)
   - [ ] `keep_together` and the space estimate of a group that count only the bands that will show
   - [x] Conditional colour and background on elements (`color_formula`, `background_formula`)
+  - [x] Text that can grow (wraps onto more lines and pushes down what lies below) and bands that can shrink (undrawn elements give their room back): `can_grow`, `can_shrink`
+    - [ ] Measure with the fonts the PDF embeds (today Liberation Sans' widths, with 4 % spare)
+    - [ ] Elements beside a grown text that grow with it (a table row's borders and backgrounds)
+    - [ ] A grown band taller than the page split across pages (today it moves whole to a new page and runs past its end)
   - [ ] Conditional bold and format
   - [ ] Page break after a band, and "new page after N rows"
 - [x] R2.11 Barcodes and QR codes (§4 FR-PRINT-003) (#32)
@@ -166,7 +170,7 @@ Anything marked **decision** waits for a maintainer.
       - [ ] The section total from `price_total` when the company's prices include taxes (today `price_subtotal`)
       - [ ] Older templates' subtotal row after a section's lines (`current_subtotal` summed in a `t-set`) as the group footer
       - [ ] An SQL snippet for `section_number` / `subsection_number` (a window count over the move's lines) in the import's notes
-    - [ ] Rows of the detail shown under exclusive conditions (a line's row and its collapsed form) take room only when shown (today the band is as tall as all of them)
+    - [x] Rows of the detail shown under exclusive conditions (a line's row and its collapsed form) take room only when shown: imported bands shrink (`can_shrink`), and text fields that end a line grow
   - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
     - [x] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them: groups that number their own pages (`restart_page_numbers`)
     - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)

@@ -19,6 +19,7 @@ fn el(x: f64, w: f64, content: Content, format: Option<Format>, align: Align) ->
         visible_if: None,
         background_formula: None,
         color_formula: None,
+        can_grow: false,
     }
 }
 
@@ -35,6 +36,7 @@ fn report() -> (Report, RowSet) {
         page_break_before_if: None,
         visible_if: None,
         keep_with_next: false,
+        can_shrink: false,
     };
     r.page_footer = Band {
         height_mm: 6.0,
@@ -42,6 +44,7 @@ fn report() -> (Report, RowSet) {
         page_break_before_if: None,
         visible_if: None,
         keep_with_next: false,
+        can_shrink: false,
     };
     let money = Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true };
     r.detail = Band {
@@ -58,6 +61,7 @@ fn report() -> (Report, RowSet) {
         page_break_before_if: None,
         visible_if: None,
         keep_with_next: false,
+        can_shrink: false,
     };
     let col = |n: &str, t| Column { name: n.into(), field_type: t };
     let rows = RowSet {
@@ -153,6 +157,7 @@ fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
         visible_if: None,
         color_formula: None,
         background_formula: None,
+        can_grow: false,
     };
     let mut r = Report::new("Shapes");
     r.report_header = Band {
@@ -175,6 +180,7 @@ fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
         page_break_before_if: None,
         visible_if: None,
         keep_with_next: false,
+        can_shrink: false,
     };
     let doc = layout(&r, &RowSet::default(), &Params::new()).unwrap();
     let out = to_docx(&doc, &Cancel::default()).unwrap();
@@ -213,6 +219,7 @@ fn docx_draws_chart_wedges_as_pictures() {
         page_break_before_if: None,
         visible_if: None,
         keep_with_next: false,
+        can_shrink: false,
     };
     if let Some(e) = r.report_footer.elements.first_mut() {
         e.height_mm = 45.0;

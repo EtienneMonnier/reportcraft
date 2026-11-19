@@ -128,6 +128,10 @@ pub(crate) fn element(ui: &mut Ui, el: &mut Element, fields: &[String]) -> bool 
     done |= content(ui, &mut el.content, fields);
     if !matches!(el.content, Content::Line { .. } | Content::Rect { .. } | Content::Image { .. }) {
         done |= style(ui, el);
+        done |= ui
+            .checkbox(&mut el.can_grow, tl!("can grow"))
+            .on_hover_text(tl!("text too wide wraps onto more lines; what lies below moves down"))
+            .changed();
         done |= format(ui, &mut el.format);
         done |= optional_formula(ui, "Colour formula", &mut el.color_formula);
         done |= optional_formula(ui, "Background formula", &mut el.background_formula);
@@ -424,6 +428,7 @@ pub(crate) fn band(ui: &mut Ui, b: &mut Band) -> bool {
     ui.horizontal(|ui| {
         done |= length(ui, "height", &mut b.height_mm);
         done |= ui.checkbox(&mut b.keep_with_next, tl!("keep with next")).changed();
+        done |= ui.checkbox(&mut b.can_shrink, tl!("can shrink")).on_hover_text(tl!("hidden or blank elements give their room back")).changed();
     });
     done |= optional_formula(ui, "Show only if", &mut b.visible_if);
     done |= optional_formula(ui, "New page if", &mut b.page_break_before_if);

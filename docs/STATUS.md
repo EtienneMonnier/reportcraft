@@ -1,6 +1,6 @@
 # Status
 
-> **Last updated:** 2026-11-17 · Stage: foundation (pre-alpha)
+> **Last updated:** 2026-11-19 · Stage: foundation (pre-alpha)
 
 ## Works
 - Report definitions in JSON, validated, with a format version.
@@ -170,6 +170,14 @@
   doesn't; an error never hides a band or element and never breaks a page. Hidden rows still count
   in their group's totals. A hidden page header takes no room, a hidden page footer keeps its room.
   `report.validate` checks the conditions as formulas.
+- Text that grows and bands that shrink, per row: a text element marked `can_grow` wraps onto
+  more lines (at its line breaks, then between words, a word wider than the box between letters)
+  and pushes down what lies below it in its band, which grows; a band marked `can_shrink` closes up
+  the strips only undrawn elements cover (hidden by `visible_if`, or text with nothing to show).
+  Widths are measured with Liberation Sans' metrics (Arial's), keeping 4 % spare for another font.
+  Each wrapped line is an item of its own, so every writer shows it. Both are checkboxes in the
+  designer's properties (`can_shrink` also in `report.setBand`). An imported QWeb template's bands
+  shrink and its text fields that end a line grow, as the HTML collapses empty blocks and wraps.
 - MCP agents work within what the user set up (§11): `reportcraft-cli mcp` reaches databases only
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
@@ -246,7 +254,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 261 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 264 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

@@ -81,7 +81,19 @@ pub(crate) fn apply(report: &mut Report, layout: Layout, doc: &str, fields: &mut
 }
 
 fn at(x_mm: f64, y_mm: f64, width_mm: f64, height_mm: f64, style: TextStyle, content: Content) -> Element {
-    Element { x_mm, y_mm, width_mm, height_mm, style, content, format: None, visible_if: None, color_formula: None, background_formula: None }
+    Element {
+        x_mm,
+        y_mm,
+        width_mm,
+        height_mm,
+        style,
+        content,
+        format: None,
+        visible_if: None,
+        color_formula: None,
+        background_formula: None,
+        can_grow: false,
+    }
 }
 
 /// A thin grey rule across the body.
