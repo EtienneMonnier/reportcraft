@@ -33,5 +33,9 @@ reportcraft-connections.workspace = true
 reportcraft-data.workspace = true
 rusqlite.workspace = true
 
+# Live tests against a scratch PostgreSQL server (skipped unless REPORTCRAFT_TEST_POSTGRES is set).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+postgres.workspace = true
+
 [lints]
 workspace = true

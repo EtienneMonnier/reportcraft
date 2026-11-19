@@ -779,3 +779,51 @@ shown as written, as before: `%` (modulo in Python, percent in a formula), `//`,
 `+` (a formula joins with `&`), method calls. A calculation reading an amount gets two decimals,
 like the amount fields themselves; a field whose root isn't a loop's variable (`company.rate`)
 still isn't a column.
+
+## The queries of an imported template come from the database's description of its fields (R4.1)
+
+An imported template reads columns named as it writes them (`o.partner_id.name`,
+`line.tax_ids.tax_label`); filling them from Odoo by hand meant writing a join per segment and
+knowing which fields are stored, related, translated or many2many. The import now writes those
+queries when it is given a saved PostgreSQL connection to the Odoo database
+(`file.importQweb` with `connection`, `import-qweb --connection`).
+
+What a field is comes from `ir_model_fields`, the database's own description of its models, never
+from Odoo's code (LGPL) or a list kept here: its type, relation, inverse field, relation table,
+whether it is stored, the field it relates to, whether it is translated. Reading it is the
+engine's work, read-only and model by model: the converter (L2, no I/O) proposes the queries over
+what it has been given and lists the models it still needs; the engine reads them and asks again,
+each round following the paths one join further (at most 12 rounds and 64 models). The converter
+stays testable with a description written by hand, and the description columns whose type changed
+between Odoo versions (`translate`, `company_dependent`) are read through `to_jsonb` so the same
+query works on Odoo 16 to 20.
+
+How the paths become SQL:
+- A many2one field is a `LEFT JOIN` on its model's table, once per field; a record shown alone
+  (`t-field="o.partner_id"`) shows its `name`. A related field that isn't stored follows its path
+  (`product_id.name` → `product_tmpl_id.name`). A translated field reads the language
+  (`coalesce(name ->> 'fr_FR', name ->> 'en_US')`). Pictures are attachments: the query reads the
+  attachment's file (`store_fname`), which the connection's picture folder resolves (R2.4).
+- Records joined into a text are a subquery with `string_agg` over the one2many or the relation
+  table of the many2many, in the records' sequence; the separator is the template's.
+- The lines are the document's one2many, in their sequence then id. When the template loops over
+  Python (`lines_to_report`), the field is given (`lines`) or, for the few documents whose line
+  field is documented (an invoice's `invoice_line_ids`, an order's `order_line`…), taken with a
+  warning. An invoice's line field shows only some of the move's lines, by a domain the database
+  doesn't describe; that one is known (its `display_type` values), so the tax and payment term
+  lines don't print. A company's address fields are its partner's, which the database doesn't say
+  either.
+- Section numbers (R4.1, sections) are window counts over the document's lines; a subsection's
+  restarts at each section, which a second level of the query computes.
+- A nested loop's dataset joins its records to the document (and the line) and reads its columns
+  the same way; a loop the query can't follow reads no rows, so its subreport stays hidden.
+- What can't be read — a field computed in Python and not stored, a company-dependent value, an
+  unknown field — reads `NULL` with a warning naming it, so the report still runs. A computed
+  label (`display_name`, `tax_label`) reads the record's `name` instead, with a warning.
+
+The documents are those of a required, multiple `ids` parameter (`WHERE d.id IN (:ids)`): Odoo
+prints the records chosen in a list, and printing every invoice of a database by default would be
+the wrong surprise. Table names follow Odoo's default (`res.partner` → `res_partner`); models that
+choose another table, company-dependent values and datetimes in the user's time zone are on the
+roadmap. The test reads a database shaped like Odoo's with made-up rows (a live test on a scratch
+server); no row of a real database was read or committed.

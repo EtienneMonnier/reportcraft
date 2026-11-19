@@ -68,6 +68,9 @@ pub(crate) struct Dataset {
     pub fields: Vec<Field>,
     pub links: Vec<String>,
     pub under_line: bool,
+    /// What the loop goes over (`o.payment_ids`, `line.lot_ids`) and its variable.
+    pub source: String,
+    pub var: String,
 }
 
 /// A nested loop being read: its band, the band it goes into, and its data.
@@ -169,8 +172,9 @@ pub(crate) struct Builder<'a, 'i> {
     conditions: Vec<(String, String)>,
     /// Names given by `t-set` to Python that isn't converted, with that Python, latest last.
     unread: Vec<(String, String)>,
-    /// Columns that hold records' values joined into one text (`line.tax_ids.tax_label`).
-    joined: Vec<String>,
+    /// Columns that hold records' values joined into one text (`line.tax_ids.tax_label`), with
+    /// the separator the template joins them with.
+    pub joined: Vec<(String, String)>,
     pub header: Band,
     pub detail: Band,
     pub footer: Band,
@@ -180,6 +184,9 @@ pub(crate) struct Builder<'a, 'i> {
     /// Found the document loop and the line loop.
     pub doc_loop: Option<String>,
     pub line_loop: bool,
+    /// The line loop's variable and what it loops over (`o.invoice_line_ids`, or a `t-set` name
+    /// for Python such as `lines_to_report`).
+    pub lines: Option<(String, String)>,
     /// The page wrapper the template calls, with the document variable its company is read from.
     pub letterhead: Option<(Layout, String)>,
     /// The nested loop being read, and those read.
@@ -214,6 +221,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             findings: Vec::new(),
             doc_loop: None,
             line_loop: false,
+            lines: None,
             letterhead: None,
             nested: None,
             datasets: Vec::new(),
@@ -291,7 +299,7 @@ impl<'a, 'i> Builder<'a, 'i> {
             _ => &mut self.fields,
         };
         add_field(fields, name, level);
-        if self.joined.iter().any(|j| j.eq_ignore_ascii_case(name)) {
+        if self.joined.iter().any(|(j, _)| j.eq_ignore_ascii_case(name)) {
             if let Some(f) = fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(name)) {
                 f.field_type = FieldType::Text;
             }
@@ -350,7 +358,14 @@ impl<'a, 'i> Builder<'a, 'i> {
             }
             name = format!("{base}_{n}");
         }
-        let dataset = Dataset { name, fields, links: links.into_iter().map(|(n, _)| n).collect(), under_line: line.is_some() };
+        let dataset = Dataset {
+            name,
+            fields,
+            links: links.into_iter().map(|(n, _)| n).collect(),
+            under_line: line.is_some(),
+            source: each.to_owned(),
+            var: var.to_owned(),
+        };
         let vars = (doc, line, var.to_owned());
         self.nested = Some(Nested { node: node.id(), table, outer: self.target, band: Band::default(), dataset, vars });
         self.target = Target::Nested;
@@ -645,6 +660,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         } else if is_lines && self.cell.is_none() {
             self.flush(&scope);
             self.line_loop = true;
+            self.lines = Some((var.clone(), each.clone()));
             self.target = Target::Detail;
             scope.line_var = Some(var);
             if node.tag_name().name() == "tr" {
@@ -796,9 +812,9 @@ impl<'a, 'i> Builder<'a, 'i> {
         if !self.known(&column, scope) {
             return None;
         }
-        if !self.joined.contains(&column) {
+        if !self.joined.iter().any(|(j, _)| *j == column) {
             self.warn(format!("`{column}` holds the values of the records joined with \"{separator}\": the query joins them (`string_agg`)"));
-            self.joined.push(column.clone());
+            self.joined.push((column.clone(), separator));
         }
         Some(column)
     }
@@ -994,6 +1010,7 @@ impl<'a, 'i> Builder<'a, 'i> {
                 self.warn(format!("loop `{}` gives the detail rows: the report's data has one row per line", collapse(&each)));
             }
             self.line_loop = true;
+            self.lines = Some((w.attribute("t-as").unwrap_or("item").to_owned(), each.clone()));
             self.detail_loop = Some(w.id());
         }
         if self.nested.as_ref().is_some_and(|n| n.table == Some(table) && inner.is_none_or(|(i, _)| i.id() != n.node)) {

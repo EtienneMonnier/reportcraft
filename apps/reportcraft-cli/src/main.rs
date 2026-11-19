@@ -42,9 +42,13 @@ reportcraft-cli <subcommand>
   run [--sample NAME] --cmd ID=JSON...      run commands in order, print each result
   sample <NAME>                             print a sample's report definition
   import-qweb FILE.xml [--template ID] [--out REPORT.json] [--sample-data ROWS.csv]
+              [--connection NAME [--model MODEL] [--lines FIELD] [--lang CODE]]
                                             convert an Odoo QWeb report template (what isn't converted
                                             is listed); preview it with `render REPORT.json --data ROWS.csv`
-                                            (nested loops' rows go to ROWS.NAME.csv: add `--sub NAME=ROWS.NAME.csv`)
+                                            (nested loops' rows go to ROWS.NAME.csv: add `--sub NAME=ROWS.NAME.csv`).
+                                            With --connection (a saved PostgreSQL connection to the Odoo
+                                            database), the report gets the queries that read it, filtered by
+                                            its `ids` parameter: `render REPORT.json --param ids=7 --param ids=8`
   mcp [--allow-paths] [--allow-actions]     MCP server on stdio; an agent uses saved connections only and
                                             can't confirm prints or connection changes unless allowed
   version
@@ -564,10 +568,15 @@ fn run_commands(args: &[String]) -> Result<(), String> {
 
 fn import_qweb(args: &[String]) -> Result<(), String> {
     let (mut file, mut template, mut out, mut rows) = (None, None, None, None);
+    let mut odoo = serde_json::Map::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--template" => template = Some(flag_value(&mut it, a)?.to_owned()),
+            "--connection" | "--model" | "--lines" | "--lang" => {
+                let value = flag_value(&mut it, a)?.to_owned();
+                odoo.insert(a.trim_start_matches("--").to_owned(), json!(value));
+            }
             "--out" => out = Some(flag_value(&mut it, a)?.to_owned()),
             "--sample-data" => rows = Some(flag_value(&mut it, a)?.to_owned()),
             path if !path.starts_with("--") && file.is_none() => file = Some(path.to_owned()),
@@ -580,10 +589,24 @@ fn import_qweb(args: &[String]) -> Result<(), String> {
     if let (Some(t), Some(map)) = (template, params.as_object_mut()) {
         map.insert("template".to_owned(), json!(t));
     }
+    if !odoo.contains_key("connection") && !odoo.is_empty() {
+        return Err("--model, --lines and --lang go with --connection".into());
+    }
+    if let Some(map) = params.as_object_mut() {
+        map.extend(odoo);
+    }
     let result = exec(&mut s, "file.importQweb", params)?;
     for d in result.get("diagnostics").and_then(Json::as_array).into_iter().flatten() {
         let field = |k: &str| d.get(k).and_then(Json::as_str).unwrap_or("").to_owned();
         eprintln!("{}: {}: {}", field("severity"), field("location"), field("message"));
+    }
+    if let Some(data) = result.get("data").filter(|d| !d.is_null()) {
+        let field = |k: &str| data.get(k).and_then(Json::as_str).unwrap_or("").to_owned();
+        eprintln!(
+            "note: the report reads `{}` records from connection `{}`: render it with `--param ids=ID` (repeated for several)",
+            field("model"),
+            field("connection")
+        );
     }
     let report = exec(&mut s, "report.get", json!({}))?;
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;

@@ -13,11 +13,15 @@
 //! reads a dataset of its own, one row per item, shown by a subreport linked to its document (and
 //! line); its sample rows come with the import. Odoo's title lines (sections, subsections) group
 //! the lines, numbered by `line.section_number` and `line.subsection_number` (see `sections`).
+//!
+//! [`odoo::propose`] writes the PostgreSQL queries that fill those columns from an Odoo
+//! database, from the database's description of its fields.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod expr;
 mod flow;
 mod letterhead;
+pub mod odoo;
 mod sections;
 
 use reportcraft_core::{Column, Error, FieldType, Result, RowSet, Value};
@@ -48,6 +52,8 @@ pub struct Import {
     pub diagnostics: Vec<Diagnostic>,
     /// Every template in the file, by name; the one converted is `report.title`.
     pub templates: Vec<String>,
+    /// The loops and columns of the report's data, to write its query (`odoo::propose`).
+    pub shape: odoo::Shape,
 }
 
 /// Converts the template named `template` (its `id` or `t-name`, with or without the module
@@ -89,7 +95,25 @@ pub fn import(xml: &str, template: Option<&str>) -> Result<Import> {
     let report = assemble(title, &mut builder);
     let sample = sample(&builder.fields);
     let datasets = builder.datasets.iter().map(|d| (d.name.clone(), nested_sample(d))).collect();
-    Ok(Import { report, sample, datasets, diagnostics, templates: names })
+    let shape = odoo::Shape {
+        doc_var: builder.doc_loop.clone(),
+        lines: builder.lines.clone(),
+        columns: builder.fields.iter().map(|f| f.name.clone()).collect(),
+        joined: builder.joined.clone(),
+        datasets: builder
+            .datasets
+            .iter()
+            .map(|d| odoo::NestedShape {
+                name: d.name.clone(),
+                var: d.var.clone(),
+                source: d.source.clone(),
+                columns: d.fields.iter().map(|f| f.name.clone()).collect(),
+                under_line: d.under_line,
+            })
+            .collect(),
+        model: printed_model(&doc, title),
+    };
+    Ok(Import { report, sample, datasets, diagnostics, templates: names, shape })
 }
 
 /// Reads one template into bands.
@@ -125,6 +149,39 @@ fn choose<'a, 'i, 't>(templates: &'t [(String, Node<'a, 'i>)]) -> Result<(&'t st
     }
     let (name, root) = templates.last().ok_or_else(|| Error::Invalid("QWeb file: no `<template>` and no element with `t-name`".into()))?;
     Ok((name.as_str(), convert(name, *root, templates)))
+}
+
+/// The model the file's report action prints: an `ir.actions.report` record (or an older
+/// `<report>` element) whose report name is the template, else the only one in the file.
+fn printed_model(doc: &Document<'_>, template: &str) -> Option<String> {
+    let short = |n: &str| n.rsplit('.').next().unwrap_or(n).to_owned();
+    let mut actions: Vec<(String, String)> = Vec::new();
+    for n in doc.descendants().filter(Node::is_element) {
+        let field = |name: &str| {
+            n.children()
+                .find(|c| c.tag_name().name() == "field" && c.attribute("name") == Some(name))
+                .and_then(|c| c.text())
+                .map(|t| t.trim().to_owned())
+        };
+        match n.tag_name().name() {
+            "record" if n.attribute("model") == Some("ir.actions.report") => {
+                if let (Some(model), Some(name)) = (field("model"), field("report_name")) {
+                    actions.push((model, name));
+                }
+            }
+            "report" => {
+                if let (Some(model), Some(name)) = (n.attribute("model"), n.attribute("name")) {
+                    actions.push((model.to_owned(), name.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+    let named = actions.iter().find(|(_, name)| short(name) == short(template)).map(|(m, _)| m.clone());
+    named.or_else(|| match actions.as_slice() {
+        [(model, _)] => Some(model.clone()),
+        _ => None,
+    })
 }
 
 /// A template's name: `<template id>` or `t-name`.

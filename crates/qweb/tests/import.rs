@@ -524,3 +524,30 @@ fn calculations_and_comparisons_between_fields_become_formulas() {
     let problems = r.check_with_datasets(Some(&out.sample.columns), &Default::default());
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+#[test]
+fn the_import_describes_its_data_for_a_query() {
+    let xml = r#"<odoo>
+<record id="action_other" model="ir.actions.report">
+  <field name="model">res.partner</field><field name="report_name">test.report_other</field>
+</record>
+<record id="action_quote" model="ir.actions.report">
+  <field name="model">sale.order</field><field name="report_name">test.report_quote</field>
+</record>
+<template id="report_quote"><t t-foreach="docs" t-as="o">
+  <p t-field="o.name"/>
+  <t t-foreach="o.order_line" t-as="line">
+    <p><span t-field="line.name"/> <span t-out="' / '.join(line.tax_ids.mapped('name'))"/></p>
+    <t t-foreach="line.lot_ids" t-as="lot"><p t-field="lot.name"/></t>
+  </t>
+</t></template></odoo>"#;
+    let shape = import(xml, None).unwrap().shape;
+    assert_eq!(shape.model.as_deref(), Some("sale.order"), "the action whose report name is the template");
+    assert_eq!(shape.doc_var.as_deref(), Some("o"));
+    assert_eq!(shape.lines, Some(("line".to_owned(), "o.order_line".to_owned())));
+    assert_eq!(shape.joined, [("line.tax_ids.name".to_owned(), " / ".to_owned())]);
+    assert!(shape.columns.iter().any(|c| c == "o.id") && shape.columns.iter().any(|c| c == "line.name"), "{:?}", shape.columns);
+    let lots = &shape.datasets[0];
+    assert_eq!((lots.var.as_str(), lots.source.as_str(), lots.under_line), ("lot", "line.lot_ids", true));
+    assert!(lots.columns.iter().any(|c| c == "lot.name"), "{:?}", lots.columns);
+}
