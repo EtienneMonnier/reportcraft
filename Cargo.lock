@@ -4100,6 +4100,7 @@ dependencies = [
  "chrono",
  "craft-print",
  "log",
+ "postgres",
  "reportcraft-connections",
  "reportcraft-core",
  "reportcraft-data",

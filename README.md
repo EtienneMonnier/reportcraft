@@ -26,6 +26,8 @@ cargo run -p reportcraft-cli -- render sales.rcr.json --out sales.pdf --format p
 cargo run -p reportcraft-cli -- render catalogue.rcr.json --connection odoo --query "SELECT …, a.store_fname AS photo …" --pictures ~/.local/share/Odoo/filestore/mydb --format pdf --out catalogue.pdf  # Odoo pictures
 cargo run -p reportcraft-cli -- import-qweb report_invoice.xml --out invoice.rcr.json --sample-data invoice.csv  # an Odoo QWeb template
 cargo run -p reportcraft-cli -- render invoice.rcr.json --data invoice.csv --format pdf --out invoice.pdf          # previewed on sample rows
+cargo run -p reportcraft-cli -- import-qweb report_invoice.xml --connection odoo --model account.move --lang fr_FR --out invoice.rcr.json  # with the queries reading Odoo
+cargo run -p reportcraft-cli -- render invoice.rcr.json --param ids=7 --format pdf --out invoice.pdf               # invoice 7, from the database
 cargo run -p reportcraft-cli -- validate rentals.rcr.json --data mydata.csv          # errors and warnings
 cargo run -p reportcraft-cli -- commands                               # every command
 cargo run -p reportcraft-cli -- mcp                                    # MCP server on stdio

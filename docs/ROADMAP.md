@@ -176,7 +176,12 @@ Anything marked **decision** waits for a maintainer.
       - [ ] Text joined with `+`, `%` and `//`, method calls (`o.currency_id.round(…)`)
     - [ ] Odoo's `groups="…"` (shown to some users only) and `is_html_empty(…)`
   - [ ] Templates called from other modules (`t-call` to a file that isn't given), and `inherit_id` views applied
-  - [ ] An SQL query proposed for the columns the report reads (`o.partner_id.name` → joins on the Odoo model)
+  - [x] An SQL query proposed for the columns the report reads (`o.partner_id.name` → joins on the Odoo model): `import-qweb --connection`, from the database's `ir_model_fields`, filtered by an `ids` parameter
+    - [ ] Choose the connection, model and language in the designer's import (today from the CLI and `file.importQweb`)
+    - [ ] Company-dependent fields (jsonb by company, read with the document's company) and datetimes in the user's time zone (UTC today)
+    - [ ] Models whose table isn't named after them (`_table`), read from the database rather than assumed
+    - [ ] Fields computed in Python (`amount_total_words`, `payment_term_details`): read NULL today, with a warning; labels (`display_name`, `tax_label`) read the record's name
+    - [ ] Line domains other than an invoice's (`invoice_line_ids`), and a lines loop reached through a many2one (`o.partner_id.child_ids`)
 - [ ] R4.2 Power BI text project format (PBIP/TMDL) import, from public documentation
 - [ ] R4.3 Crystal Reports `.rpt` read-only import — **decision**: only if a clean-room route exists
 

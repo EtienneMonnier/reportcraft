@@ -63,7 +63,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "file.importQweb",
         label: "Import Odoo QWeb template",
         menu: "File",
-        params: r#"{"xml": string (an Odoo QWeb template file), "template"?: string (its id; default: the file's last template)}"#,
+        params: r#"{"xml": string (an Odoo QWeb template file), "template"?: string (its id; default: the file's last template), "connection"?: string (a saved PostgreSQL connection to an Odoo database: the report gets queries reading it, filtered by its `ids` parameter), "model"?: string (the model printed, e.g. account.move; default: the file's report action), "lines"?: string (the field the lines come from, when the template loops over Python), "lang"?: string (translated fields' language, e.g. fr_FR; default en_US)}"#,
         access: Access::Edit,
         run: file_import_qweb,
     },
@@ -338,7 +338,11 @@ fn report_load(s: &mut Session, params: &Json) -> EngineResult<Json> {
 fn file_import_qweb(s: &mut Session, params: &Json) -> EngineResult<Json> {
     let xml = str_param("file.importQweb", params, "xml")?;
     let template = params.get("template").and_then(Json::as_str);
-    let import = reportcraft_qweb::import(xml, template)?;
+    let mut import = reportcraft_qweb::import(xml, template)?;
+    let data = match params.get("connection").and_then(Json::as_str) {
+        Some(connection) => Some(odoo_queries(s, connection, &mut import, params)?),
+        None => None,
+    };
     let columns = import.sample.columns.clone();
     set_rows(s, import.sample);
     s.datasets.clear();
@@ -354,8 +358,80 @@ fn file_import_qweb(s: &mut Session, params: &Json) -> EngineResult<Json> {
         "columns": columns,
         "rows": s.rows.rows.len(),
         "datasets": datasets,
+        "data": data,
         "diagnostics": import.diagnostics,
     }))
+}
+
+/// Gives an imported template the queries that read its columns from the Odoo database behind a
+/// saved PostgreSQL connection: the fields' description is read model by model
+/// (`ir_model_fields`, read-only), the queries are proposed (`reportcraft_qweb::odoo`) and set as
+/// the report's data, filtered by a required `ids` parameter (the records to print). What they
+/// can't read comes back with the import's diagnostics.
+#[cfg(not(target_arch = "wasm32"))]
+fn odoo_queries(s: &Session, connection: &str, import: &mut reportcraft_qweb::Import, params: &Json) -> EngineResult<Json> {
+    use reportcraft_qweb::odoo;
+    const CMD: &str = "file.importQweb";
+    /// Rounds of reading fields: each follows the paths one join further.
+    const MAX_ROUNDS: usize = 12;
+    let kind = s.with_connections(|c| {
+        c.get(connection)
+            .map(|conn| conn.target.kind())
+            .ok_or_else(|| reportcraft_core::Error::NotFound(format!("connection `{connection}` is not saved on this computer")))
+    })?;
+    if kind != "postgres" {
+        return Err(bad(CMD, format!("connection `{connection}` is {kind}: Odoo queries need a PostgreSQL connection")));
+    }
+    let conninfo = postgres_conninfo(s, CMD, &json!({"saved": connection}))?;
+    let text = |key: &str| params.get(key).and_then(Json::as_str).map(str::to_owned);
+    let options = odoo::QueryOptions { model: text("model"), lines: text("lines"), lang: text("lang").unwrap_or_else(|| "en_US".into()) };
+    let mut schema = odoo::OdooSchema::default();
+    let (mut rounds, mut read) = (0, 0);
+    let proposal = loop {
+        let proposal = odoo::propose(&import.shape, &options, &schema)?;
+        if proposal.missing.is_empty() {
+            break proposal;
+        }
+        rounds += 1;
+        read += proposal.missing.len();
+        if rounds > MAX_ROUNDS || read > odoo::MAX_MODELS {
+            return Err(bad(CMD, format!("the template's fields lead through more than {} models or {MAX_ROUNDS} joins", odoo::MAX_MODELS)));
+        }
+        let rows = reportcraft_postgres::PostgresSource::new(conninfo.clone(), odoo::metadata_query(&proposal.missing))
+            .with_cancel(s.cancel().clone())
+            .read(None)?;
+        schema.add(&proposal.missing, &rows)?;
+    };
+    let binding = reportcraft_model::DataBinding {
+        connection: connection.to_owned(),
+        query: proposal.query.clone(),
+        datasets: proposal
+            .datasets
+            .iter()
+            .map(|(name, query)| reportcraft_model::DatasetQuery { name: name.clone(), query: query.clone() })
+            .collect(),
+    };
+    binding.validate()?;
+    import.report.data = Some(binding);
+    if !import.report.parameters.iter().any(|p| p.name == odoo::IDS_PARAMETER) {
+        import.report.parameters.push(reportcraft_model::Parameter {
+            name: odoo::IDS_PARAMETER.into(),
+            label: format!("Records to print ({} ids)", proposal.model),
+            kind: reportcraft_model::ParamType::Integer,
+            default: None,
+            choices: Vec::new(),
+            multiple: true,
+            required: true,
+        });
+    }
+    import.diagnostics.extend(proposal.diagnostics);
+    let datasets: Vec<Json> = proposal.datasets.iter().map(|(name, query)| json!({"name": name, "query": query})).collect();
+    Ok(json!({"connection": connection, "model": proposal.model, "query": proposal.query, "datasets": datasets}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn odoo_queries(_: &Session, _: &str, _: &mut reportcraft_qweb::Import, _: &Json) -> EngineResult<Json> {
+    Err(reportcraft_core::Error::Unsupported("saved connections are not available in the web build".into()).into())
 }
 
 fn report_get(s: &mut Session, _: &Json) -> EngineResult<Json> {

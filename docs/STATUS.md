@@ -234,10 +234,19 @@
   sample rows (two items each; `import-qweb --sample-data ROWS.csv` writes them to
   `ROWS.NAME.csv`). What isn't converted (Python calls, a second repeated loop in a band, loops
   three deep) is listed by template line and shown in place as `{expression}`.
+  With `--connection NAME` (a saved PostgreSQL connection to the Odoo database; `--model`,
+  `--lines`, `--lang`), the report also gets the queries that fill those columns, written from the
+  database's own description of its fields (`ir_model_fields`, read model by model): many2one
+  fields as joins, related fields followed, translated fields in the language (English when
+  missing), records joined into a text with `string_agg` in their sequence, pictures as their
+  attachment's file, section numbers as window counts, lines in their sequence (an invoice's
+  without its tax lines), and one query per nested loop; the documents are those of a required
+  `ids` parameter (`render REPORT.json --param ids=7`). The model comes from the file's report
+  action when it has one. Fields computed in Python read NULL, each with a warning.
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 253 tests (plus 16 live tests run on demand: 8 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 261 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
