@@ -827,3 +827,30 @@ the wrong surprise. Table names follow Odoo's default (`res.partner` → `res_pa
 choose another table, company-dependent values and datetimes in the user's time zone are on the
 roadmap. The test reads a database shaped like Odoo's with made-up rows (a live test on a scratch
 server); no row of a real database was read or committed.
+
+## Text that grows and bands that shrink (R2.10)
+
+The first import of a real Odoo invoice (R4.1) showed two things a banded layout of fixed boxes
+can't do and HTML does without being asked: a line's description of four lines was cut to its first
+words, and an invoice's footer, where most blocks are conditional, kept the room of every hidden
+block, so the totals went to a page of their own. Both are now options of the report model, as
+Crystal Reports and Access have them: `can_grow` on an element, `can_shrink` on a band. They are
+off by default, so a report that places its boxes by hand keeps exactly the layout it had.
+
+- A text that can grow is cut into lines at its line breaks, then between words (a word wider than
+  the box between letters); it takes as many lines as it needs at the font's line height (1.2
+  times its size, as the writers draw text), and never less than its box. Each line becomes an item
+  of its own, so the PDF, HTML, DOCX and XLSX writers need no change.
+- The band is cut into strips at its elements' top and bottom edges. Below an element that grew,
+  everything moves down by its growth (the largest when several end on the same line); in a band
+  that can shrink, a strip covered only by elements that aren't drawn (hidden by their condition,
+  or a text with nothing to show) closes up. A strip that also holds a drawn element keeps its room,
+  so a blank cell next to a filled one changes nothing. This is computed per row, before the band is
+  placed, so a page break sees the band's real height.
+- Text is measured in the layout (L3), which has no fonts: the widths are Liberation Sans' (Arial's
+  metrics, the first font the PDF writer looks for), kept in a table of the Latin-1 characters,
+  and a line fills at most 96 % of the box so a slightly wider font isn't cut. Measuring with the
+  fonts the PDF embeds would mean the layout depending on the writer's fonts; it is on the roadmap.
+- The QWeb importer marks the bands it makes as able to shrink and the text fields that end a line
+  (a table cell, a value after its label) as able to grow, which is what the template's HTML does.
+  Amounts don't grow: a number cut onto two lines would be misread.

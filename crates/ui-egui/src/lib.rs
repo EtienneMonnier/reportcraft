@@ -919,7 +919,7 @@ impl Designer {
                     let formula = |f: &Option<String>| f.clone().unwrap_or_default();
                     (
                         "report.setBand",
-                        json!({"band": band, "height_mm": b.height_mm, "visible_if": formula(&b.visible_if), "page_break_before_if": formula(&b.page_break_before_if), "keep_with_next": b.keep_with_next}),
+                        json!({"band": band, "height_mm": b.height_mm, "visible_if": formula(&b.visible_if), "page_break_before_if": formula(&b.page_break_before_if), "keep_with_next": b.keep_with_next, "can_shrink": b.can_shrink}),
                     )
                 })
             }

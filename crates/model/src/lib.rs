@@ -325,6 +325,11 @@ pub struct Band {
     /// the inner groups' headers and the first detail row.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep_with_next: bool,
+    /// Elements that aren't drawn (hidden by `visible_if`, or text with nothing to show) give
+    /// their room back: the strips of the band only they cover close up, and the band gets
+    /// shorter. A strip that also holds a shown element keeps its room.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub can_shrink: bool,
 }
 
 impl Band {
@@ -356,6 +361,11 @@ pub struct Element {
     /// The same for the background.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_formula: Option<String>,
+    /// Text that doesn't fit the box's width goes on to more lines (at its line breaks, then
+    /// between words), and the box grows down to hold them: what lies below it in the band moves
+    /// down as much, and the band grows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub can_grow: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -1167,10 +1177,12 @@ mod tests {
                 visible_if: None,
                 background_formula: None,
                 color_formula: None,
+                can_grow: false,
             }],
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
@@ -1212,6 +1224,7 @@ mod tests {
             visible_if: None,
             background_formula: None,
             color_formula: None,
+            can_grow: false,
         };
         let mut r = Report::new("t");
         r.groups.push(Group {
@@ -1230,6 +1243,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         r.detail = Band {
             height_mm: 4.0,
@@ -1241,6 +1255,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let found = r.check(Some(&columns));
         let at = |loc: &str, sev| found.iter().any(|d| d.location == loc && d.severity == sev);
@@ -1269,6 +1284,7 @@ mod tests {
             visible_if: None,
             background_formula: None,
             color_formula: None,
+            can_grow: false,
         };
         let mut r = Report::new("t");
         r.locale = "xx-YY".into();
@@ -1278,6 +1294,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let columns = [Column { name: "name".into(), field_type: FieldType::Text }];
         let found = r.check(Some(&columns));
@@ -1327,6 +1344,7 @@ mod tests {
             visible_if: None,
             background_formula: None,
             color_formula: None,
+            can_grow: false,
         };
         let mut r = Report::new("t");
         r.detail = Band {
@@ -1335,6 +1353,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         assert!(r.validate().is_ok());
         r.detail.elements = vec![el(Content::Line { thickness_mm: 0.3, color: "black".into() })];
@@ -1377,10 +1396,12 @@ mod tests {
                     visible_if: None,
                     background_formula: None,
                     color_formula: None,
+                    can_grow: false,
                 }],
                 page_break_before_if: None,
                 visible_if: None,
                 keep_with_next: false,
+                can_shrink: false,
             };
             c
         };
@@ -1397,8 +1418,10 @@ mod tests {
                 visible_if: None,
                 background_formula: None,
                 color_formula: None,
+                can_grow: false,
             };
-            let b = Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None, keep_with_next: false };
+            let b =
+                Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None, keep_with_next: false, can_shrink: false };
             if band == "page_header" {
                 r.page_header = b
             } else {
@@ -1463,6 +1486,7 @@ mod tests {
             visible_if: None,
             background_formula: None,
             color_formula: None,
+            can_grow: false,
         };
         r.detail = Band {
             height_mm: 5.0,
@@ -1470,8 +1494,16 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
-        r.page_footer = Band { height_mm: 5.0, elements: vec![el("[price]")], page_break_before_if: None, visible_if: None, keep_with_next: false };
+        r.page_footer = Band {
+            height_mm: 5.0,
+            elements: vec![el("[price]")],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+            can_shrink: false,
+        };
         assert!(r.validate().unwrap_err().to_string().contains("detail: formula `1 +`"));
         let columns = [Column { name: "price".into(), field_type: FieldType::Number }, Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
@@ -1500,6 +1532,7 @@ mod tests {
             visible_if: Some("[qty] > 1".into()),
             background_formula: None,
             color_formula: None,
+            can_grow: false,
         };
         let mut r = Report::new("t");
         r.detail = Band {
@@ -1508,6 +1541,7 @@ mod tests {
             visible_if: Some("[nope] > 0".into()),
             page_break_before_if: Some("[qty] = 0".into()),
             keep_with_next: false,
+            can_shrink: false,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1515,6 +1549,7 @@ mod tests {
             visible_if: Some("[qty] > 0".into()),
             page_break_before_if: Some("TRUE".into()),
             keep_with_next: false,
+            can_shrink: false,
         };
         let columns = [Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
@@ -1553,6 +1588,7 @@ mod tests {
             visible_if: None,
             color_formula: Some("IF([amout] < 0, \"#c00\", \"\")".into()),
             background_formula: Some("IF(".into()),
+            can_grow: false,
         };
         r.detail = Band { height_mm: 5.0, elements: vec![el.clone()], ..Band::default() };
         assert!(r.validate().unwrap_err().to_string().contains("background_formula"));
@@ -1604,10 +1640,12 @@ mod tests {
                     visible_if: None,
                     background_formula: None,
                     color_formula: None,
+                    can_grow: false,
                 }],
                 page_break_before_if: None,
                 visible_if: None,
                 keep_with_next: false,
+                can_shrink: false,
             };
             r
         };
@@ -1653,6 +1691,7 @@ mod tests {
                 visible_if: None,
                 background_formula: None,
                 color_formula: None,
+                can_grow: false,
             }];
             r
         };

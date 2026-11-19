@@ -7,6 +7,7 @@ mod crosstab;
 mod format;
 mod formula;
 mod html;
+pub mod measure;
 pub mod pixels;
 
 use std::cmp::Ordering;
@@ -466,6 +467,77 @@ fn group_height(report: &Report, rows: &RowSet, order: &[usize], start: usize, e
     h
 }
 
+/// The most lines a text that can grow takes (the last holds the rest).
+const MAX_GROWN_LINES: usize = 500;
+/// Two positions this close (millimetres) are the same.
+const EPSILON: f64 = 1e-6;
+
+/// Text an element writes (its value can wrap, or be blank).
+fn is_text(content: &Content) -> bool {
+    matches!(content, Content::Text { .. } | Content::Field { .. } | Content::Formula { .. })
+}
+
+/// An element of a band, for one row: where it is drawn, the height its text takes, and whether
+/// it holds on to its room (drawn, and not blank in a band that can shrink).
+struct Span {
+    y: f64,
+    h: f64,
+    grown: f64,
+    kept: bool,
+}
+
+/// A band placed for one row: each element's top and height, when they differ from the band's.
+struct Fit {
+    at: Option<Vec<(f64, f64)>>,
+    height: f64,
+}
+
+impl Fit {
+    fn plain(band: &Band) -> Self {
+        Self { at: None, height: band.height_mm }
+    }
+
+    /// The band cut into strips at its elements' edges: a strip only elements that let go of
+    /// their room cover closes up (in a band that can shrink), and below an element that grew
+    /// every element moves down by its growth (the largest, when several end on the same line).
+    fn of(band: &Band, spans: &[Span]) -> Self {
+        let mut edges: Vec<f64> = spans.iter().flat_map(|s| [s.y, s.y + s.h]).chain([0.0, band.height_mm]).collect();
+        edges.sort_by(f64::total_cmp);
+        edges.dedup_by(|a, b| (*a - *b).abs() < EPSILON);
+        let covers = |s: &Span, a: f64, b: f64| s.h > 0.0 && s.y <= a + EPSILON && s.y + s.h >= b - EPSILON;
+        // (edge, room it adds below it): growth at an element's bottom, closed strips taken off.
+        let mut moves: Vec<(f64, f64)> = Vec::new();
+        for pair in edges.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if band.can_shrink && spans.iter().any(|s| covers(s, a, b)) && !spans.iter().any(|s| s.kept && covers(s, a, b)) {
+                moves.push((b, a - b));
+            }
+        }
+        for &e in &edges {
+            let growth = spans.iter().filter(|s| s.kept && (s.y + s.h - e).abs() < EPSILON).map(|s| s.grown - s.h).fold(0.0, f64::max);
+            if growth > EPSILON {
+                moves.push((e, growth));
+            }
+        }
+        if moves.is_empty() {
+            return Self::plain(band);
+        }
+        let shift = |y: f64| moves.iter().filter(|(e, _)| *e <= y + EPSILON).map(|(_, d)| d).sum::<f64>();
+        let at: Vec<(f64, f64)> = spans.iter().map(|s| (s.y + shift(s.y), if s.kept { s.grown } else { s.h })).collect();
+        let bottom = spans.iter().zip(&at).filter(|(s, _)| s.kept).map(|(_, (y, h))| y + h).fold(0.0, f64::max);
+        let height = (band.height_mm + shift(band.height_mm)).max(bottom).max(0.0);
+        Self { at: Some(at), height }
+    }
+
+    fn y(&self, i: usize, el: &Element) -> f64 {
+        self.at.as_ref().and_then(|a| a.get(i)).map_or(el.y_mm, |p| p.0)
+    }
+
+    fn h(&self, i: usize, el: &Element) -> f64 {
+        self.at.as_ref().and_then(|a| a.get(i)).map_or(el.height_mm, |p| p.1)
+    }
+}
+
 /// A group whose header has been printed and whose footer hasn't, by positions in the sorted rows.
 #[derive(Clone, Copy)]
 struct OpenGroup {
@@ -598,8 +670,9 @@ impl<'a> Writer<'a> {
             let (Some(group), Some(scope)) = (self.report.groups.get(g.level), order.get(g.start..g.end)) else { continue };
             let scope = Scope::new(scope, order.get(g.start).copied());
             if group.repeat_header && !group.header.is_empty() && self.band_visible(&group.header, scope) {
-                self.draw(&group.header, scope, true);
-                self.y += group.header.height_mm;
+                let fit = self.fit(&group.header, scope);
+                self.draw(&group.header, &fit, scope, true);
+                self.y += fit.height;
                 self.column_bottom = self.column_bottom.max(self.y);
             }
         }
@@ -625,9 +698,10 @@ impl<'a> Writer<'a> {
         // A hidden page header takes no room.
         if self.band_visible(&report.page_header, scope) {
             let last = self.last_row;
-            self.draw(&report.page_header, scope, false);
+            let fit = self.fit(&report.page_header, scope);
+            self.draw(&report.page_header, &fit, scope, false);
             self.last_row = last;
-            self.y += report.page_header.height_mm;
+            self.y += fit.height;
         }
         // Columns start below the page header (and below the report header on page one).
         self.column_top = self.y;
@@ -641,7 +715,7 @@ impl<'a> Writer<'a> {
         // holds none). A hidden one keeps its room: the body ends at the same place on every page.
         let scope = Scope::new(&[], self.last_row.or(self.next_row));
         if self.band_visible(&report.page_footer, scope) {
-            self.draw(&report.page_footer, scope, false);
+            self.draw(&report.page_footer, &Fit::plain(&report.page_footer), scope, false);
         }
         self.pages.push(std::mem::take(&mut self.page));
         Ok(())
@@ -662,22 +736,23 @@ impl<'a> Writer<'a> {
         if !self.fresh && self.band_breaks(band, scope) {
             self.new_page(order)?;
         }
+        let fit = self.fit(band, scope);
         if self.across() {
             // A group band starts a new row of labels and spans the first column.
             self.close_row();
-            if !self.fresh && self.y + band.height_mm + following > self.body_bottom() + 1e-9 {
+            if !self.fresh && self.y + fit.height + following > self.body_bottom() + 1e-9 {
                 self.new_page(order)?;
             }
-            self.draw(band, scope, true);
-            self.y += band.height_mm;
+            self.draw(band, &fit, scope, true);
+            self.y += fit.height;
             self.column_bottom = self.column_bottom.max(self.y);
             self.fresh = false;
             return Ok(());
         }
-        if !self.fresh && self.y + band.height_mm + following > self.body_bottom() + 1e-9 {
+        if !self.fresh && self.y + fit.height + following > self.body_bottom() + 1e-9 {
             self.next_column_or_page(true, order)?;
         }
-        self.place(band, scope, true, order)?;
+        self.place(band, &fit, scope, true, order)?;
         self.column_bottom = self.column_bottom.max(self.y);
         self.fresh = false;
         Ok(())
@@ -704,25 +779,25 @@ impl<'a> Writer<'a> {
     }
 
     /// Draws a band at the current height and moves below it, flowing its subreport if it has one.
-    fn place(&mut self, band: &Band, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
+    fn place(&mut self, band: &Band, fit: &Fit, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
         let (top, item) = (self.y, self.page.items.len());
         let mut subreport = None;
-        for el in band.elements.iter().filter(|e| matches!(e.content, Content::Subreport { .. })) {
+        for (i, el) in band.elements.iter().enumerate().filter(|(_, e)| matches!(e.content, Content::Subreport { .. })) {
             if self.element_visible(el, scope) {
-                subreport = Some(el);
+                subreport = Some((i, el));
             }
         }
         // What lies below a subreport follows it, wherever it ends.
-        let cut = subreport.map_or(f64::INFINITY, |el| el.y_mm + el.height_mm);
-        self.draw_part(band, scope, columned, f64::NEG_INFINITY, cut);
+        let cut = subreport.map_or(f64::INFINITY, |(i, el)| fit.y(i, el) + fit.h(i, el));
+        self.draw_part(band, fit, scope, columned, f64::NEG_INFINITY, cut);
         match subreport {
             None => {
-                self.marks.push(Mark { item, top, height: band.height_mm });
-                self.y += band.height_mm;
+                self.marks.push(Mark { item, top, height: fit.height });
+                self.y += fit.height;
             }
-            Some(el) => {
-                self.marks.push(Mark { item, top, height: el.y_mm });
-                self.flow_subreport(el, band, top, scope, columned, order)?;
+            Some((i, el)) => {
+                self.marks.push(Mark { item, top, height: fit.y(i, el) });
+                self.flow_subreport((i, el), band, fit, top, scope, (columned, order))?;
             }
         }
         Ok(())
@@ -731,7 +806,15 @@ impl<'a> Writer<'a> {
     /// Lays a subreport out below its band's top, block by block, moving to the next column or
     /// page between blocks as needed. The band ends below the subreport, keeping the room the
     /// band had under the element, and never above the band's own bottom.
-    fn flow_subreport(&mut self, el: &Element, band: &Band, top: f64, scope: Scope<'_>, columned: bool, order: &[usize]) -> Result<()> {
+    fn flow_subreport(
+        &mut self,
+        (index, el): (usize, &Element),
+        band: &Band,
+        fit: &Fit,
+        top: f64,
+        scope: Scope<'_>,
+        (columned, order): (bool, &[usize]),
+    ) -> Result<()> {
         let Content::Subreport { report: child, dataset, links, hide_when_empty } = &el.content else { return Ok(()) };
         if self.depth + 1 >= reportcraft_model::MAX_SUBREPORT_DEPTH {
             return Err(Error::TooLarge(format!("reports nest at most {} deep", reportcraft_model::MAX_SUBREPORT_DEPTH)));
@@ -745,9 +828,9 @@ impl<'a> Writer<'a> {
             let ctx = Context { datasets: self.datasets, params: self.params, cancel: self.cancel, files: self.files, depth: self.depth + 1 };
             subreport_blocks(&report, &rows, &ctx)?
         };
-        let cut = el.y_mm + el.height_mm;
-        let below = (band.height_mm - cut).max(0.0);
-        let mut y = top + el.y_mm;
+        let cut = fit.y(index, el) + fit.h(index, el);
+        let below = (fit.height - cut).max(0.0);
+        let mut y = top + fit.y(index, el);
         let (mut moved, mut fresh) = (false, false);
         for block in blocks {
             if !fresh && y + block.height > self.body_bottom() + 1e-9 {
@@ -770,14 +853,14 @@ impl<'a> Writer<'a> {
         // The elements below the subreport, under its end (never above where the band put them),
         // on the next page when they don't fit.
         let mut tail = if moved { y } else { y.max(top + cut) };
-        let has_tail = band.elements.iter().any(|e| e.y_mm >= cut && !matches!(e.content, Content::Subreport { .. }));
+        let has_tail = band.elements.iter().enumerate().any(|(i, e)| fit.y(i, e) >= cut && !matches!(e.content, Content::Subreport { .. }));
         if has_tail && !fresh && tail + below > self.body_bottom() + 1e-9 {
             self.next_column_or_page(columned, order)?;
             tail = self.y;
         }
         let item = self.page.items.len();
         self.y = tail - cut;
-        self.draw_part(band, scope, columned, cut, f64::INFINITY);
+        self.draw_part(band, fit, scope, columned, cut, f64::INFINITY);
         let end = tail + below;
         self.marks.push(Mark { item, top: y.min(tail), height: end - y.min(tail) });
         self.y = end;
@@ -844,11 +927,12 @@ impl<'a> Writer<'a> {
         if !self.fresh && self.band_breaks(band, scope) {
             self.new_page(order)?;
         }
-        if self.column == 0 && !self.fresh && self.y + band.height_mm > self.body_bottom() + 1e-9 {
+        let fit = self.fit(band, scope);
+        if self.column == 0 && !self.fresh && self.y + fit.height > self.body_bottom() + 1e-9 {
             self.new_page(order)?;
         }
-        self.draw(band, scope, true);
-        self.row_height = self.row_height.max(band.height_mm);
+        self.draw(band, &fit, scope, true);
+        self.row_height = self.row_height.max(fit.height);
         self.column_bottom = self.column_bottom.max(self.y + self.row_height);
         self.fresh = false;
         self.column += 1;
@@ -866,10 +950,11 @@ impl<'a> Writer<'a> {
         self.close_row();
         self.y = self.y.max(self.column_bottom);
         self.column = 0;
-        if !self.fresh && (self.band_breaks(band, scope) || self.y + band.height_mm > self.body_bottom() + 1e-9) {
+        let fit = self.fit(band, scope);
+        if !self.fresh && (self.band_breaks(band, scope) || self.y + fit.height > self.body_bottom() + 1e-9) {
             self.new_page(order)?;
         }
-        self.place(band, scope, false, order)?;
+        self.place(band, &fit, scope, false, order)?;
         self.column_top = self.y;
         self.column_bottom = self.y;
         self.fresh = false;
@@ -890,22 +975,23 @@ impl<'a> Writer<'a> {
     }
 
     /// Draws a band at the current height; `columned` bands go into the current column.
-    fn draw(&mut self, band: &Band, scope: Scope<'_>, columned: bool) {
-        self.draw_part(band, scope, columned, f64::NEG_INFINITY, f64::INFINITY);
+    fn draw(&mut self, band: &Band, fit: &Fit, scope: Scope<'_>, columned: bool) {
+        self.draw_part(band, fit, scope, columned, f64::NEG_INFINITY, f64::INFINITY);
     }
 
     /// Draws the band's elements whose top is from `from` to before `to` (millimetres in the band).
-    fn draw_part(&mut self, band: &Band, scope: Scope<'_>, columned: bool, from: f64, to: f64) {
+    fn draw_part(&mut self, band: &Band, fit: &Fit, scope: Scope<'_>, columned: bool, from: f64, to: f64) {
         if scope.current.is_some() {
             self.last_row = scope.current;
         }
         let page = &self.report.page;
         let column = if columned { self.column as f64 } else { 0.0 };
         let left = page.margin_mm + column * (page.column_width() + page.column_gap_mm);
-        for el in band.elements.iter().filter(|e| (from..to).contains(&e.y_mm)) {
+        for (i, el) in band.elements.iter().enumerate().filter(|(i, e)| (from..to).contains(&fit.y(*i, e))) {
             if !self.element_visible(el, scope) {
                 continue;
             }
+            let (y, height) = (self.y + fit.y(i, el), fit.h(i, el));
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
             }
@@ -914,30 +1000,44 @@ impl<'a> Writer<'a> {
                 continue;
             }
             if let Content::Barcode { .. } = &el.content {
-                self.barcode(el, scope, left);
+                self.barcode(el, scope, (left, y));
                 continue;
             }
             if let Content::Image { .. } = &el.content {
-                self.image(el, scope, left);
+                self.image(el, scope, (left, y));
                 continue;
             }
             if let Content::Crosstab { .. } = &el.content {
-                let items = crosstab::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, self.y + el.y_mm), &self.locale);
+                let items = crosstab::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, y), &self.locale);
                 self.page.items.extend(items);
                 continue;
             }
             if let Content::Chart { .. } = &el.content {
-                let items = chart::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, self.y + el.y_mm), &self.locale);
+                let items = chart::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, y), &self.locale);
                 self.page.items.extend(items);
                 continue;
             }
-            if let Content::Formula { expression } = &el.content {
-                self.formulas
-                    .entry(std::ptr::from_ref(&el.content) as usize)
-                    .or_insert_with(|| reportcraft_expr::parse(expression).ok().map(Box::new));
-            }
-            let (text, cell) = self.eval(&el.content, el.format.as_ref(), scope);
+            let (text, cell) = self.text_of(el, scope);
             let style = self.style_of(el, scope);
+            if el.can_grow && is_text(&el.content) {
+                let lines = measure::wrap(&text, el.width_mm, style.size_pt, style.bold, MAX_GROWN_LINES);
+                if lines.len() > 1 {
+                    let pitch = measure::line_mm(style.size_pt);
+                    for (k, line) in lines.into_iter().enumerate() {
+                        self.page.items.push(Item {
+                            shape: None,
+                            x_mm: left + el.x_mm,
+                            y_mm: y + k as f64 * pitch,
+                            width_mm: el.width_mm,
+                            height_mm: pitch,
+                            style,
+                            text: line,
+                            cell: None,
+                        });
+                    }
+                    continue;
+                }
+            }
             let shape = match &el.content {
                 Content::Line { thickness_mm, color } => Some(Shape::Line { thickness_mm: *thickness_mm, color: color.clone() }),
                 Content::Rect { border_mm, border_color, fill } => {
@@ -945,22 +1045,13 @@ impl<'a> Writer<'a> {
                 }
                 _ => None,
             };
-            self.page.items.push(Item {
-                shape,
-                x_mm: left + el.x_mm,
-                y_mm: self.y + el.y_mm,
-                width_mm: el.width_mm,
-                height_mm: el.height_mm,
-                style,
-                text,
-                cell,
-            });
+            self.page.items.push(Item { shape, x_mm: left + el.x_mm, y_mm: y, width_mm: el.width_mm, height_mm: height, style, text, cell });
         }
     }
 
     /// A barcode element: the symbol, the text under a linear one, or the value as text when the
     /// symbology can't hold it.
-    fn barcode(&mut self, el: &reportcraft_model::Element, scope: Scope<'_>, left: f64) {
+    fn barcode(&mut self, el: &reportcraft_model::Element, scope: Scope<'_>, (left, y): (f64, f64)) {
         let Content::Barcode { symbology, field, text, show_text, ec_level } = &el.content else { return };
         let value = match (field, text) {
             (Some(f), _) => match (self.rows.column_index(f), scope.current) {
@@ -970,7 +1061,7 @@ impl<'a> Writer<'a> {
             (None, Some(t)) => t.clone(),
             (None, None) => String::new(),
         };
-        let (x, y) = (left + el.x_mm, self.y + el.y_mm);
+        let x = left + el.x_mm;
         let item = |y_mm: f64, height_mm: f64, text: String, shape: Option<Shape>| Item {
             x_mm: x,
             y_mm,
@@ -1006,7 +1097,7 @@ impl<'a> Writer<'a> {
 
     /// An image element: its picture, fitted to the element's box; nothing when the value is
     /// blank or not a picture.
-    fn image(&mut self, el: &Element, scope: Scope<'_>, left: f64) {
+    fn image(&mut self, el: &Element, scope: Scope<'_>, (left, y): (f64, f64)) {
         let Content::Image { data, field, fit } = &el.content else { return };
         let picture = match (data, field) {
             (Some(d), _) => Picture::of(d).ok(),
@@ -1024,7 +1115,7 @@ impl<'a> Writer<'a> {
         let (dx, dy, width_mm, height_mm) = fitted(*fit, el.width_mm, el.height_mm, p.width_px, p.height_px);
         self.page.items.push(Item {
             x_mm: left + el.x_mm + dx,
-            y_mm: self.y + el.y_mm + dy,
+            y_mm: y + dy,
             width_mm,
             height_mm,
             style: el.style,
@@ -1032,6 +1123,41 @@ impl<'a> Writer<'a> {
             shape: Some(Shape::Image { format: p.format, width_px: p.width_px, height_px: p.height_px, data: p.data }),
             cell: None,
         });
+    }
+
+    /// The text an element shows and the typed value behind it, its formula parsed once.
+    fn text_of(&mut self, el: &Element, scope: Scope<'_>) -> (String, Option<Cell>) {
+        if let Content::Formula { expression } = &el.content {
+            self.formulas.entry(std::ptr::from_ref(&el.content) as usize).or_insert_with(|| reportcraft_expr::parse(expression).ok().map(Box::new));
+        }
+        self.eval(&el.content, el.format.as_ref(), scope)
+    }
+
+    /// Where a band's elements go for this row, and how tall it is: text that can grow takes the
+    /// lines it wraps to, and what lies below it moves down as much; in a band that can shrink,
+    /// the strips only undrawn elements cover close up.
+    fn fit(&mut self, band: &Band, scope: Scope<'_>) -> Fit {
+        if !band.can_shrink && !band.elements.iter().any(|e| e.can_grow) {
+            return Fit::plain(band);
+        }
+        let mut spans = Vec::with_capacity(band.elements.len());
+        for el in &band.elements {
+            let mut span = Span { y: el.y_mm, h: el.height_mm, grown: el.height_mm, kept: self.element_visible(el, scope) };
+            if span.kept && is_text(&el.content) && (el.can_grow || band.can_shrink) {
+                let (text, _) = self.text_of(el, scope);
+                if band.can_shrink && text.trim().is_empty() {
+                    span.kept = false;
+                } else if el.can_grow {
+                    let style = self.style_of(el, scope);
+                    let lines = measure::wrap(&text, el.width_mm, style.size_pt, style.bold, MAX_GROWN_LINES).len();
+                    if lines > 1 {
+                        span.grown = el.height_mm.max(lines as f64 * measure::line_mm(style.size_pt));
+                    }
+                }
+            }
+            spans.push(span);
+        }
+        Fit::of(band, &spans)
     }
 
     /// The text an element shows, and the typed value behind it when there is one.
@@ -1220,6 +1346,7 @@ mod tests {
             visible_if: None,
             background_formula: None,
             color_formula: None,
+            can_grow: false,
         }
     }
 
@@ -1253,6 +1380,7 @@ mod tests {
                 page_break_before_if: None,
                 visible_if: None,
                 keep_with_next: false,
+                can_shrink: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -1260,6 +1388,7 @@ mod tests {
                 page_break_before_if: None,
                 visible_if: None,
                 keep_with_next: false,
+                can_shrink: false,
             },
             restart_page_numbers: false,
         });
@@ -1269,6 +1398,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         r.report_footer = Band {
             height_mm: 6.0,
@@ -1276,6 +1406,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["Lyon", "10", "2.5", "12.5", "Paris", "5", "5", "17.5"]);
@@ -1286,14 +1417,21 @@ mod tests {
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
         r.page.margin_mm = 10.0;
-        r.page_footer =
-            Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None, keep_with_next: false };
+        r.page_footer = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::PageNumber)],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+            can_shrink: false,
+        };
         r.detail = Band {
             height_mm: 15.0,
             elements: vec![el(Content::Field { field: "branch".into() })],
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 2);
@@ -1308,6 +1446,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
@@ -1448,6 +1587,7 @@ mod tests {
                 page_break_before_if: None,
                 visible_if: None,
                 keep_with_next: false,
+                can_shrink: false,
             },
             footer: Band::default(),
             restart_page_numbers: false,
@@ -1458,6 +1598,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let doc = layout(&r, &many, &Params::new()).unwrap();
         // Body 50 mm: Lyon (6 + 30 x 5 = 156 mm) can't be kept together, so it flows from page one,
@@ -1477,6 +1618,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let mut params = Params::new();
         params.insert(REFRESHED_AT.into(), "2026-10-01T14:05:09+02:00".into());
@@ -1517,8 +1659,16 @@ mod tests {
                 page_break_before_if: None,
                 visible_if: None,
                 keep_with_next: false,
+                can_shrink: false,
             },
-            footer: Band { height_mm: 6.0, elements: vec![f("SUM([net])")], page_break_before_if: None, visible_if: None, keep_with_next: false },
+            footer: Band {
+                height_mm: 6.0,
+                elements: vec![f("SUM([net])")],
+                page_break_before_if: None,
+                visible_if: None,
+                keep_with_next: false,
+                can_shrink: false,
+            },
             restart_page_numbers: false,
         });
         r.sort.push(reportcraft_model::SortKey { field: "net".into(), descending: true });
@@ -1529,6 +1679,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         r.report_footer = Band {
             height_mm: 6.0,
@@ -1536,6 +1687,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["BIG (2)", "80", "67%", "40", "33%", "120", "SMALL (1)", "20", "100%", "20", "Total: 140 over 2 big"]);
@@ -1567,6 +1719,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let mut params = Params::new();
         params.insert("period".into(), "2026-10-01..2026-10-31".into());
@@ -1743,9 +1896,16 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
-        r.page_footer =
-            Band { height_mm: 5.0, elements: vec![el(Content::PageNumber)], page_break_before_if: None, visible_if: None, keep_with_next: false };
+        r.page_footer = Band {
+            height_mm: 5.0,
+            elements: vec![el(Content::PageNumber)],
+            page_break_before_if: None,
+            visible_if: None,
+            keep_with_next: false,
+            can_shrink: false,
+        };
         let number = reportcraft_model::Format::Number { decimals: 1, grouping: true };
         r.detail = Band {
             height_mm: 15.0,
@@ -1753,6 +1913,7 @@ mod tests {
             page_break_before_if: None,
             visible_if: None,
             keep_with_next: false,
+            can_shrink: false,
         };
         let doc = render_continuous(&r, &rows(), &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
         assert_eq!(doc.pages.len(), 1);
@@ -1808,6 +1969,7 @@ mod tests {
             visible_if: cond("1/0"),
             page_break_before_if: cond("1/0"),
             keep_with_next: false,
+            can_shrink: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();
@@ -1821,6 +1983,57 @@ mod tests {
         // Hiding every detail row leaves the groups.
         r.detail.visible_if = cond("FALSE");
         assert_eq!(texts(&layout(&r, &rows(), &Params::new()).unwrap()), ["Lyon", "12.5", "Paris", "end"]);
+    }
+
+    #[test]
+    fn text_that_can_grow_wraps_and_pushes_down_what_lies_below() {
+        let mut r = Report::new("t");
+        let at = |y: f64, content| Element { y_mm: y, ..el(content) };
+        let note = Element { width_mm: 30.0, can_grow: true, ..at(0.0, Content::Field { field: "note".into() }) };
+        let beside = Element { x_mm: 40.0, ..at(0.0, Content::Text { text: "beside".into() }) };
+        let hidden = Element { visible_if: Some("[note] = \"\"".into()), ..at(5.0, Content::Text { text: "no note".into() }) };
+        let blank = at(10.0, Content::Field { field: "blank".into() });
+        r.detail = Band {
+            height_mm: 20.0,
+            elements: vec![note, beside, hidden, blank, at(15.0, Content::Text { text: "after".into() })],
+            can_shrink: true,
+            ..Band::default()
+        };
+        let col = |n: &str| Column { name: n.into(), field_type: FieldType::Text };
+        let long = "Rental insurance premium\nBase: 5959.20 net rental value after discount";
+        let rows = RowSet {
+            columns: vec![col("note"), col("blank")],
+            rows: vec![vec![Value::Text(long.into()), Value::Null], vec![Value::Text("short".into()), Value::Text("set".into())]],
+        };
+        let doc = layout(&r, &rows, &Params::new()).unwrap();
+        let items = &doc.pages.first().unwrap().items;
+        let y = |text: &str| items.iter().filter(|i| i.text == text).map(|i| i.y_mm).collect::<Vec<_>>();
+        let top = y("beside")[0];
+        let lines: Vec<&Item> = items.iter().filter(|i| i.width_mm == 30.0 && !i.text.is_empty() && i.y_mm < y("after")[0]).collect();
+        assert!(lines.len() >= 4, "the note wraps: {lines:?}");
+        assert_eq!(lines.first().map(|i| i.text.as_str()), Some("Rental insurance"));
+        for line in &lines {
+            assert!(measure::width_mm(&line.text, 10.0, false) <= 30.0, "{} fits", line.text);
+        }
+        let pitch = measure::line_mm(10.0);
+        let grown = lines.len() as f64 * pitch;
+        // The hidden line and the blank one close up; "after" follows the note's growth.
+        assert!((y("after")[0] - (top + grown)).abs() < 1e-6, "after at {:?}, note {grown}", y("after"));
+        assert!(y("no note").is_empty());
+        // The second row starts below the first band, grown and shrunk: 20 - 5 - 5 + (grown - 5).
+        let second = y("beside")[1];
+        assert!((second - top - (grown + 5.0)).abs() < 1e-6, "second row at {second}");
+        // Short text keeps its line, the field with a value its strip; hidden "no note" closes up.
+        assert!((y("after")[1] - second - 10.0).abs() < 1e-6, "{:?}", y("after"));
+        assert_eq!(y("set").len(), 1);
+        // Without the options, the band keeps its height and the text its box.
+        r.detail.can_shrink = false;
+        r.detail.elements[0].can_grow = false;
+        let doc = layout(&r, &rows, &Params::new()).unwrap();
+        let items = &doc.pages.first().unwrap().items;
+        let after: Vec<f64> = items.iter().filter(|i| i.text == "after").map(|i| i.y_mm).collect();
+        assert!((after[1] - after[0] - 20.0).abs() < 1e-6);
+        assert!(items.iter().any(|i| i.text == long));
     }
 
     #[test]

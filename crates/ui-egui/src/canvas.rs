@@ -40,6 +40,7 @@ impl FieldDrop {
             visible_if: None,
             color_formula: None,
             background_formula: None,
+            can_grow: false,
         }
     }
 }

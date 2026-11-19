@@ -1352,6 +1352,7 @@ fn line(pieces: Vec<Piece>, x: f64, width: f64, y: f64, height: f64, scope: &Sco
     if let [only] = pieces.as_slice() {
         let (content, format) = content_of(only);
         let mut el = element(x, y, width, height, *only.style(), content, scope);
+        el.can_grow = grows(&el.content, format.as_ref());
         el.format = format;
         return vec![el];
     }
@@ -1360,7 +1361,9 @@ fn line(pieces: Vec<Piece>, x: f64, width: f64, y: f64, height: f64, scope: &Sco
         let mut style = pieces.first().map(|p| *p.style()).unwrap_or_default();
         style.align = align;
         let content = Content::Formula { expression: parts.join(" & ") };
-        return vec![element(x, y, width, height, style, content, scope)];
+        let mut el = element(x, y, width, height, style, content, scope);
+        el.can_grow = true;
+        return vec![el];
     }
     let mut out = Vec::new();
     let mut left = x;
@@ -1378,11 +1381,18 @@ fn line(pieces: Vec<Piece>, x: f64, width: f64, y: f64, height: f64, scope: &Sco
         let w = wanted.min(room);
         let (content, format) = content_of(&piece);
         let mut el = element(left, y, w, height, *piece.style(), content, scope);
+        // The value that ends the line takes the lines it needs, as HTML wraps it.
+        el.can_grow = i + 1 == count && grows(&el.content, format.as_ref());
         el.format = format;
         out.push(el);
         left += w;
     }
     out
+}
+
+/// A field or formula written as text (not a number) wraps onto the lines it needs.
+fn grows(content: &Content, format: Option<&Format>) -> bool {
+    matches!(content, Content::Field { .. } | Content::Formula { .. }) && format.is_none()
 }
 
 fn content_of(piece: &Piece) -> (Content, Option<Format>) {
@@ -1417,6 +1427,7 @@ fn element(x: f64, y: f64, width: f64, height: f64, style: TextStyle, content: C
         visible_if: scope.condition.clone(),
         color_formula: None,
         background_formula: None,
+        can_grow: false,
     }
 }
 
