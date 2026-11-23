@@ -524,3 +524,21 @@ fn an_inserted_image_embeds_the_chosen_picture_and_shows_it() {
     assert!(d.status().contains("not a PNG, JPEG or WebP"), "{}", d.status());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn the_detail_band_panel_sets_page_breaks_and_rows_per_page() {
+    let mut d = Designer::new(Session::default(), Box::new(NoDialogs));
+    d.open_sample("rentals");
+    d.selected = None;
+    d.selected_band = Some("detail".into());
+    d.sync_draft();
+    let Some((_, crate::Draft::Band(band, mut b))) = d.draft.take() else { panic!("the detail band is selected") };
+    assert_eq!(band, "detail");
+    b.page_break_after_if = Some("[days] > 9".into());
+    b.rows_per_page = Some(12);
+    d.run("report.setBand", serde_json::json!({"band": band, "page_break_after_if": b.page_break_after_if, "rows_per_page": b.rows_per_page}));
+    d.sync_draft();
+    assert!(matches!(&d.draft, Some((_, crate::Draft::Band(_, b))) if b.rows_per_page == Some(12)));
+    assert!(frames(&mut d, 2) > 50, "{}", d.status());
+    assert_eq!(d.session().report.detail.page_break_after_if.as_deref(), Some("[days] > 9"));
+}

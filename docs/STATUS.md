@@ -281,7 +281,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 279 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 20 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 280 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 20 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
