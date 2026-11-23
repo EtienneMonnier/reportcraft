@@ -21,8 +21,8 @@ fn keys(set: &RowSet, rows: &[usize], c: usize) -> Vec<Value> {
     v
 }
 
-/// The cross-tab of `el` at `origin` (its box's top-left corner on the page).
-pub(crate) fn draw(el: &Element, set: &RowSet, summary: &[usize], origin: (f64, f64), locale: &LocaleStyle) -> Vec<Item> {
+/// The cross-tab of `el` in `area` (its box's top-left corner on the page, and its width).
+pub(crate) fn draw(el: &Element, set: &RowSet, summary: &[usize], area: (f64, f64, f64), locale: &LocaleStyle) -> Vec<Item> {
     let Content::Crosstab { rows, columns, value, function, totals } = &el.content else { return Vec::new() };
     let (Some(rc), Some(cc), Some(vc)) = (set.column_index(rows), set.column_index(columns), set.column_index(value)) else { return Vec::new() };
     let row_keys = keys(set, summary, rc);
@@ -39,10 +39,10 @@ pub(crate) fn draw(el: &Element, set: &RowSet, summary: &[usize], origin: (f64, 
         aggregate(*function, members.map(|r| set.value(row_of(set, r), vc)).collect::<Vec<_>>().into_iter())
     };
     let line_mm = el.style.size_pt * 1.2 * MM_PER_PT + 1.0;
-    let (x0, y0) = origin;
-    let first = (el.width_mm * 0.3).max(15.0).min(el.width_mm);
+    let (x0, y0, width) = area;
+    let first = (width * 0.3).max(15.0).min(width);
     let n = col_keys.len() + usize::from(*totals);
-    let col_w = if n == 0 { 0.0 } else { (el.width_mm - first) / n as f64 };
+    let col_w = if n == 0 { 0.0 } else { (width - first) / n as f64 };
     let fits = ((el.height_mm / line_mm).floor() as usize).min(MAX_LINES);
     let body = fits.saturating_sub(1 + usize::from(*totals));
     let shown = if row_keys.len() > body { body.saturating_sub(1) } else { row_keys.len() };
@@ -90,7 +90,7 @@ pub(crate) fn draw(el: &Element, set: &RowSet, summary: &[usize], origin: (f64, 
     }
     let mut last = shown + 1;
     if shown < row_keys.len() {
-        text(x0, last, el.width_mm, format!("… {} more", row_keys.len() - shown), style(false, Align::Left), None);
+        text(x0, last, width, format!("… {} more", row_keys.len() - shown), style(false, Align::Left), None);
         last += 1;
     }
     // Totals at the bottom.
@@ -121,17 +121,17 @@ pub(crate) fn draw(el: &Element, set: &RowSet, summary: &[usize], origin: (f64, 
     items.push(Item {
         x_mm: x0,
         y_mm: y0,
-        width_mm: el.width_mm,
+        width_mm: width,
         height_mm: height,
         style: TextStyle::default(),
         text: String::new(),
         shape: Some(Shape::Rect { border_mm: 0.2, border_color: "#888888".into(), fill: None }),
         cell: None,
     });
-    items.push(rule(x0, y0 + line_mm, el.width_mm, 0.0));
+    items.push(rule(x0, y0 + line_mm, width, 0.0));
     items.push(rule(x0 + first, y0, 0.0, height));
     if *totals {
-        items.push(rule(x0, y0 + totals_line as f64 * line_mm, el.width_mm, 0.0));
+        items.push(rule(x0, y0 + totals_line as f64 * line_mm, width, 0.0));
         items.push(rule(x0 + first + col_keys.len() as f64 * col_w, y0, 0.0, height));
     }
     items

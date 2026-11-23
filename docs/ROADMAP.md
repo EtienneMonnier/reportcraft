@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Last updated:** 2026-11-17
+> **Last updated:** 2026-11-23
 
 Items have an id (`R<milestone>.<n>`), an owner (**maintainers** or **open**) and pending changes
 (`- [ ]`). Each item points to the requirement it serves in [specification.md](specification.md)
@@ -174,7 +174,9 @@ Anything marked **decision** waits for a maintainer.
   - [x] The letterhead of `web.external_layout` (company logo, address, footer) as page header and footer, and `web.internal_layout` as a one-line header; page headers and footers read the row their page starts or ends with
     - [x] Page numbers counted per document ("page 1 / 2" of each invoice), as Odoo prints them: groups that number their own pages (`restart_page_numbers`)
     - [x] The blocks a template hands the external layout (`address`, `information_block`, `layout_document_title`) placed as the layout does; Bootstrap grid rows side by side; the `contact` widget as name and address lines; a line's words under different conditions as one formula
-      - [ ] Grid columns hidden by their condition give their width to the others (today each keeps its share)
+      - [x] Grid columns hidden by their condition give their width to the others: boxes side by side (`Element::flow`), plain `col`s sharing the room, fixed ones moving left (#20)
+        - [ ] Rows with a column pushed right (`ms-auto`), and rows inside a column, that flow too (today they keep their places)
+        - [ ] Edit boxes side by side in the designer (today from a QWeb import or the file)
       - [ ] A blank line of a grid column closes up even when the column beside it has text there
       - [ ] The partner's country's address format (`res_country.address_format`; today street, street2, postcode and city, country)
       - [ ] Python calls in an address block (`o._get_document_partner_ident_line()`, the VAT line), shown as written today

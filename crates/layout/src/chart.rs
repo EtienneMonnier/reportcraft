@@ -62,11 +62,11 @@ fn filled(x: f64, y: f64, w: f64, h: f64, colour: &str) -> Item {
     shape(x, y, w, h, Shape::Rect { border_mm: 0.0, border_color: colour.into(), fill: Some(colour.into()) })
 }
 
-/// The chart of `el` at `origin` (its box's top-left corner on the page).
-pub(crate) fn draw(el: &Element, rows: &RowSet, summary: &[usize], origin: (f64, f64), locale: &LocaleStyle) -> Vec<Item> {
+/// The chart of `el` in `area` (its box's top-left corner on the page, and its width).
+pub(crate) fn draw(el: &Element, rows: &RowSet, summary: &[usize], area: (f64, f64, f64), locale: &LocaleStyle) -> Vec<Item> {
     let Content::Chart { chart: kind, title, .. } = &el.content else { return Vec::new() };
-    let (x0, mut top) = origin;
-    let (w, bottom) = (el.width_mm, origin.1 + el.height_mm);
+    let (x0, mut top, w) = area;
+    let bottom = area.1 + el.height_mm;
     let mut items = Vec::new();
     if let Some(t) = title.as_ref().filter(|t| !t.is_empty()) {
         items.push(text((x0, top, w, TITLE_MM - 1.0), (9.0, Align::Center, true), t.clone()));

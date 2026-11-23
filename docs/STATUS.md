@@ -1,6 +1,6 @@
 # Status
 
-> **Last updated:** 2026-11-19 · Stage: foundation (pre-alpha)
+> **Last updated:** 2026-11-23 · Stage: foundation (pre-alpha)
 
 ## Works
 - Report definitions in JSON, validated, with a format version.
@@ -178,6 +178,11 @@
   Each wrapped line is an item of its own, so every writer shows it. Both are checkboxes in the
   designer's properties (`can_shrink` also in `report.setBand`). An imported QWeb template's bands
   shrink and its text fields that end a line grow, as the HTML collapses empty blocks and wraps.
+- Boxes side by side (`flow` on elements: a row number, the box's edge and width, whether it
+  grows): for each row, a box whose elements are all hidden gives its width up; the boxes after it
+  in its row move left and those that grow share the room in proportion to their widths (their
+  elements widened with them, text that can grow wrapping at that width). Subreports keep their
+  place.
 - MCP agents work within what the user set up (§11): `reportcraft-cli mcp` reaches databases only
   through saved connections and can propose, but not confirm, printing or changing a connection
   (`--allow-paths`, `--allow-actions` widen it). Every tool carries MCP annotations (read-only,
@@ -241,7 +246,9 @@
   block on the left half, the recipient's address on the right, the title as a heading below.
   A partner shown with the `contact` widget is a line per part (name with its company's, street,
   second street, postcode and city, country, and phone or e-mail when listed). Bootstrap grid
-  rows (`row` of `col`, `col-6`, `offset-1`, `ms-auto`) sit side by side. Words of a line shown
+  rows (`row` of `col`, `col-6`, `offset-1`, `ms-auto`) sit side by side, and a column hidden by
+  its condition gives its width up as Odoo leaves it out (an invoice's dates, origin and
+  reference share the row): the plain `col`s left share it, fixed ones move left. Words of a line shown
   under different conditions (an invoice's title by type and state, then its number) are one
   formula, each under its condition. A loop inside a document's or a line's (serial numbers
   under each line, payments under the lines) becomes a subreport over a dataset of its own (named
@@ -267,7 +274,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 267 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 18 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 272 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

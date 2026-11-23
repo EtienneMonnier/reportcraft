@@ -711,3 +711,44 @@ fn called_totals_single_subtotals_and_unset_flags_read_as_odoo_prints_them() {
     let header = texts(&r.groups[0].header.elements);
     assert_eq!(header, ["=TRIM(IF(NOT(FALSE), \"Bill\", \"\") & IF(NOT(NOT(FALSE)), \"Pro forma\", \"\"))"]);
 }
+
+/// An original template with a row of plain columns shown under conditions, a fixed column after
+/// them, a row inside a column, and a row of one column.
+const DATES: &str = r#"<t t-name="shop.report_dates">
+  <t t-foreach="docs" t-as="o">
+    <div class="row">
+      <div class="col" t-if="o.date"><strong>Date</strong><div t-field="o.date"/></div>
+      <div class="col" t-if="o.origin"><strong>Origin</strong><div t-field="o.origin"/></div>
+      <div class="col"><div class="row"><div class="col-6">Left</div><div class="col-6" t-if="o.ref">Right</div></div></div>
+      <div class="col-3 offset-1"><strong>Seller</strong><div t-field="o.user_id.name"/></div>
+    </div>
+    <div class="row"><div class="col-6"><span t-field="o.note"/></div></div>
+  </t>
+</t>"#;
+
+#[test]
+fn grid_columns_are_boxes_that_give_their_width_up_when_hidden() {
+    let out = import(DATES, None).unwrap();
+    let header = &out.report.groups[0].header;
+    let flow = |text: &str| {
+        let el = header.elements.iter().find(|e| texts(std::slice::from_ref(e))[0] == text).unwrap_or_else(|| panic!("{text}"));
+        el.flow.map(|f| (f.row, f.x_mm, f.width_mm, f.grows))
+    };
+    // Plain columns share 8 twelfths of 180 mm and grow; the fixed one keeps its 3 after 1.
+    let row = flow("Date").map_or(0, |f| f.0);
+    assert_eq!(flow("Date"), Some((row, 0.0, 40.0, true)));
+    assert_eq!(flow("[o.date]"), flow("Date"));
+    assert_eq!(flow("Origin"), Some((row, 40.0, 40.0, true)));
+    assert_eq!(flow("[o.user_id.name]"), Some((row, 135.0, 45.0, false)));
+    // A row inside a column moves with its column; a row of one column is no flow.
+    assert_eq!(flow("Left"), Some((row, 80.0, 40.0, true)));
+    assert_eq!(flow("Right"), flow("Left"));
+    assert_eq!(flow("[o.note]"), None);
+    let date = header.elements.iter().find(|e| texts(std::slice::from_ref(e))[0] == "Date").unwrap();
+    assert_eq!(date.visible_if.as_deref(), Some("NOT(ISBLANK([o.date]))"));
+    // A row with a column pushed right (`ms-auto`) keeps its place.
+    let order = import(ORDER, None).unwrap();
+    assert!(order.report.groups[0].header.elements.iter().all(|e| e.flow.is_none()));
+    let problems: Vec<_> = out.report.check(Some(&out.sample.columns)).into_iter().filter(|d| d.severity == Severity::Error).collect();
+    assert!(problems.is_empty(), "{problems:?}");
+}

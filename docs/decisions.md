@@ -872,7 +872,7 @@ aren't in the file and aren't read; their arrangement is written here from what 
   read top to bottom, as those become bands or subreports of their own. Columns are placed once:
   a column hidden by its condition keeps its width, and a blank line in one column closes up only
   if the columns beside it have nothing at that height (the band shrinks by strips across its
-  whole width).
+  whole width). (Hidden columns now give their width up: see "Boxes side by side" below.)
 - **The contact widget** (`t-options='{"widget": "contact", "fields": [...]}'`) writes a partner
   as lines: its name (after its company's, for a contact of a company), street, second street,
   postcode and city, country, then the phone, e-mail, website or VAT number when listed. Each line
@@ -910,3 +910,36 @@ block in the company's currency, whose condition wasn't converted, showed in its
   longer makes its variable a record whose keys are columns.
 - `.get('key')` reads as a key, `'key' in dict` as the key having a value, and names starting with
   `display_` (but `display_name` and `display_type`) are flags, read by their value.
+
+## Boxes side by side: grid columns give their width up when hidden (R4.1)
+
+Odoo's invoice writes its dates, origin, reference and incoterm as a Bootstrap row of up to eight
+plain `col`s, each under its condition. A column whose condition fails isn't in the HTML, and the
+browser shares the row among the columns left: four of them take a quarter each. The importer
+placed the eight columns once, an eighth each, so a real invoice showed its four values squeezed
+into the left half, the reference cut onto five lines. A banded layout of fixed boxes can't do this
+by itself, so it is now part of the report model rather than a trick of the importer.
+
+- **The model**: an element may name the box it lies in (`flow`: a row number, the box's left edge
+  and width as designed, and whether it grows). The boxes of a band with the same row number are
+  a row; its elements are found by their box, so a box needs no list of its own and a report
+  without boxes reads and renders as before (no format version change). The row spans its boxes,
+  and the room between a box and the one before it (an `offset-1`) goes with the box.
+- **The layout**, for each row of data: a box shows when one of its elements does (by its
+  condition). When one is hidden, the shown boxes are laid from the row's left edge, each after its
+  own room; those that don't grow keep their width (`col-6` moves left, as flex places it), and
+  those that grow share what is left in proportion to their widths (equal for plain `col`s),
+  never narrower than designed. The elements of a box move and widen with it, keeping where they
+  were in it in proportion. This is computed before text that can grow is measured, so a value
+  wraps at the width it has on that row. Images, barcodes, charts and cross-tabs move and widen too;
+  a subreport keeps its place (its layout is computed once for its width).
+- **Hidden, not blank**: a box gives its width up only when its elements are hidden, as a column
+  under a false `t-if` is absent from the HTML; a column that is there with blank values keeps its
+  room, as in the browser.
+- **The importer** gives boxes to the columns of a grid row of two columns or more. A row inside a
+  column moves with that column (its elements belong to the outer box), and a row with a column
+  pushed right (`ms-auto`) keeps its places, as the room before that column depends on the others;
+  both are on the roadmap.
+- This is the idea of table cells that give their width to their neighbours in some report
+  designers; ReportCraft has no table element, so it is a property of free elements instead, which
+  is also what an imported grid row is.

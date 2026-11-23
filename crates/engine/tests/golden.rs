@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use reportcraft_core::{Column, FieldType, RowSet, Value};
 use reportcraft_engine::sample;
 use reportcraft_layout::{Document, Params, Shape, layout};
-use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Format, Group, Report, SortKey, TextStyle};
+use reportcraft_model::{AggregateFn, Align, Band, Content, Element, Flow, Format, Group, Report, SortKey, TextStyle};
 
 /// The snapshot text of a document: one header line per page, one line per item.
 fn snapshot(doc: &Document) -> String {
@@ -108,6 +108,7 @@ fn el(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
         background_formula: None,
         color_formula: None,
         can_grow: false,
+        flow: None,
     }
 }
 
@@ -536,6 +537,7 @@ fn lines_and_boxes() {
         background_formula: None,
         color_formula: None,
         can_grow: false,
+        flow: None,
     };
     let line = |color: &str| Content::Line { thickness_mm: 0.3, color: color.into() };
     let mut r = Report::new("Shapes");
@@ -659,6 +661,7 @@ fn barcodes() {
         background_formula: None,
         color_formula: None,
         can_grow: false,
+        flow: None,
     };
     r.report_header = Band {
         height_mm: 22.0,
@@ -682,6 +685,7 @@ fn barcodes() {
                 background_formula: None,
                 color_formula: None,
                 can_grow: false,
+                flow: None,
             },
         ],
         page_break_before_if: None,
@@ -741,6 +745,7 @@ fn pictures() {
         background_formula: None,
         color_formula: None,
         can_grow: false,
+        flow: None,
     };
     let mut r = Report::new("Delivery note");
     r.page.height_mm = 120.0;
@@ -864,6 +869,7 @@ fn subreports() {
                 background_formula: None,
                 color_formula: None,
                 can_grow: false,
+                flow: None,
             },
         ],
         page_break_before_if: None,
@@ -996,6 +1002,39 @@ fn formulas() {
     check("formulas", &r, &rentals(24), &Params::new());
 }
 
+/// Boxes side by side (an imported grid row): for each row, a box whose elements are all hidden
+/// gives its width to the boxes that grow, and the fixed box after them keeps its place; text that
+/// can grow wraps at the width its box has for that row.
+#[test]
+fn boxes_side_by_side() {
+    let plain = TextStyle::default();
+    let right = TextStyle { align: Align::Right, ..plain };
+    let boxed = |x: f64, w: f64, grows: bool| Some(Flow { row: 1, x_mm: x, width_mm: w, grows });
+    let cond = |c: &str| Some(c.to_owned());
+    let mut r = Report::new("Boxes");
+    r.detail = Band {
+        height_mm: 6.0,
+        elements: vec![
+            Element { flow: boxed(0.0, 20.0, true), can_grow: true, ..el(0.0, 20.0, field("item"), plain) },
+            Element { flow: boxed(20.0, 45.0, true), visible_if: cond("[branch] <> \"Lyon\""), ..el(20.0, 30.0, field("branch"), plain) },
+            Element {
+                flow: boxed(20.0, 45.0, true),
+                visible_if: cond("[branch] = \"Valence\""),
+                ..el(50.0, 15.0, Content::Text { text: "(depot)".into() }, plain)
+            },
+            Element {
+                flow: boxed(65.0, 30.0, true),
+                visible_if: cond("[days] >= 10"),
+                ..el(65.0, 30.0, Content::Text { text: "two weeks".into() }, plain)
+            },
+            Element { flow: boxed(105.0, 25.0, false), ..el(105.0, 25.0, field("days"), right) },
+            el(140.0, 40.0, field("amount"), right),
+        ],
+        ..Band::default()
+    };
+    check("boxes_side_by_side", &r, &rentals(8), &Params::new());
+}
+
 /// Conditions (R2.10): rows, elements and footers shown on a formula, a page break on a value.
 #[test]
 fn conditions() {
@@ -1091,6 +1130,7 @@ fn charts() {
         color_formula: None,
         background_formula: None,
         can_grow: false,
+        flow: None,
     };
     let mut r = Report::new("Charts");
     r.groups.push(Group {
@@ -1141,6 +1181,7 @@ fn crosstab() {
             color_formula: None,
             background_formula: None,
             can_grow: false,
+            flow: None,
         }],
         ..Band::default()
     };

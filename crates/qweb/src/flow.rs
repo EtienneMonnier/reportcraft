@@ -7,7 +7,7 @@
 
 use reportcraft_core::FieldType;
 use reportcraft_core::limits::MAX_ELEMENTS_PER_BAND;
-use reportcraft_model::{Align, Band, Content, Element, Format, ImageFit, Report, Severity, SubreportLink, TextStyle};
+use reportcraft_model::{Align, Band, Content, Element, Flow, Format, ImageFit, Report, Severity, SubreportLink, TextStyle};
 use roxmltree::Node;
 
 use crate::expr;
@@ -260,6 +260,9 @@ pub(crate) struct Builder<'a, 'i> {
     /// The XML line of the node being read.
     line: u32,
     full_bands: bool,
+    /// The box of the grid row being read that elements of its band lie in, and the rows numbered.
+    flow: Option<(Flow, Target)>,
+    flow_rows: u32,
 }
 
 impl<'a, 'i> Builder<'a, 'i> {
@@ -293,6 +296,8 @@ impl<'a, 'i> Builder<'a, 'i> {
             cell: None,
             line: 0,
             full_bands: false,
+            flow: None,
+            flow_rows: 0,
         }
     }
 
@@ -327,7 +332,12 @@ impl<'a, 'i> Builder<'a, 'i> {
     }
 
     /// Adds an element at the bottom of the current band, `height` tall from `top`.
-    fn push(&mut self, element: Element) {
+    fn push(&mut self, mut element: Element) {
+        if let Some((flow, target)) = self.flow
+            && target == self.target
+        {
+            element.flow = Some(flow);
+        }
         let band = self.band();
         if band.elements.len() >= MAX_ELEMENTS_PER_BAND {
             if !self.full_bands {
@@ -1026,6 +1036,9 @@ impl<'a, 'i> Builder<'a, 'i> {
     /// side: each column from the row's top, as wide as its class says (`col-6`, `offset-1`,
     /// `ms-auto`; plain `col`s share what is left), the row as tall as its tallest column. `false`
     /// when it isn't one, or holds a loop or a call (bands of their own), and is read top down.
+    /// The columns of a row of several, not inside another row's, are boxes of a flow row: a
+    /// column whose elements are all hidden gives its width up, as Odoo leaves it out of the HTML
+    /// (except in a row with an `ms-auto` column, which keeps its place).
     fn grid(&mut self, node: Node<'a, 'i>, scope: &Scope, depth: usize) -> bool {
         if self.cell.is_some() || !print_classes(node).split_whitespace().any(|c| c == "row") {
             return false;
@@ -1045,6 +1058,10 @@ impl<'a, 'i> Builder<'a, 'i> {
         let widths: Vec<f64> = specs.iter().map(|s| s.span.map_or(auto, f64::from) * unit).collect();
         let top = self.bottom();
         let outer = self.frame;
+        let flows = self.flow.is_none() && specs.len() > 1 && !specs.iter().any(|s| s.push_right);
+        if flows {
+            self.flow_rows = self.flow_rows.saturating_add(1);
+        }
         let (mut x, mut bottom) = (x0, top);
         for (i, (col, spec)) in cols.iter().zip(&specs).enumerate() {
             x += f64::from(spec.offset) * unit;
@@ -1057,8 +1074,15 @@ impl<'a, 'i> Builder<'a, 'i> {
                 self.warn("a grid column beyond the row's width is left out");
                 continue;
             }
+            if flows {
+                let flow = Flow { row: self.flow_rows, x_mm: round(x), width_mm: round(w), grows: spec.span.is_none() };
+                self.flow = Some((flow, self.target));
+            }
             bottom = bottom.max(self.in_frame((*col, true), (x, w), top, scope, depth));
             x += w;
+        }
+        if flows {
+            self.flow = None;
         }
         self.frame = outer;
         self.set_bottom(bottom);
@@ -1912,6 +1936,7 @@ fn element(x: f64, y: f64, width: f64, height: f64, style: TextStyle, content: C
         color_formula: None,
         background_formula: None,
         can_grow: false,
+        flow: None,
     }
 }
 
