@@ -182,6 +182,8 @@ Anything marked **decision** waits for a maintainer.
       - [ ] Python calls in an address block (`o._get_document_partner_ident_line()`, the VAT line), shown as written today
     - [ ] The company's chosen layout (boxed, bold, striped…), colours, tagline (`report_header`) and footer text (`report_footer`)
     - [ ] Totals in page headers and footers (the rows of the page: carried forward, page totals)
+  - [x] Table columns that ask for a share of the table (`w-100`, `w-50`…): an invoice's description takes what the others leave (#20)
+    - [ ] Columns as wide as their values (today as their header, at least 20 mm), and widths written in `style` (`width: 30%`)
   - [ ] More Python expressions — `in (…)`, `not in`, `not (…)`, parentheses and `t-set` names for conditions done
     - [x] Arithmetic on fields as formulas (`line.price_unit * 1.2`, `round(…, 2)`, `abs`, `min`, `max`), comparisons between two fields
       - [ ] Text joined with `+`, `%` and `//`, method calls (`o.currency_id.round(…)`)
