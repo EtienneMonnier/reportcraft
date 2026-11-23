@@ -4,6 +4,7 @@
 
 mod chart;
 mod crosstab;
+mod flow;
 mod format;
 mod formula;
 mod html;
@@ -486,15 +487,17 @@ struct Span {
     kept: bool,
 }
 
-/// A band placed for one row: each element's top and height, when they differ from the band's.
+/// A band placed for one row: each element's top and height, and its left edge and width, when
+/// they differ from the band's.
 struct Fit {
     at: Option<Vec<(f64, f64)>>,
+    across: Option<Vec<(f64, f64)>>,
     height: f64,
 }
 
 impl Fit {
     fn plain(band: &Band) -> Self {
-        Self { at: None, height: band.height_mm }
+        Self { at: None, across: None, height: band.height_mm }
     }
 
     /// The band cut into strips at its elements' edges: a strip only elements that let go of
@@ -526,7 +529,7 @@ impl Fit {
         let at: Vec<(f64, f64)> = spans.iter().map(|s| (s.y + shift(s.y), if s.kept { s.grown } else { s.h })).collect();
         let bottom = spans.iter().zip(&at).filter(|(s, _)| s.kept).map(|(_, (y, h))| y + h).fold(0.0, f64::max);
         let height = (band.height_mm + shift(band.height_mm)).max(bottom).max(0.0);
-        Self { at: Some(at), height }
+        Self { at: Some(at), across: None, height }
     }
 
     fn y(&self, i: usize, el: &Element) -> f64 {
@@ -535,6 +538,14 @@ impl Fit {
 
     fn h(&self, i: usize, el: &Element) -> f64 {
         self.at.as_ref().and_then(|a| a.get(i)).map_or(el.height_mm, |p| p.1)
+    }
+
+    fn x(&self, i: usize, el: &Element) -> f64 {
+        self.across.as_ref().and_then(|a| a.get(i)).map_or(el.x_mm, |p| p.0)
+    }
+
+    fn w(&self, i: usize, el: &Element) -> f64 {
+        self.across.as_ref().and_then(|a| a.get(i)).map_or(el.width_mm, |p| p.1)
     }
 }
 
@@ -992,6 +1003,7 @@ impl<'a> Writer<'a> {
                 continue;
             }
             let (y, height) = (self.y + fit.y(i, el), fit.h(i, el));
+            let (x, width) = (left + fit.x(i, el), fit.w(i, el));
             if matches!(el.content, Content::PageNumber) {
                 self.page_number_items.push((self.pages.len(), self.page.items.len()));
             }
@@ -1000,35 +1012,35 @@ impl<'a> Writer<'a> {
                 continue;
             }
             if let Content::Barcode { .. } = &el.content {
-                self.barcode(el, scope, (left, y));
+                self.barcode(el, scope, (x, y, width));
                 continue;
             }
             if let Content::Image { .. } = &el.content {
-                self.image(el, scope, (left, y));
+                self.image(el, scope, (x, y, width));
                 continue;
             }
             if let Content::Crosstab { .. } = &el.content {
-                let items = crosstab::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, y), &self.locale);
+                let items = crosstab::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (x, y, width), &self.locale);
                 self.page.items.extend(items);
                 continue;
             }
             if let Content::Chart { .. } = &el.content {
-                let items = chart::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (left + el.x_mm, y), &self.locale);
+                let items = chart::draw(el, self.rows, scope.group.unwrap_or(scope.rows), (x, y, width), &self.locale);
                 self.page.items.extend(items);
                 continue;
             }
             let (text, cell) = self.text_of(el, scope);
             let style = self.style_of(el, scope);
             if el.can_grow && is_text(&el.content) {
-                let lines = measure::wrap(&text, el.width_mm, style.size_pt, style.bold, MAX_GROWN_LINES);
+                let lines = measure::wrap(&text, width, style.size_pt, style.bold, MAX_GROWN_LINES);
                 if lines.len() > 1 {
                     let pitch = measure::line_mm(style.size_pt);
                     for (k, line) in lines.into_iter().enumerate() {
                         self.page.items.push(Item {
                             shape: None,
-                            x_mm: left + el.x_mm,
+                            x_mm: x,
                             y_mm: y + k as f64 * pitch,
-                            width_mm: el.width_mm,
+                            width_mm: width,
                             height_mm: pitch,
                             style,
                             text: line,
@@ -1045,13 +1057,13 @@ impl<'a> Writer<'a> {
                 }
                 _ => None,
             };
-            self.page.items.push(Item { shape, x_mm: left + el.x_mm, y_mm: y, width_mm: el.width_mm, height_mm: height, style, text, cell });
+            self.page.items.push(Item { shape, x_mm: x, y_mm: y, width_mm: width, height_mm: height, style, text, cell });
         }
     }
 
     /// A barcode element: the symbol, the text under a linear one, or the value as text when the
     /// symbology can't hold it.
-    fn barcode(&mut self, el: &reportcraft_model::Element, scope: Scope<'_>, (left, y): (f64, f64)) {
+    fn barcode(&mut self, el: &reportcraft_model::Element, scope: Scope<'_>, (x, y, width): (f64, f64, f64)) {
         let Content::Barcode { symbology, field, text, show_text, ec_level } = &el.content else { return };
         let value = match (field, text) {
             (Some(f), _) => match (self.rows.column_index(f), scope.current) {
@@ -1061,11 +1073,10 @@ impl<'a> Writer<'a> {
             (None, Some(t)) => t.clone(),
             (None, None) => String::new(),
         };
-        let x = left + el.x_mm;
         let item = |y_mm: f64, height_mm: f64, text: String, shape: Option<Shape>| Item {
             x_mm: x,
             y_mm,
-            width_mm: el.width_mm,
+            width_mm: width,
             height_mm,
             style: el.style,
             text,
@@ -1097,7 +1108,7 @@ impl<'a> Writer<'a> {
 
     /// An image element: its picture, fitted to the element's box; nothing when the value is
     /// blank or not a picture.
-    fn image(&mut self, el: &Element, scope: Scope<'_>, (left, y): (f64, f64)) {
+    fn image(&mut self, el: &Element, scope: Scope<'_>, (x, y, width): (f64, f64, f64)) {
         let Content::Image { data, field, fit } = &el.content else { return };
         let picture = match (data, field) {
             (Some(d), _) => Picture::of(d).ok(),
@@ -1112,9 +1123,9 @@ impl<'a> Writer<'a> {
             (None, None) => None,
         };
         let Some(p) = picture else { return };
-        let (dx, dy, width_mm, height_mm) = fitted(*fit, el.width_mm, el.height_mm, p.width_px, p.height_px);
+        let (dx, dy, width_mm, height_mm) = fitted(*fit, width, el.height_mm, p.width_px, p.height_px);
         self.page.items.push(Item {
-            x_mm: left + el.x_mm + dx,
+            x_mm: x + dx,
             y_mm: y + dy,
             width_mm,
             height_mm,
@@ -1133,23 +1144,28 @@ impl<'a> Writer<'a> {
         self.eval(&el.content, el.format.as_ref(), scope)
     }
 
-    /// Where a band's elements go for this row, and how tall it is: text that can grow takes the
-    /// lines it wraps to, and what lies below it moves down as much; in a band that can shrink,
-    /// the strips only undrawn elements cover close up.
+    /// Where a band's elements go for this row, and how tall it is: boxes of a row whose elements
+    /// are all hidden give their width to the others; text that can grow takes the lines it wraps
+    /// to (at its width there), and what lies below it moves down as much; in a band that can
+    /// shrink, the strips only undrawn elements cover close up.
     fn fit(&mut self, band: &Band, scope: Scope<'_>) -> Fit {
-        if !band.can_shrink && !band.elements.iter().any(|e| e.can_grow) {
+        let flows = band.elements.iter().any(|e| e.flow.is_some());
+        if !band.can_shrink && !flows && !band.elements.iter().any(|e| e.can_grow) {
             return Fit::plain(band);
         }
+        let shown: Vec<bool> = band.elements.iter().map(|el| self.element_visible(el, scope)).collect();
+        let across = if flows { flow::across(band, &shown) } else { None };
         let mut spans = Vec::with_capacity(band.elements.len());
-        for el in &band.elements {
-            let mut span = Span { y: el.y_mm, h: el.height_mm, grown: el.height_mm, kept: self.element_visible(el, scope) };
+        for (i, el) in band.elements.iter().enumerate() {
+            let mut span = Span { y: el.y_mm, h: el.height_mm, grown: el.height_mm, kept: shown.get(i).copied().unwrap_or(true) };
             if span.kept && is_text(&el.content) && (el.can_grow || band.can_shrink) {
                 let (text, _) = self.text_of(el, scope);
                 if band.can_shrink && text.trim().is_empty() {
                     span.kept = false;
                 } else if el.can_grow {
                     let style = self.style_of(el, scope);
-                    let lines = measure::wrap(&text, el.width_mm, style.size_pt, style.bold, MAX_GROWN_LINES).len();
+                    let width = across.as_ref().and_then(|a| a.get(i)).map_or(el.width_mm, |p| p.1);
+                    let lines = measure::wrap(&text, width, style.size_pt, style.bold, MAX_GROWN_LINES).len();
                     if lines > 1 {
                         span.grown = el.height_mm.max(lines as f64 * measure::line_mm(style.size_pt));
                     }
@@ -1157,7 +1173,7 @@ impl<'a> Writer<'a> {
             }
             spans.push(span);
         }
-        Fit::of(band, &spans)
+        Fit { across, ..Fit::of(band, &spans) }
     }
 
     /// The text an element shows, and the typed value behind it when there is one.
@@ -1347,6 +1363,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         }
     }
 

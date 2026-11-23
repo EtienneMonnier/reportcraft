@@ -20,6 +20,7 @@ fn el(x: f64, w: f64, content: Content, format: Option<Format>, align: Align) ->
         background_formula: None,
         color_formula: None,
         can_grow: false,
+        flow: None,
     }
 }
 
@@ -158,6 +159,7 @@ fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
         color_formula: None,
         background_formula: None,
         can_grow: false,
+        flow: None,
     };
     let mut r = Report::new("Shapes");
     r.report_header = Band {

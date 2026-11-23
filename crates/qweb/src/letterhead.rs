@@ -93,6 +93,7 @@ fn at(x_mm: f64, y_mm: f64, width_mm: f64, height_mm: f64, style: TextStyle, con
         color_formula: None,
         background_formula: None,
         can_grow: false,
+        flow: None,
     }
 }
 

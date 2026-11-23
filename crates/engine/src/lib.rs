@@ -498,6 +498,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         };
         s.report.detail.elements.push(formula("[daily] & \" €/d\""));
         let html = s.execute("report.render", &json!({})).unwrap()["html"].as_str().unwrap().to_owned();

@@ -366,6 +366,28 @@ pub struct Element {
     /// down as much, and the band grows.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub can_grow: bool,
+    /// The box the element lies in, in a row of boxes laid side by side (an imported grid row):
+    /// when every element of a box is hidden, the boxes after it in its row move left and those
+    /// that grow share the width it leaves. Subreports keep their place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<Flow>,
+}
+
+/// A box of a row of boxes laid side by side in a band ([`Element::flow`]). The row spans its
+/// boxes, from the leftmost one's left edge to the rightmost one's right edge; the room between a
+/// box and the one before it goes with it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Flow {
+    /// The row: the boxes of a band with the same number share its width.
+    pub row: u32,
+    /// The box's left edge and width as designed, in millimetres from the band's left edge. The
+    /// elements of a box are those with the same row, edge and width.
+    pub x_mm: f64,
+    pub width_mm: f64,
+    /// The box takes a share of the width hidden boxes leave, in proportion to its width (a
+    /// Bootstrap `col`); otherwise it keeps its width (`col-6`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grows: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -827,6 +849,9 @@ impl Report {
                 {
                     return Err(Error::Invalid(format!("{name}: element geometry or font size out of range")));
                 }
+                if el.flow.is_some_and(|f| !(finite_pos(f.x_mm) && f.width_mm.is_finite() && f.width_mm > 0.0)) {
+                    return Err(Error::Invalid(format!("{name}: an element's box must have a width and finite edges")));
+                }
             }
         }
         Ok(())
@@ -1178,6 +1203,7 @@ mod tests {
                 background_formula: None,
                 color_formula: None,
                 can_grow: false,
+                flow: None,
             }],
             page_break_before_if: None,
             visible_if: None,
@@ -1225,6 +1251,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         };
         let mut r = Report::new("t");
         r.groups.push(Group {
@@ -1285,6 +1312,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         };
         let mut r = Report::new("t");
         r.locale = "xx-YY".into();
@@ -1345,6 +1373,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         };
         let mut r = Report::new("t");
         r.detail = Band {
@@ -1377,6 +1406,16 @@ mod tests {
         let mut r = Report::new("x");
         r.detail.height_mm = 1_000.0;
         assert!(r.validate().is_err());
+        // An element's box needs a width and finite edges.
+        let json = r#"{"format_version": 1, "title": "x", "detail": {"height_mm": 5, "elements": [
+            {"x_mm": 0, "y_mm": 0, "width_mm": 20, "height_mm": 5, "content": {"kind": "text", "text": "a"},
+             "flow": {"row": 1, "x_mm": 0, "width_mm": 0}}]}}"#;
+        assert!(Report::from_json(json).unwrap_err().to_string().contains("box"));
+        let mut r: Report = serde_json::from_str(json).unwrap();
+        assert!(r.detail.elements[0].flow.is_some_and(|f| !f.grows));
+        r.detail.elements[0].flow = Some(Flow { row: 1, x_mm: 0.0, width_mm: 20.0, grows: true });
+        assert!(r.validate().is_ok());
+        assert!(r.to_json().unwrap().contains(r#""grows": true"#));
     }
 
     #[test]
@@ -1397,6 +1436,7 @@ mod tests {
                     background_formula: None,
                     color_formula: None,
                     can_grow: false,
+                    flow: None,
                 }],
                 page_break_before_if: None,
                 visible_if: None,
@@ -1419,6 +1459,7 @@ mod tests {
                 background_formula: None,
                 color_formula: None,
                 can_grow: false,
+                flow: None,
             };
             let b =
                 Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None, keep_with_next: false, can_shrink: false };
@@ -1487,6 +1528,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         };
         r.detail = Band {
             height_mm: 5.0,
@@ -1533,6 +1575,7 @@ mod tests {
             background_formula: None,
             color_formula: None,
             can_grow: false,
+            flow: None,
         };
         let mut r = Report::new("t");
         r.detail = Band {
@@ -1589,6 +1632,7 @@ mod tests {
             color_formula: Some("IF([amout] < 0, \"#c00\", \"\")".into()),
             background_formula: Some("IF(".into()),
             can_grow: false,
+            flow: None,
         };
         r.detail = Band { height_mm: 5.0, elements: vec![el.clone()], ..Band::default() };
         assert!(r.validate().unwrap_err().to_string().contains("background_formula"));
@@ -1641,6 +1685,7 @@ mod tests {
                     background_formula: None,
                     color_formula: None,
                     can_grow: false,
+                    flow: None,
                 }],
                 page_break_before_if: None,
                 visible_if: None,
@@ -1692,6 +1737,7 @@ mod tests {
                 background_formula: None,
                 color_formula: None,
                 can_grow: false,
+                flow: None,
             }];
             r
         };

@@ -36,6 +36,7 @@ fn text(x: f64, w: f64, content: Content, style: TextStyle) -> Element {
         background_formula: None,
         color_formula: None,
         can_grow: false,
+        flow: None,
     }
 }
 

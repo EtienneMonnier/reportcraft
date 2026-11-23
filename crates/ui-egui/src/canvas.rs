@@ -41,6 +41,7 @@ impl FieldDrop {
             color_formula: None,
             background_formula: None,
             can_grow: false,
+            flow: None,
         }
     }
 }
