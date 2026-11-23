@@ -783,3 +783,55 @@ fn a_space_between_two_values_is_kept() {
     let detail = texts(&out.report.detail.elements);
     assert!(detail.contains(&"=[line.quantity] & \" \" & [line.uom_id]".to_owned()), "{detail:?}");
 }
+
+/// An original template with tables whose cells ask for a share of the table's width: the lines'
+/// description (`w-100`) and a note (`w-50`).
+const WIDTHS: &str = r#"<t t-name="shop.report_lines">
+  <t t-foreach="docs" t-as="o">
+    <table class="table">
+      <thead><tr>
+        <th>Description</th><th class="text-end">Quantity</th><th class="text-end">Unit Price</th><th class="text-end">Amount</th>
+      </tr></thead>
+      <tbody>
+        <tr t-foreach="o.line_ids" t-as="line">
+          <td class="w-100"><span t-field="line.name"/></td>
+          <td class="text-end"><span t-field="line.quantity"/></td>
+          <td class="text-end"><span t-field="line.price_unit"/></td>
+          <td class="text-end"><span t-field="line.price_subtotal"/></td>
+        </tr>
+      </tbody>
+    </table>
+    <table class="table">
+      <thead><tr><th class="w-50">Note</th><th>By</th><th>On</th></tr></thead>
+      <tbody><tr><td><span t-field="o.note"/></td><td><span t-field="o.user_id.name"/></td><td><span t-field="o.date"/></td></tr></tbody>
+    </table>
+  </t>
+</t>"#;
+
+#[test]
+fn table_columns_asking_for_a_share_of_the_width_have_it() {
+    let out = import(WIDTHS, None).unwrap();
+    let place = |els: &[Element], text: &str| {
+        let el = els.iter().find(|e| texts(std::slice::from_ref(e))[0] == text).unwrap_or_else(|| panic!("{text} in {:?}", texts(els)));
+        (el.x_mm, el.width_mm)
+    };
+    let near = |(x, w): (f64, f64), (ex, ew): (f64, f64)| (x - ex).abs() < 0.11 && (w - ew).abs() < 0.11;
+    // The others as wide as their header (at least 20 mm), the description the rest. Cells are
+    // laid 0.5 mm inside their column.
+    let header = &out.report.groups[0].header.elements;
+    let detail = &out.report.detail.elements;
+    assert!(near(place(header, "Description"), (0.5, 117.6)), "{:?}", place(header, "Description"));
+    assert!(near(place(detail, "[line.name]"), (0.5, 117.6)));
+    assert!(near(place(detail, "[line.quantity]"), (119.1, 19.0)), "{:?}", place(detail, "[line.quantity]"));
+    assert!(near(place(detail, "[line.price_unit]"), (139.1, 20.4)), "{:?}", place(detail, "[line.price_unit]"));
+    assert!(near(place(detail, "[line.price_subtotal]"), (160.5, 19.0)));
+    // Half the table for the note, the other half shared by the others.
+    let footer = &out.report.groups[0].footer.elements;
+    assert!(near(place(footer, "[o.note]"), (0.5, 89.0)), "{:?}", place(footer, "[o.note]"));
+    assert!(near(place(footer, "[o.user_id.name]"), (90.5, 44.0)), "{:?}", place(footer, "[o.user_id.name]"));
+    assert!(near(place(footer, "[o.date]"), (135.5, 44.0)));
+    // A table where no cell asks keeps equal columns.
+    let delivery = import(DELIVERY, None).unwrap();
+    let product = place(&delivery.report.detail.elements, "[line.product_id.name]");
+    assert!(near(product, (0.5, 59.0)), "{product:?}");
+}

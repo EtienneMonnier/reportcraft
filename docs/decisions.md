@@ -943,3 +943,20 @@ by itself, so it is now part of the report model rather than a trick of the impo
 - This is the idea of table cells that give their width to their neighbours in some report
   designers; ReportCraft has no table element, so it is a property of free elements instead, which
   is also what an imported grid row is.
+
+## Table columns that ask for a share of the table (R4.1)
+
+The importer gave a table's columns equal widths. Odoo's invoice has six: the description
+squeezed into a sixth wrapped a line's text onto many lines while the amounts had room to spare.
+In the browser the table is laid out by its content, and the description's cell says `w-100`
+(as wide as the table), so it takes everything the other columns, as wide as their content, leave.
+
+- A cell with Bootstrap's width classes (`w-25`, `w-50`, `w-75`, `w-100`), in any row of the
+  table, gives its column that share. The other columns are as wide as their header's text
+  (measured like other imported text) and never narrower than 20 mm, the room an amount takes;
+  their values aren't known when importing, so they don't count.
+- Columns asking for less than the whole table have their share, and the others are widened to
+  fill the rest; a `w-100` column takes what the others leave, never less than a quarter of the
+  table (the others are narrowed when needed). A table where no cell asks keeps equal columns, so
+  the templates that imported well still do.
+

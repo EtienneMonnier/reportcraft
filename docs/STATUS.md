@@ -222,7 +222,9 @@
   `not in`, `and`/`or`/`not`, parentheses), `t-set` names for paths and for conditions
   (`is_section = line.display_type == 'line_section'`), headings, bold, alignment classes
   (including the printed branch of `t-attf-class`, so `d-none` cells for the screen are left out),
-  tables in equal columns with their header row, pictures from `image_data_uri(field)`. Cells
+  tables with their header row, in equal columns unless a cell asks for a share of the table
+  (`w-100`, `w-50`…: an invoice's description takes what the others leave, each as wide as its
+  header, at least 20 mm), pictures from `image_data_uri(field)`. Cells
   under `t-if`/`t-elif`/`t-else` (on a `t` around them) are alternatives starting at the same
   column, a computed `colspan` fills the row, and spans that are alternatives in a cell
   (amount without or with taxes) are laid over each other, each under its condition.
@@ -275,7 +277,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 273 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 274 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

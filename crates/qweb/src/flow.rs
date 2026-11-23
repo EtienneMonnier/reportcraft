@@ -47,6 +47,10 @@ const MM_PER_PT: f64 = 25.4 / 72.0;
 const CHAR_EM: f64 = 0.55;
 /// Room given to a field that isn't last on its line.
 const FIELD_MM: f64 = 40.0;
+/// Least width of a table column beside one that takes a share of the table (an amount fits).
+const MIN_COLUMN_MM: f64 = 20.0;
+/// Least share of a table's width left to its columns that ask for one.
+const MIN_SHARED: f64 = 0.25;
 
 /// Where the flow writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1354,12 +1358,12 @@ impl<'a, 'i> Builder<'a, 'i> {
         let alternative = |r: Node<'a, 'i>, c: Node<'a, 'i>| branch_of(r, c).is_some_and(|b| !b.has_attribute("t-if"));
         let width = |r: &Node<'a, 'i>| cells(*r).iter().filter(|c| !alternative(*r, **c)).map(|c| span(*c)).sum::<usize>();
         let trs: Vec<Node<'a, 'i>> = rows.iter().copied().filter(|r| r.tag_name().name() == "tr").collect();
-        let head = trs.iter().find(|r| r.ancestors().any(|a| a.tag_name().name() == "thead")).map(width);
-        let columns = head.filter(|n| *n > 0).or_else(|| trs.iter().map(width).max()).unwrap_or(0);
+        let head = trs.iter().copied().find(|r| r.ancestors().any(|a| a.tag_name().name() == "thead"));
+        let columns = head.as_ref().map(width).filter(|n| *n > 0).or_else(|| trs.iter().map(width).max()).unwrap_or(0);
         if columns == 0 {
             return;
         }
-        let widths = vec![self.area().1 / columns as f64; columns];
+        let widths = column_widths(&trs, head, columns, self.area().1, alternative);
         for item in items {
             let (tr, calls) = match item {
                 TableItem::Row(tr, calls) => (tr, calls),
@@ -1820,6 +1824,73 @@ fn cells<'a, 'i>(tr: Node<'a, 'i>) -> Vec<Node<'a, 'i>> {
     tr.descendants()
         .filter(|n| is_cell(*n) && n.ancestors().skip(1).find(|a| a.tag_name().name() == "tr") == Some(tr) && !hidden_in_print(*n))
         .collect()
+}
+
+/// A table's column widths: equal, unless a cell asks for a share of the table's width
+/// (Bootstrap's `w-100`, `w-50`…: an invoice's description). Then the other columns are as wide
+/// as their header's text, at least `MIN_COLUMN_MM` (as a browser gives them their content's
+/// width), the columns asking for a share have it, and what is left goes to the others; a `w-100`
+/// column takes all that the others leave, never less than a quarter of the table.
+fn column_widths<'a, 'i>(
+    trs: &[Node<'a, 'i>],
+    head: Option<Node<'a, 'i>>,
+    columns: usize,
+    room: f64,
+    alternative: impl Fn(Node<'a, 'i>, Node<'a, 'i>) -> bool,
+) -> Vec<f64> {
+    // Each column's cells, by where they start (a cell spanning several sizes none).
+    let single = |tr: Node<'a, 'i>| {
+        let mut column = 0;
+        let mut out = Vec::new();
+        for cell in cells(tr).into_iter().filter(|c| !alternative(tr, *c)) {
+            let n = span(cell);
+            if n == 1 && column < columns {
+                out.push((column, cell));
+            }
+            column += n;
+        }
+        out
+    };
+    let mut share = vec![0.0_f64; columns];
+    for (column, cell) in trs.iter().flat_map(|tr| single(*tr)) {
+        if let (Some(s), Some(pct)) = (share.get_mut(column), width_class(cell)) {
+            *s = s.max(pct);
+        }
+    }
+    let total: f64 = share.iter().sum();
+    if total <= 0.0 {
+        return vec![room / columns.max(1) as f64; columns];
+    }
+    let mut natural = vec![MIN_COLUMN_MM; columns];
+    for (column, cell) in head.map(single).unwrap_or_default() {
+        if let Some(w) = natural.get_mut(column) {
+            let chars = collapse(&cell.descendants().filter(|n| n.is_text()).filter_map(|n| n.text()).collect::<String>()).chars().count();
+            *w = w.max(chars as f64 * 10.0 * MM_PER_PT * CHAR_EM + 2.0);
+        }
+    }
+    let fixed: f64 = natural.iter().zip(&share).filter(|(_, s)| **s <= 0.0).map(|(w, _)| w).sum();
+    let wanted = (total / 100.0).min(1.0) * room;
+    // What the columns asking for a share get, and how much the others are widened or narrowed.
+    let (shared, scale) = if fixed <= 0.0 {
+        (room, 1.0)
+    } else if wanted + fixed <= room && total < 100.0 {
+        (wanted, (room - wanted) / fixed)
+    } else {
+        let shared = (room - fixed).max(room * MIN_SHARED);
+        (shared, ((room - shared) / fixed).min(1.0))
+    };
+    natural.iter().zip(&share).map(|(w, s)| if *s > 0.0 { shared * s / total } else { w * scale }).collect()
+}
+
+/// The share of its table's width a cell asks for, in percent (`w-25`, `w-50`, `w-75`, `w-100`).
+fn width_class(cell: Node<'_, '_>) -> Option<f64> {
+    print_classes(cell).split_whitespace().find_map(|c| match c {
+        "w-25" => Some(25.0),
+        "w-50" => Some(50.0),
+        "w-75" => Some(75.0),
+        "w-100" => Some(100.0),
+        _ => None,
+    })
 }
 
 fn span(cell: Node<'_, '_>) -> usize {
