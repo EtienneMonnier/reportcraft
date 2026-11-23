@@ -118,7 +118,8 @@ Anything marked **decision** waits for a maintainer.
     - [ ] Elements beside a grown text that grow with it (a table row's borders and backgrounds)
     - [ ] A grown band taller than the page split across pages (today it moves whole to a new page and runs past its end)
   - [ ] Conditional bold and format
-  - [ ] Page break after a band, and "new page after N rows"
+  - [x] Page break after a band, and "new page after N rows": `page_break_after_if`, `rows_per_page` on the detail band (#31)
+    - [ ] Rows per page counted per group (a new count at each group), and the last page's rows filled with blank lines (forms printed on pre-printed paper)
 - [x] R2.11 Barcodes and QR codes (§4 FR-PRINT-003) (#32)
   - [ ] More symbologies on demand: Code 39, EAN-8, UPC-A, GS1-128 (FNC1), DataMatrix
   - [ ] QR numeric and alphanumeric modes (smaller symbols for digits and capitals)

@@ -593,6 +593,11 @@ struct Writer<'a> {
     row_height: f64,
     /// Items that show the page number, by page.
     page_number_items: Vec<(usize, usize)>,
+    /// A band placed asked for a new page after it (`page_break_after_if`): the next band placed
+    /// starts one.
+    break_after: bool,
+    /// Detail rows placed on the page (for `rows_per_page`).
+    rows_on_page: u32,
     /// Pages where the numbering starts again at 1 (a group numbering its own pages starts on
     /// them), in order.
     restarts: Vec<usize>,
@@ -611,7 +616,7 @@ struct Writer<'a> {
     child_reports: HashMap<usize, Arc<Report>>,
     /// Formula elements, parsed once (boxed: their address keys the aggregate memo).
     formulas: HashMap<usize, Option<Box<reportcraft_expr::Expr>>>,
-    /// `visible_if` and `page_break_before_if` formulas, parsed once (by the address of their text).
+    /// Band and element conditions (`visible_if`, page breaks), parsed once (by the address of their text).
     conditions: HashMap<usize, Option<Box<reportcraft_expr::Expr>>>,
     memo: formula::Memo,
     now: Option<chrono::NaiveDateTime>,
@@ -646,6 +651,8 @@ impl<'a> Writer<'a> {
             column_bottom: 0.0,
             row_height: 0.0,
             page_number_items: Vec::new(),
+            break_after: false,
+            rows_on_page: 0,
             restarts: Vec::new(),
             next_row: None,
             last_row: None,
@@ -662,6 +669,7 @@ impl<'a> Writer<'a> {
         }
         self.page = Page::default();
         self.y = self.report.page.margin_mm;
+        self.rows_on_page = 0;
         self.column = 0;
         self.row_height = 0.0;
         self.column_top = self.y;
@@ -744,7 +752,7 @@ impl<'a> Writer<'a> {
         if band.is_empty() || !self.band_visible(band, scope) {
             return Ok(());
         }
-        if !self.fresh && self.band_breaks(band, scope) {
+        if !self.fresh && (self.take_break_after() || self.band_breaks(band, scope)) {
             self.new_page(order)?;
         }
         let fit = self.fit(band, scope);
@@ -758,6 +766,7 @@ impl<'a> Writer<'a> {
             self.y += fit.height;
             self.column_bottom = self.column_bottom.max(self.y);
             self.fresh = false;
+            self.break_after = self.band_breaks_after(band, scope);
             return Ok(());
         }
         if !self.fresh && self.y + fit.height + following > self.body_bottom() + 1e-9 {
@@ -766,7 +775,13 @@ impl<'a> Writer<'a> {
         self.place(band, &fit, scope, true, order)?;
         self.column_bottom = self.column_bottom.max(self.y);
         self.fresh = false;
+        self.break_after = self.band_breaks_after(band, scope);
         Ok(())
+    }
+
+    /// Whether a band placed before asked for a new page after it; the request is used up.
+    fn take_break_after(&mut self) -> bool {
+        std::mem::take(&mut self.break_after)
     }
 
     /// Moves on to the next column, or the next page after the last column.
@@ -929,13 +944,19 @@ impl<'a> Writer<'a> {
 
     /// Places a detail band: down a column, or in the next cell of a row of labels.
     fn detail(&mut self, band: &Band, scope: Scope<'_>, order: &[usize]) -> Result<()> {
-        if !self.across() {
-            return self.band_in(band, scope, order);
-        }
         if band.is_empty() || !self.band_visible(band, scope) {
             return Ok(());
         }
-        if !self.fresh && self.band_breaks(band, scope) {
+        // A page that holds as many rows as the band allows is full.
+        if !self.fresh && band.rows_per_page.is_some_and(|n| self.rows_on_page >= n) {
+            self.new_page(order)?;
+        }
+        if !self.across() {
+            self.band_in(band, scope, order)?;
+            self.rows_on_page = self.rows_on_page.saturating_add(1);
+            return Ok(());
+        }
+        if !self.fresh && (self.take_break_after() || self.band_breaks(band, scope)) {
             self.new_page(order)?;
         }
         let fit = self.fit(band, scope);
@@ -946,6 +967,8 @@ impl<'a> Writer<'a> {
         self.row_height = self.row_height.max(fit.height);
         self.column_bottom = self.column_bottom.max(self.y + self.row_height);
         self.fresh = false;
+        self.rows_on_page = self.rows_on_page.saturating_add(1);
+        self.break_after = self.band_breaks_after(band, scope);
         self.column += 1;
         if self.column >= usize::from(self.report.page.columns) {
             self.close_row();
@@ -962,13 +985,14 @@ impl<'a> Writer<'a> {
         self.y = self.y.max(self.column_bottom);
         self.column = 0;
         let fit = self.fit(band, scope);
-        if !self.fresh && (self.band_breaks(band, scope) || self.y + fit.height > self.body_bottom() + 1e-9) {
+        if !self.fresh && (self.take_break_after() || self.band_breaks(band, scope) || self.y + fit.height > self.body_bottom() + 1e-9) {
             self.new_page(order)?;
         }
         self.place(band, &fit, scope, false, order)?;
         self.column_top = self.y;
         self.column_bottom = self.y;
         self.fresh = false;
+        self.break_after = self.band_breaks_after(band, scope);
         Ok(())
     }
 
@@ -1293,6 +1317,11 @@ impl<'a> Writer<'a> {
         band.page_break_before_if.as_ref().is_some_and(|c| self.holds(c, scope).unwrap_or(false))
     }
 
+    /// A band asks for a new page after it when its `page_break_after_if` holds (an error doesn't).
+    fn band_breaks_after(&mut self, band: &Band, scope: Scope<'_>) -> bool {
+        band.page_break_after_if.as_ref().is_some_and(|c| self.holds(c, scope).unwrap_or(false))
+    }
+
     fn element_visible(&mut self, el: &Element, scope: Scope<'_>) -> bool {
         el.visible_if.as_ref().is_none_or(|c| self.holds(c, scope).unwrap_or(true))
     }
@@ -1400,6 +1429,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -1408,6 +1439,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             },
             restart_page_numbers: false,
         });
@@ -1418,6 +1451,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.report_footer = Band {
             height_mm: 6.0,
@@ -1426,6 +1461,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["Lyon", "10", "2.5", "12.5", "Paris", "5", "5", "17.5"]);
@@ -1443,6 +1480,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.detail = Band {
             height_mm: 15.0,
@@ -1451,6 +1490,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 2);
@@ -1466,6 +1507,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
@@ -1607,6 +1650,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             },
             footer: Band::default(),
             restart_page_numbers: false,
@@ -1618,6 +1663,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let doc = layout(&r, &many, &Params::new()).unwrap();
         // Body 50 mm: Lyon (6 + 30 x 5 = 156 mm) can't be kept together, so it flows from page one,
@@ -1638,6 +1685,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let mut params = Params::new();
         params.insert(REFRESHED_AT.into(), "2026-10-01T14:05:09+02:00".into());
@@ -1679,6 +1728,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -1687,6 +1738,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             },
             restart_page_numbers: false,
         });
@@ -1699,6 +1752,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.report_footer = Band {
             height_mm: 6.0,
@@ -1707,6 +1762,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["BIG (2)", "80", "67%", "40", "33%", "120", "SMALL (1)", "20", "100%", "20", "Total: 140 over 2 big"]);
@@ -1739,6 +1796,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let mut params = Params::new();
         params.insert("period".into(), "2026-10-01..2026-10-31".into());
@@ -1916,6 +1975,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1924,6 +1985,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let number = reportcraft_model::Format::Number { decimals: 1, grouping: true };
         r.detail = Band {
@@ -1933,6 +1996,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let doc = render_continuous(&r, &rows(), &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
         assert_eq!(doc.pages.len(), 1);
@@ -1989,6 +2054,8 @@ mod tests {
             page_break_before_if: cond("1/0"),
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();
@@ -2053,6 +2120,42 @@ mod tests {
         let after: Vec<f64> = items.iter().filter(|i| i.text == "after").map(|i| i.y_mm).collect();
         assert!((after[1] - after[0] - 20.0).abs() < 1e-6);
         assert!(items.iter().any(|i| i.text == long));
+    }
+
+    #[test]
+    fn breaks_after_bands_never_add_a_blank_page_and_labels_count_per_page() {
+        let detail = |after: Option<&str>, rows_per_page: Option<u32>| Band {
+            height_mm: 6.0,
+            elements: vec![el(Content::Field { field: "branch".into() })],
+            page_break_after_if: after.map(str::to_owned),
+            rows_per_page,
+            ..Band::default()
+        };
+        let pages = |r: &Report| layout(r, &rows(), &Params::new()).map(|d| d.pages.len()).unwrap_or(0);
+        let mut r = Report::new("t");
+        // After every row: a page each, none blank after the last.
+        r.detail = detail(Some("TRUE"), None);
+        assert_eq!(pages(&r), 3);
+        // A blank, an error or FALSE never breaks; a number does unless it is 0.
+        for (formula, expected) in [("[nothing]", 1), ("1/0", 1), ("[amount] > 6", 2), ("[amount] - 5", 2)] {
+            r.detail = detail(Some(formula), None);
+            assert_eq!(pages(&r), expected, "{formula}");
+        }
+        // A hidden band asks for nothing; the next shown one takes the break.
+        r.detail = detail(Some("TRUE"), None);
+        r.detail.visible_if = Some("[branch] = \"Lyon\"".into());
+        r.report_footer = Band { height_mm: 6.0, elements: vec![el(Content::Text { text: "end".into() })], ..Band::default() };
+        assert_eq!(pages(&r), 3, "Lyon, Lyon, then the footer");
+        // Two rows a page; labels count as rows.
+        r.detail = detail(None, Some(2));
+        r.report_footer = Band::default();
+        assert_eq!(pages(&r), 2);
+        r.page.columns = 2;
+        r.page.column_order = reportcraft_model::ColumnOrder::Across;
+        let doc = layout(&r, &rows(), &Params::new()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(doc.pages.iter().map(|p| p.items.len()).collect::<Vec<_>>(), vec![2, 1]);
+        r.detail = detail(Some("[branch] = \"Lyon\""), None);
+        assert_eq!(pages(&r), 2, "a label asking for a new page ends the sheet");
     }
 
     #[test]

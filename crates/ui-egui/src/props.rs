@@ -459,8 +459,9 @@ fn optional_text(ui: &mut Ui, text: &mut Option<String>, default: &str) -> bool 
     done
 }
 
-/// The band editor; `true` when an edit is finished.
-pub(crate) fn band(ui: &mut Ui, b: &mut Band) -> bool {
+/// The band editor (`detail`: the detail band, which can limit its rows per page); `true` when
+/// an edit is finished.
+pub(crate) fn band(ui: &mut Ui, b: &mut Band, detail: bool) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
         done |= length(ui, "height", &mut b.height_mm);
@@ -469,6 +470,19 @@ pub(crate) fn band(ui: &mut Ui, b: &mut Band) -> bool {
     });
     done |= optional_formula(ui, "Show only if", &mut b.visible_if);
     done |= optional_formula(ui, "New page if", &mut b.page_break_before_if);
+    done |= optional_formula(ui, "New page after if", &mut b.page_break_after_if);
+    if detail {
+        ui.horizontal(|ui| {
+            let mut limited = b.rows_per_page.is_some();
+            if ui.checkbox(&mut limited, tl!("rows per page")).changed() {
+                b.rows_per_page = limited.then_some(b.rows_per_page.unwrap_or(20));
+                done = true;
+            }
+            if let Some(n) = b.rows_per_page.as_mut() {
+                done |= finished(&ui.add(egui::DragValue::new(n).range(1..=reportcraft_model::MAX_ROWS_PER_PAGE)));
+            }
+        });
+    }
     done
 }
 

@@ -981,3 +981,23 @@ Two formats complete the ones on fields: `boolean` writes a true or false value 
 - `report.check` warns when a yes/no format is on a numeric column (it won't apply), and the
   format's texts are at most 200 characters.
 
+## Page breaks after a band, and rows per page (R2.10)
+
+A band could start a new page (`page_break_before_if`, a group's `page_break_before`) but not end
+one, and a detail band couldn't stop after a number of rows, which reports printed on forms and
+title pages need.
+
+- **`page_break_after_if`** is a formula, like the break before: when it holds for the band's
+  row, the next band placed starts a new page. The request waits for a band that is shown (a
+  hidden or empty band passes it on) and is dropped at the end of the report, so a break after the
+  last band never adds a blank page. A page that is already new ignores it, so a group starting a
+  page of its own after a band that asked for one gives one page, not two. `TRUE` breaks always
+  (a report header on a page of its own); a group footer's `[branch] <> "Valence"` gives a page per
+  branch but the last.
+- **`rows_per_page`** on the detail band: when the page holds that many detail rows, the next one
+  starts a new page. Only rows that are shown count; in labels (columns across) labels count. It is
+  a whole number from 1 to 100,000, and on another band it is ignored with a warning.
+- Page headers and footers never break the page: either set there is ignored with a warning, as the
+  break before already was. Both are in `report.setBand` and the designer's band properties (rows
+  per page for the detail band only).
+
