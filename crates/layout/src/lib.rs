@@ -1720,6 +1720,31 @@ mod tests {
     }
 
     #[test]
+    fn running_totals_add_up_each_group_to_the_current_row() {
+        let f = |e: &str| el(Content::Formula { expression: e.into() });
+        let band = |elements: Vec<Element>| Band { height_mm: 6.0, elements, ..Band::default() };
+        let mut r = Report::new("t");
+        r.groups.push(Group {
+            field: "branch".into(),
+            keep_together: false,
+            repeat_header: false,
+            page_break_before: false,
+            header: band(vec![f("[branch] & \" from \" & RUNNINGSUM([amount])")]),
+            footer: band(vec![f("\"total \" & RUNNINGSUM([amount]) & \" in \" & RUNNINGCOUNT([amount])")]),
+            restart_page_numbers: false,
+        });
+        r.detail = band(vec![f("RUNNINGCOUNT([branch]) & \": \" & [amount] & \" → \" & RUNNINGSUM([amount])")]);
+        r.page_footer = band(vec![f("\"page \" & RUNNINGSUM([amount]) & \".\"")]);
+        r.report_footer = band(vec![f("\"all \" & RUNNINGSUM([amount])")]);
+        let doc = layout(&r, &rows(), &Params::new()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            texts(&doc),
+            ["Lyon from 10", "1: 10 → 10", "2: 2.5 → 12.5", "total 12.5 in 2", "Paris from 5", "1: 5 → 5", "total 5 in 1", "all 17.5", "page ."],
+            "header: the first row's; footer: the group's total; a page footer runs over nothing"
+        );
+    }
+
+    #[test]
     fn named_formulas_are_fields_and_formula_elements_summarise_their_band() {
         let f = |e: &str| el(Content::Formula { expression: e.into() });
         let mut r = Report::new("t");

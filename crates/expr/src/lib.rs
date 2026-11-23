@@ -26,7 +26,7 @@ mod value;
 #[cfg(test)]
 mod tests;
 
-pub use eval::{Env, evaluate};
+pub use eval::{Env, evaluate, running_values};
 pub use func::Func;
 pub use parse::{Expr, Op, ParseError, parse};
 pub use text::Locale;

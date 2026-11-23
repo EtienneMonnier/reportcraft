@@ -169,10 +169,19 @@ pub(crate) fn with_formulas(report: &Report, rows: &RowSet, params: &Params, can
 }
 
 /// The last aggregate results, for the rows being summarised (one scope at a time: the rows of
-/// a detail band's group share it).
+/// a detail band's group share it), and the running totals over them.
 #[derive(Default)]
 pub(crate) struct Memo {
     scope: RefCell<(usize, usize, HashMap<usize, Val>)>,
+    running: RefCell<Running>,
+}
+
+/// Running totals over one scope's rows: where each row is in it, and each field's values.
+#[derive(Default)]
+struct Running {
+    scope: (usize, usize),
+    positions: HashMap<usize, usize>,
+    values: HashMap<(usize, reportcraft_expr::Func), Vec<Val>>,
 }
 
 /// What a formula element reads: the band's current row and the rows it summarises.
@@ -211,6 +220,24 @@ impl Env for BandEnv<'_> {
 
     fn locale(&self) -> reportcraft_expr::Locale {
         self.locale
+    }
+
+    fn running(&self, name: &str, func: reportcraft_expr::Func) -> std::result::Result<Val, ExprError> {
+        let c = resolve(self.rows, name).ok_or(ExprError::Name)?;
+        let Some(current) = self.current else { return Ok(Val::Blank) };
+        let scope = (self.summary.as_ptr() as usize, self.summary.len());
+        let mut cache = self.memo.running.try_borrow_mut().map_err(|_| ExprError::Value)?;
+        if cache.scope != scope || cache.positions.is_empty() {
+            *cache = Running { scope, positions: self.summary.iter().enumerate().map(|(i, &r)| (r, i)).collect(), values: HashMap::new() };
+        }
+        // A row the band doesn't summarise (a page footer's) has no running total.
+        let Some(&at) = cache.positions.get(&current) else { return Ok(Val::Blank) };
+        let values = cache.values.entry((c, func)).or_insert_with(|| {
+            let column: Vec<Val> =
+                self.summary.iter().map(|&r| from_value(self.rows.value(self.rows.rows.get(r).map_or(&[], Vec::as_slice), c))).collect();
+            reportcraft_expr::running_values(func, &column)
+        });
+        Ok(values.get(at).cloned().unwrap_or(Val::Blank))
     }
 
     fn memo(&self, key: usize, compute: &mut dyn FnMut() -> Val) -> Val {

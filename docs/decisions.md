@@ -1011,3 +1011,25 @@ every page. Page numbers still count the title page ("2 / 3" on the first page a
 a printed document. It applies to the report's first page, not to each group's first page when a
 group numbers its own pages. Margins of their own for page one are on the roadmap.
 
+## Running totals (R2.2)
+
+A report often shows, on each line, the total so far: a balance after each payment, a line
+number, the amount carried from one line to the next. Crystal Reports has running total fields
+and SSRS a `RunningValue` function; ReportCraft's formulas are Excel-style, so two functions do it:
+`RUNNINGSUM([field])` and `RUNNINGCOUNT([field])`.
+
+- They run over the rows the band summarises, in their order, up to the current row: in the
+  detail band, the rows of its innermost group (all rows without groups); in a group header, the
+  group's first row; in a group or report footer, all of them, which is the total. A page header
+  or footer summarises no rows: blank. Running over an outer group, the whole report or the page
+  (page totals) is on the roadmap.
+- `RUNNINGSUM` adds as `SUM` does (numbers and numeric text, blanks and other text skipped) and an
+  error stays from its row on; `RUNNINGCOUNT` counts the values that aren't blank, as `COUNTA`
+  does, so `RUNNINGCOUNT([item])` numbers the lines.
+- Speed: each group's values are computed once, in one pass, and kept with where each row is in
+  the group (`formula::Memo`), so a group of a million rows costs a million steps, not a million
+  squared. A running total depends on the current row, so an aggregate around it isn't
+  remembered as one that doesn't.
+- A named formula can't hold one: named formulas are computed per row before grouping, and are
+  already refused when they summarise rows.
+
