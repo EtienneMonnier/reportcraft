@@ -752,3 +752,34 @@ fn grid_columns_are_boxes_that_give_their_width_up_when_hidden() {
     let problems: Vec<_> = out.report.check(Some(&out.sample.columns)).into_iter().filter(|d| d.severity == Severity::Error).collect();
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+/// An original template with values separated by a space only: a quantity and its unit in a
+/// right-aligned cell, a postcode and a city, a name and a value shown under a condition.
+const SPACED: &str = r#"<t t-name="shop.report_spaced">
+  <t t-foreach="docs" t-as="o">
+    <p><span t-field="o.zip"/> <span t-field="o.city"/></p>
+    <p><span t-field="o.name"/> <span t-if="o.ref" t-field="o.ref"/></p>
+    <table class="table">
+      <thead><tr><th>Product</th><th class="text-end">Quantity</th></tr></thead>
+      <tbody>
+        <tr t-foreach="o.line_ids" t-as="line">
+          <td><span t-field="line.name"/></td>
+          <td class="text-end"><span t-field="line.quantity"/>
+            <span t-field="line.uom_id"/></td>
+        </tr>
+      </tbody>
+    </table>
+  </t>
+</t>"#;
+
+#[test]
+fn a_space_between_two_values_is_kept() {
+    let out = import(SPACED, None).unwrap();
+    let header = texts(&out.report.groups[0].header.elements);
+    // Side by side, each value has a box: no box for the space.
+    assert!(header.contains(&"[o.zip]".to_owned()) && header.contains(&"[o.city]".to_owned()), "{header:?}");
+    assert!(!header.iter().any(|t| t.trim().is_empty()), "{header:?}");
+    assert!(header.contains(&"=TRIM([o.name] & \" \" & IF(NOT(ISBLANK([o.ref])), [o.ref], \"\"))".to_owned()), "{header:?}");
+    let detail = texts(&out.report.detail.elements);
+    assert!(detail.contains(&"=[line.quantity] & \" \" & [line.uom_id]".to_owned()), "{detail:?}");
+}

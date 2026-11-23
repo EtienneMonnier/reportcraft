@@ -1108,7 +1108,7 @@ impl<'a, 'i> Builder<'a, 'i> {
         let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
         if collapsed.is_empty() {
             if !raw.is_empty() {
-                self.space();
+                self.space(scope);
             }
             return;
         }
@@ -1118,16 +1118,22 @@ impl<'a, 'i> Builder<'a, 'i> {
         self.piece(Piece::Text(text, scope.style.text()), scope);
     }
 
-    /// A space between pieces, kept on the text before it.
-    fn space(&mut self) {
-        let last = match self.cell.as_mut() {
-            Some(cell) => cell.last_mut().map(|(p, _)| p),
-            None => self.pending.last_mut().map(|(p, _)| p),
+    /// A space between pieces, kept on the text before it, or a piece of its own after a value
+    /// (`<span t-field="line.quantity"/> <span t-field="line.product_uom_id"/>` writes `1 Units`).
+    /// Nothing before it: a line doesn't start with a space.
+    fn space(&mut self, scope: &Scope) {
+        let pieces = match self.cell.as_mut() {
+            Some(cell) => cell,
+            None => &mut self.pending,
         };
-        if let Some(Piece::Text(t, _)) = last
-            && !t.ends_with(' ')
-        {
-            t.push(' ');
+        match pieces.last_mut() {
+            Some((Piece::Text(t, _), _)) => {
+                if !t.ends_with(' ') {
+                    t.push(' ');
+                }
+            }
+            Some(_) => pieces.push((Piece::Text(" ".into(), scope.style.text()), scope.condition.clone())),
+            None => {}
         }
     }
 
@@ -1314,7 +1320,7 @@ impl<'a, 'i> Builder<'a, 'i> {
     /// own condition, so the line reads as Odoo prints it.
     pub(crate) fn flush(&mut self, scope: &Scope) {
         if self.cell.is_some() {
-            self.space();
+            self.space(scope);
             return;
         }
         let mut pending = std::mem::take(&mut self.pending);
@@ -1855,8 +1861,12 @@ fn line_height(pieces: &[Piece]) -> f64 {
 /// alignment; several on a left-aligned line are placed one after the other (text as wide as it
 /// reads, a field as wide as the room left when it is last); otherwise they are joined in one
 /// formula, which keeps the alignment.
-fn line(pieces: Vec<Piece>, x: f64, width: f64, y: f64, height: f64, scope: &Scope) -> Vec<Element> {
+fn line(mut pieces: Vec<Piece>, x: f64, width: f64, y: f64, height: f64, scope: &Scope) -> Vec<Element> {
     let align = pieces.first().map_or(Align::Left, |p| p.style().align);
+    if align == Align::Left && pieces.len() > 1 {
+        // Side by side, each value has a box of its own: a space between two is room already.
+        pieces.retain(|p| !matches!(p, Piece::Text(t, _) if t.trim().is_empty()));
+    }
     if let [only] = pieces.as_slice() {
         let (content, format) = content_of(only);
         let mut el = element(x, y, width, height, *only.style(), content, scope);
