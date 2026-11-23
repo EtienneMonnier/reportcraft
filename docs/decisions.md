@@ -960,3 +960,24 @@ In the browser the table is laid out by its content, and the description's cell 
   table (the others are narrowed when needed). A table where no cell asks keeps equal columns, so
   the templates that imported well still do.
 
+## Yes/no and text formats (R2.1)
+
+Two formats complete the ones on fields: `boolean` writes a true or false value as words and
+`text` writes a value in a case, between a prefix and a suffix.
+
+- **Yes/no** reads a boolean, 1 or 0 (SQLite and CSV booleans) and the text `true`/`false`; any
+  other value is written as it is, like the other formats. Without texts of its own it writes the
+  report language's words, which are part of each locale's row (`Oui`/`Non`, `Ja`/`Nein`,
+  `Sí`/`No`…), so a report in French says `Oui` whatever the reader's interface language. The
+  designer shows those words as the hints of its two boxes. A box left empty in the file means
+  the default; an empty text given (`"false_text": ""`) shows nothing, for a tick only when true.
+- **Text** writes the value as text (numbers as they are, not in the locale's format, since an
+  identifier such as `Ref. 1042` shouldn't get a thousands separator), in upper, lower or title
+  case (title case as the `PROPER` formula writes it), between a prefix and a suffix. A blank value
+  stays blank, without them, so `Tel. ` doesn't show alone.
+- Both write words, so XLSX gets the words as text, as the report shows them, rather than a
+  typed boolean or number: Excel can't show a boolean under a format of its own, and a number
+  with a prefix is a label. Typed booleans in XLSX are on the roadmap.
+- `report.check` warns when a yes/no format is on a numeric column (it won't apply), and the
+  format's texts are at most 200 characters.
+

@@ -118,7 +118,9 @@
 - Formats on fields and totals: number (decimals, grouping), currency (symbol before or after),
   percent, date (locale pattern or `strftime` pattern; ISO, SQL and RFC 3339 inputs), following the
   report's `locale` (`en`, `en-US`, `en-GB`, `fr`, `fr-CH`, `de`, `de-CH`, `es`, `it`, `nl`, `pt`), day and
-  month names included (`%A %-d %B` writes "mercredi 11 novembre" in `fr`).
+  month names included (`%A %-d %B` writes "mercredi 11 novembre" in `fr`); yes/no (`Oui`/`Non`
+  in French, or the texts given, for a boolean, 1 or 0, `true` or `false`) and text (upper, lower
+  or title case, a prefix and a suffix that a blank value doesn't show), both in the designer.
 - Typed parameters: text, integer, number, boolean, date, date range; allowed values, several
   values, required, defaults; checked before rendering, listed by `report.parameters`, shown with
   formats (a date range writes both ends).
@@ -277,7 +279,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 274 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 277 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

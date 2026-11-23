@@ -210,6 +210,8 @@ pub(crate) fn excel_format(format: &Format) -> Option<String> {
         }
         Format::Percent { decimals: d } => format!("0{}%", decimals(*d)),
         Format::Date { pattern } => excel_date(pattern.as_deref().unwrap_or("%Y-%m-%d"))?,
+        // Written as the words the report shows.
+        Format::Boolean { .. } | Format::Text { .. } => return None,
     })
 }
 

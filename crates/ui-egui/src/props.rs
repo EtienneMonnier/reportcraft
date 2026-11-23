@@ -3,7 +3,7 @@
 //! made), so the designer sends one command per edit rather than one per frame.
 
 use egui::{Response, Ui};
-use reportcraft_model::{AggregateFn, Align, Band, Color, Content, Element, Format};
+use reportcraft_model::{AggregateFn, Align, Band, Color, Content, Element, Format, TextCase};
 
 /// Whether an edit made through `r` is finished and should be applied.
 pub(crate) fn finished(r: &Response) -> bool {
@@ -115,8 +115,9 @@ fn length(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
     finished(&ui.add(egui::DragValue::new(value).speed(0.5).range(0.0..=5000.0).suffix(" mm")))
 }
 
-/// The element editor; `true` when an edit is finished.
-pub(crate) fn element(ui: &mut Ui, el: &mut Element, fields: &[String]) -> bool {
+/// The element editor (`locale`: the report's, for the defaults a format shows); `true` when an
+/// edit is finished.
+pub(crate) fn element(ui: &mut Ui, el: &mut Element, fields: &[String], locale: &str) -> bool {
     let mut done = false;
     egui::Grid::new("geometry").num_columns(8).show(ui, |ui| {
         done |= length(ui, "x", &mut el.x_mm);
@@ -132,7 +133,7 @@ pub(crate) fn element(ui: &mut Ui, el: &mut Element, fields: &[String]) -> bool 
             .checkbox(&mut el.can_grow, tl!("can grow"))
             .on_hover_text(tl!("text too wide wraps onto more lines; what lies below moves down"))
             .changed();
-        done |= format(ui, &mut el.format);
+        done |= format(ui, &mut el.format, locale);
         done |= optional_formula(ui, "Colour formula", &mut el.color_formula);
         done |= optional_formula(ui, "Background formula", &mut el.background_formula);
     }
@@ -373,15 +374,17 @@ fn style(ui: &mut Ui, el: &mut Element) -> bool {
     done
 }
 
-fn format(ui: &mut Ui, f: &mut Option<Format>) -> bool {
+fn format(ui: &mut Ui, f: &mut Option<Format>, locale: &str) -> bool {
     let mut done = false;
-    let names = ["plain", "number", "currency", "percent", "date"];
+    let names = ["plain", "number", "currency", "percent", "date", "yes/no", "text"];
     let current = match f {
         None => "plain",
         Some(Format::Number { .. }) => "number",
         Some(Format::Currency { .. }) => "currency",
         Some(Format::Percent { .. }) => "percent",
         Some(Format::Date { .. }) => "date",
+        Some(Format::Boolean { .. }) => "yes/no",
+        Some(Format::Text { .. }) => "text",
     };
     ui.horizontal(|ui| {
         ui.label(tl!("Format"));
@@ -393,6 +396,8 @@ fn format(ui: &mut Ui, f: &mut Option<Format>) -> bool {
                         "currency" => Some(Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true }),
                         "percent" => Some(Format::Percent { decimals: 1 }),
                         "date" => Some(Format::Date { pattern: None }),
+                        "yes/no" => Some(Format::Boolean { true_text: None, false_text: None }),
+                        "text" => Some(Format::Text { case: None, prefix: String::new(), suffix: String::new() }),
                         _ => None,
                     };
                     done = true;
@@ -416,9 +421,41 @@ fn format(ui: &mut Ui, f: &mut Option<Format>) -> bool {
                 done |= finished(&ui.add(egui::TextEdit::singleline(&mut p).hint_text(tl!("the locale's date, or %d/%m/%Y")).desired_width(140.0)));
                 *pattern = (!p.trim().is_empty()).then_some(p);
             }
+            Some(Format::Boolean { true_text, false_text }) => {
+                let style = reportcraft_model::locale_or_default(locale);
+                done |= optional_text(ui, true_text, style.yes);
+                done |= optional_text(ui, false_text, style.no);
+            }
+            Some(Format::Text { case, prefix, suffix }) => {
+                done |= finished(&ui.add(egui::TextEdit::singleline(prefix).hint_text(tl!("before")).desired_width(50.0)));
+                done |= finished(&ui.add(egui::TextEdit::singleline(suffix).hint_text(tl!("after")).desired_width(50.0)));
+                let cases = [
+                    (None, "as written"),
+                    (Some(TextCase::Upper), "UPPER CASE"),
+                    (Some(TextCase::Lower), "lower case"),
+                    (Some(TextCase::Title), "Title Case"),
+                ];
+                let shown = cases.iter().find(|(c, _)| c == case).map_or("as written", |(_, n)| n);
+                egui::ComboBox::from_id_salt("text case").selected_text(tl!(shown)).show_ui(ui, |ui| {
+                    for (c, n) in cases {
+                        if ui.selectable_label(c == *case, tl!(n)).clicked() && c != *case {
+                            *case = c;
+                            done = true;
+                        }
+                    }
+                });
+            }
             None => {}
         }
     });
+    done
+}
+
+/// A text left blank for the default, shown as a hint: `true` when an edit is finished.
+fn optional_text(ui: &mut Ui, text: &mut Option<String>, default: &str) -> bool {
+    let mut t = text.clone().unwrap_or_default();
+    let done = finished(&ui.add(egui::TextEdit::singleline(&mut t).hint_text(default).desired_width(50.0)));
+    *text = (!t.is_empty()).then_some(t);
     done
 }
 

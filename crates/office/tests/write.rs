@@ -111,6 +111,37 @@ fn xlsx_keeps_numbers_and_dates_typed() {
 }
 
 #[test]
+fn xlsx_writes_yes_no_and_text_formats_as_the_report_shows_them() {
+    let mut r = Report::new("Flags");
+    r.locale = "fr".into();
+    r.detail = Band {
+        height_mm: 6.0,
+        elements: vec![
+            el(0.0, 30.0, Content::Field { field: "paid".into() }, Some(Format::Boolean { true_text: None, false_text: None }), Align::Left),
+            el(
+                40.0,
+                30.0,
+                Content::Field { field: "id".into() },
+                Some(Format::Text { case: None, prefix: "Ref. ".into(), suffix: String::new() }),
+                Align::Left,
+            ),
+        ],
+        ..Band::default()
+    };
+    let col = |n: &str, t| Column { name: n.into(), field_type: t };
+    let rows = RowSet {
+        columns: vec![col("paid", FieldType::Bool), col("id", FieldType::Integer)],
+        rows: vec![vec![Value::Bool(true), Value::Int(1042)], vec![Value::Bool(false), Value::Int(7)]],
+    };
+    let doc = render_continuous(&r, &rows, &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
+    let out = to_xlsx(&doc, &Cancel::default()).unwrap();
+    let sheet = part(&out.bytes, "xl/worksheets/sheet1.xml");
+    let strings = part(&out.bytes, "xl/sharedStrings.xml");
+    assert!(["Oui", "Non", "Ref. 1042", "Ref. 7"].iter().all(|s| strings.contains(s)), "{strings}");
+    assert!(!sheet.contains("t=\"b\"") && !sheet.contains("<v>1042</v>"), "words, not booleans or numbers: {sheet}");
+}
+
+#[test]
 fn docx_keeps_the_pages_and_positions() {
     let (r, rows) = report();
     let doc = layout(&r, &rows, &Params::new()).unwrap();

@@ -8,7 +8,7 @@
 mod format;
 mod params;
 
-pub use format::{Format, LOCALES, LocaleStyle, MAX_DECIMALS, locale_or_default, locale_style};
+pub use format::{Format, LOCALES, LocaleStyle, MAX_DECIMALS, MAX_FORMAT_TEXT, TextCase, locale_or_default, locale_style};
 pub use params::{MAX_VALUES, ParamType, ParamValue, Parameter, resolve as resolve_parameters};
 
 pub use reportcraft_barcode::{EcLevel, Symbology};
@@ -839,6 +839,9 @@ impl Report {
                 if el.format.as_ref().and_then(Format::decimals).is_some_and(|d| d > MAX_DECIMALS) {
                     return Err(Error::Invalid(format!("{name}: at most {MAX_DECIMALS} decimals")));
                 }
+                if el.format.as_ref().is_some_and(|f| !f.texts_are_valid()) {
+                    return Err(Error::Invalid(format!("{name}: a format's texts are at most {MAX_FORMAT_TEXT} characters")));
+                }
                 if let Some(Format::Date { pattern: Some(p) }) = &el.format
                     && !date_pattern_is_valid(p)
                 {
@@ -856,6 +859,18 @@ impl Report {
         }
         Ok(())
     }
+}
+
+/// Why a field's format won't apply to its column's values, if it won't.
+fn format_misfit(format: &Format, column: &Column) -> Option<String> {
+    let field = &column.name;
+    if format.is_numeric() && matches!(column.field_type, FieldType::Text | FieldType::Bool) {
+        return Some(format!("`{field}` is not numeric: the number format won't apply"));
+    }
+    if matches!(format, Format::Boolean { .. }) && column.field_type == FieldType::Number {
+        return Some(format!("`{field}` is not true or false: the yes/no format won't apply"));
+    }
+    None
 }
 
 impl Report {
@@ -1058,11 +1073,11 @@ impl Report {
                             out.push(Diagnostic::warning(&at, format!("`{field}` is not numeric: this total shows nothing")));
                         }
                     }
-                    Content::Field { field } if el.format.as_ref().is_some_and(Format::is_numeric) => {
-                        if let Some(Some(c)) = column(field)
-                            && matches!(c.field_type, FieldType::Text | FieldType::Bool)
+                    Content::Field { field } => {
+                        if let (Some(Some(c)), Some(format)) = (column(field), &el.format)
+                            && let Some(problem) = format_misfit(format, c)
                         {
-                            out.push(Diagnostic::warning(&at, format!("`{field}` is not numeric: the number format won't apply")));
+                            out.push(Diagnostic::warning(&at, problem));
                         }
                     }
                     Content::Formula { expression } => out.extend(self.check_formula(&at, expression, columns, repeating)),
@@ -1332,6 +1347,16 @@ mod tests {
         assert!(r.validate().is_err(), "unknown strftime directive");
         r.detail.elements = vec![el(Content::Text { text: "x".into() }, Format::Percent { decimals: 11 })];
         assert!(r.validate().is_err(), "too many decimals");
+        r.detail.elements = vec![el(Content::Text { text: "x".into() }, Format::Text { case: None, prefix: "x".repeat(201), suffix: String::new() })];
+        assert!(r.validate().is_err(), "a prefix too long");
+        r.detail.elements = vec![el(Content::Field { field: "rate".into() }, Format::Boolean { true_text: Some("✓".into()), false_text: None })];
+        assert!(r.validate().is_ok());
+        let found = r.check(Some(&[Column { name: "rate".into(), field_type: FieldType::Number }]));
+        assert!(found.iter().any(|d| d.message.contains("yes/no format won't apply")), "{found:?}");
+        assert!(r.check(Some(&[Column { name: "rate".into(), field_type: FieldType::Bool }])).iter().all(|d| !d.message.contains("yes/no")));
+        let read: Format = serde_json::from_str(r#"{"kind": "text", "case": "title", "suffix": " kg"}"#).unwrap();
+        assert_eq!(read, Format::Text { case: Some(TextCase::Title), prefix: String::new(), suffix: " kg".into() });
+        assert_eq!(serde_json::to_string(&Format::Boolean { true_text: None, false_text: None }).unwrap(), r#"{"kind":"boolean"}"#);
         assert!(date_pattern_is_valid("%d/%m/%Y %H:%M") && !date_pattern_is_valid("%"));
     }
 

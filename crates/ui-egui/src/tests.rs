@@ -201,6 +201,17 @@ fn insert_adds_each_kind_to_the_selected_band_and_the_panel_edits_it() {
     d.run("report.setElement", serde_json::json!({"band": band, "index": index, "element": el}));
     d.sync_draft();
     assert!(matches!(&d.draft, Some((_, crate::Draft::Element(_, _, e))) if e.style.bold));
+    // The yes/no and text formats have their editors.
+    for format in [
+        reportcraft_model::Format::Boolean { true_text: None, false_text: Some("–".into()) },
+        reportcraft_model::Format::Text { case: Some(reportcraft_model::TextCase::Upper), prefix: "Ref. ".into(), suffix: String::new() },
+    ] {
+        el.format = Some(format.clone());
+        d.run("report.setElement", serde_json::json!({"band": band, "index": index, "element": el}));
+        d.sync_draft();
+        assert!(frames(&mut d, 2) > 50, "{}", d.status());
+        assert_eq!(d.session().report.report_footer.elements.get(index).and_then(|e| e.format.clone()), Some(format));
+    }
     // Nothing selected: the report itself.
     d.selected = None;
     d.selected_band = None;

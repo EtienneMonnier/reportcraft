@@ -3,7 +3,7 @@
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use reportcraft_core::Value;
-use reportcraft_model::{Format, LocaleStyle, MAX_DECIMALS};
+use reportcraft_model::{Format, LocaleStyle, MAX_DECIMALS, TextCase};
 
 /// The text shown for `value`. Without a format, or when the format doesn't apply to the value,
 /// the value is written as it is.
@@ -35,7 +35,55 @@ pub fn write(value: &Value, format: Option<&Format>, locale: &LocaleStyle) -> St
             }
             other => other.to_string(),
         },
+        Format::Boolean { true_text, false_text } => match truth(value) {
+            Some(true) => true_text.clone().unwrap_or_else(|| locale.yes.to_owned()),
+            Some(false) => false_text.clone().unwrap_or_else(|| locale.no.to_owned()),
+            None => value.to_string(),
+        },
+        Format::Text { case, prefix, suffix } => {
+            let text = value.to_string();
+            if text.trim().is_empty() {
+                return String::new();
+            }
+            let text = match case {
+                None => text,
+                Some(TextCase::Upper) => text.to_uppercase(),
+                Some(TextCase::Lower) => text.to_lowercase(),
+                Some(TextCase::Title) => title_case(&text),
+            };
+            format!("{prefix}{text}{suffix}")
+        }
     }
+}
+
+/// A value read as true or false: a boolean, 1 or 0, or the text `true`/`false` (any case).
+fn truth(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(b) => Some(*b),
+        Value::Int(1) => Some(true),
+        Value::Int(0) => Some(false),
+        Value::Number(n) if *n == 1.0 => Some(true),
+        Value::Number(n) if *n == 0.0 => Some(false),
+        Value::Text(t) if t.trim().eq_ignore_ascii_case("true") => Some(true),
+        Value::Text(t) if t.trim().eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
+}
+
+/// Each word's first letter in capitals and the others small: a letter after a letter is small
+/// (`jean-luc o'neil` → `Jean-Luc O'Neil`), as the `PROPER` formula writes it.
+fn title_case(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut after_letter = false;
+    for c in text.chars() {
+        if after_letter {
+            out.extend(c.to_lowercase());
+        } else {
+            out.extend(c.to_uppercase());
+        }
+        after_letter = c.is_alphabetic();
+    }
+    out
 }
 
 /// `n` rounded to `decimals`, with the locale's separators. Never writes `-0`.
@@ -162,6 +210,36 @@ mod tests {
         assert_eq!(d("%a %b", "de"), "Mi Nov");
         assert_eq!(d("%B", "xx-YY"), "November", "an unknown locale writes English");
         assert_eq!(d("%I:%M %p", "en-US"), "03:30 PM");
+    }
+
+    #[test]
+    fn yes_or_no_in_the_report_language_or_the_texts_given() {
+        let yes_no = Format::Boolean { true_text: None, false_text: None };
+        let w = |v: Value, f: &Format, tag: &str| write(&v, Some(f), &locale_or_default(tag));
+        assert_eq!(w(Value::Bool(true), &yes_no, "en"), "Yes");
+        assert_eq!(w(Value::Bool(false), &yes_no, "fr"), "Non");
+        assert_eq!(w(Value::Int(1), &yes_no, "de-CH"), "Ja");
+        assert_eq!(w(Value::Number(0.0), &yes_no, "pt"), "Não");
+        assert_eq!(w(Value::Text(" TRUE ".into()), &yes_no, "es"), "Sí");
+        assert_eq!(w(Value::Int(2), &yes_no, "en"), "2", "neither true nor false");
+        assert_eq!(w(Value::Text("maybe".into()), &yes_no, "en"), "maybe");
+        assert_eq!(w(Value::Null, &yes_no, "en"), "");
+        let ticks = Format::Boolean { true_text: Some("✓".into()), false_text: Some(String::new()) };
+        assert_eq!(w(Value::Bool(true), &ticks, "fr"), "✓");
+        assert_eq!(w(Value::Bool(false), &ticks, "fr"), "");
+    }
+
+    #[test]
+    fn text_in_a_case_between_a_prefix_and_a_suffix() {
+        let text = |case, prefix: &str, suffix: &str| Format::Text { case, prefix: prefix.into(), suffix: suffix.into() };
+        let en = locale_or_default("en");
+        assert_eq!(write(&Value::Text("lyon".into()), Some(&text(Some(TextCase::Upper), "", "")), &en), "LYON");
+        assert_eq!(write(&Value::Text("ÉTÉ".into()), Some(&text(Some(TextCase::Lower), "", "")), &en), "été");
+        assert_eq!(write(&Value::Text("jean-luc o'NEIL".into()), Some(&text(Some(TextCase::Title), "", "")), &en), "Jean-Luc O'Neil");
+        assert_eq!(write(&Value::Int(1042), Some(&text(None, "Ref. ", "")), &en), "Ref. 1042");
+        assert_eq!(write(&Value::Number(12.5), Some(&text(None, "", " kg")), &en), "12.5 kg");
+        assert_eq!(write(&Value::Text("  ".into()), Some(&text(None, "Tel. ", "")), &en), "", "blank stays blank");
+        assert_eq!(write(&Value::Null, Some(&text(None, "Tel. ", "")), &en), "");
     }
 
     #[test]

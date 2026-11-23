@@ -56,7 +56,8 @@ Anything marked **decision** waits for a maintainer.
 ## R2 — Paginated reports (owner: open)
 - [x] R2.1 Number, date and currency formats on fields (shared rules with GridCraft's numfmt where possible) (#7)
   - [x] Day and month names in the report's language (`%A`, `%B`, `%a`, `%b`, `%p`)
-  - [ ] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix)
+  - [x] Boolean format (`Yes`/`No`, `Oui`/`Non`) and a text format (upper case, prefix/suffix) (#7)
+    - [ ] Typed booleans in XLSX under a yes/no format (today the words, as the report shows them)
   - [ ] Dates stored as numbers (Unix time, Excel serials) read by the date format
 - [x] R2.2 Formula fields (expression language: arithmetic, text, dates, `if`) — decided: Excel-style formulas (`IF`, `SUM`, `ROUND`…, fields as `[table.field]`), the syntax most report users already know; no embedded scripting language (a shared report must not run code) (#8)
   - [x] `TEXT(value, format)` and numbers turned into text in the report's locale (`10,8` in French)
