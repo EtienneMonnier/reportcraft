@@ -215,7 +215,8 @@
   chosen (the wrapper that loops over `docs`, following `t-call`s to templates of the same file),
   the document loop becomes a group starting a new page, the first loop of a document's table the
   detail band, what comes before it the group header and after it the footer. Fields (`t-field`,
-  `t-esc`, `t-out`, Odoo's `formatLang`/`format_date`…), `t-if`/`t-elif`/`t-else` as conditions
+  `t-esc`, `t-out`, Odoo's `formatLang`/`format_date`…; two values separated by a space keep it,
+  `1 Units`), `t-if`/`t-elif`/`t-else` as conditions
   (calculations on fields such as `line.price_unit * 1.2` or `round(o.amount_total - o.amount_residual, 2)`
   as formulas, with two decimals when they read an amount; truth tests, flags such as `is_…`/`collapse_…` by their value, comparisons with a literal or between fields, `in (…)` and
   `not in`, `and`/`or`/`not`, parentheses), `t-set` names for paths and for conditions
@@ -274,7 +275,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 272 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 273 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.
