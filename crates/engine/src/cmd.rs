@@ -239,7 +239,7 @@ static COMMANDS: &[CommandSpec] = &[
         id: "report.setBand",
         label: "Band properties",
         menu: "Report",
-        params: r#"{"band": string (report_header, page_header, groups[N].header, detail, groups[N].footer, page_footer, report_footer), "height_mm"?: number, "visible_if"?: string or null, "page_break_before_if"?: string or null, "page_break_after_if"?: string or null, "rows_per_page"?: integer or null (detail band), "keep_with_next"?: boolean, "can_shrink"?: boolean}"#,
+        params: r#"{"band": string (report_header, page_header, groups[N].header, detail, groups[N].footer, page_footer, report_footer), "height_mm"?: number, "visible_if"?: string or null, "page_break_before_if"?: string or null, "page_break_after_if"?: string or null, "rows_per_page"?: integer or null (detail band), "keep_with_next"?: boolean, "can_shrink"?: boolean, "hide_on_first_page"?: boolean (page header or footer)}"#,
         access: Access::Edit,
         run: report_set_band,
     },
@@ -1282,6 +1282,9 @@ fn report_set_band(s: &mut Session, params: &Json) -> EngineResult<Json> {
         }
         if let Some(k) = params.get("can_shrink").and_then(Json::as_bool) {
             band.can_shrink = k;
+        }
+        if let Some(k) = params.get("hide_on_first_page").and_then(Json::as_bool) {
+            band.hide_on_first_page = k;
         }
         Ok(json!({"height_mm": band.height_mm}))
     })

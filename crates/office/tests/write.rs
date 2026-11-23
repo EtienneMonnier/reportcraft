@@ -40,6 +40,7 @@ fn report() -> (Report, RowSet) {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_footer = Band {
         height_mm: 6.0,
@@ -50,6 +51,7 @@ fn report() -> (Report, RowSet) {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     let money = Format::Currency { symbol: "€".into(), decimals: 2, symbol_after: true };
     r.detail = Band {
@@ -69,6 +71,7 @@ fn report() -> (Report, RowSet) {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     let col = |n: &str, t| Column { name: n.into(), field_type: t };
     let rows = RowSet {
@@ -222,6 +225,7 @@ fn docx_draws_backgrounds_lines_boxes_and_barcodes_behind_the_text() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     let doc = layout(&r, &RowSet::default(), &Params::new()).unwrap();
     let out = to_docx(&doc, &Cancel::default()).unwrap();
@@ -263,6 +267,7 @@ fn docx_draws_chart_wedges_as_pictures() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     if let Some(e) = r.report_footer.elements.first_mut() {
         e.height_mm = 45.0;

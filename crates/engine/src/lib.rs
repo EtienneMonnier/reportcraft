@@ -794,6 +794,8 @@ mod tests {
         assert_eq!((s.report.detail.page_break_after_if.as_deref(), s.report.detail.rows_per_page), (None, None));
         assert!(s.execute("report.setBand", &json!({"band": "detail", "rows_per_page": -1})).is_err());
         assert!(s.execute("report.setBand", &json!({"band": "detail", "rows_per_page": 0})).is_err(), "validation refuses 0");
+        s.execute("report.setBand", &json!({"band": "page_header", "hide_on_first_page": true})).unwrap();
+        assert!(s.report.page_header.hide_on_first_page);
         s.execute("report.setProperties", &json!({"title": "Rentals", "locale": "fr", "page": {"orientation": "landscape"}})).unwrap();
         assert_eq!((s.report.title.as_str(), s.report.locale.as_str(), s.report.page.size().0), ("Rentals", "fr", 297.0));
         // An edit that would break the report changes nothing.

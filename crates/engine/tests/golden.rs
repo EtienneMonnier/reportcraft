@@ -185,6 +185,7 @@ fn nested_groups_across_pages() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_header = Band {
         height_mm: 6.0,
@@ -195,6 +196,7 @@ fn nested_groups_across_pages() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.groups = vec![
         Group {
@@ -211,6 +213,7 @@ fn nested_groups_across_pages() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -221,6 +224,7 @@ fn nested_groups_across_pages() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             restart_page_numbers: false,
         },
@@ -238,6 +242,7 @@ fn nested_groups_across_pages() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -248,6 +253,7 @@ fn nested_groups_across_pages() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             restart_page_numbers: false,
         },
@@ -261,6 +267,7 @@ fn nested_groups_across_pages() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_footer = Band {
         height_mm: 5.0,
@@ -271,6 +278,7 @@ fn nested_groups_across_pages() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.report_footer = Band {
         height_mm: 7.0,
@@ -285,6 +293,7 @@ fn nested_groups_across_pages() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     check("nested_groups_across_pages", &r, &rentals(60), &Params::new());
 }
@@ -312,6 +321,7 @@ fn bands_that_exactly_fill_the_page() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     // 100 - 2 * 10 margin - 10 footer = 70 mm of body: seven 10 mm rows per page.
     r.detail = Band {
@@ -323,6 +333,7 @@ fn bands_that_exactly_fill_the_page() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     check("bands_that_exactly_fill_the_page", &r, &rentals(14), &Params::new());
 }
@@ -352,6 +363,7 @@ fn formats_in_french() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.report_footer = Band {
         height_mm: 6.0,
@@ -366,6 +378,7 @@ fn formats_in_french() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     let col = |name: &str, t| Column { name: name.into(), field_type: t };
     let rows = RowSet {
@@ -404,6 +417,7 @@ fn group_pagination() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.groups = vec![
         Group {
@@ -420,6 +434,7 @@ fn group_pagination() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -430,6 +445,7 @@ fn group_pagination() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             restart_page_numbers: false,
         },
@@ -447,6 +463,7 @@ fn group_pagination() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -457,6 +474,7 @@ fn group_pagination() {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             restart_page_numbers: false,
         },
@@ -470,6 +488,7 @@ fn group_pagination() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_footer = Band {
         height_mm: 5.0,
@@ -480,6 +499,7 @@ fn group_pagination() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     check("group_pagination", &r, &rentals(24), &Params::new());
 }
@@ -502,6 +522,7 @@ fn landscape_columns() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_header = Band {
         height_mm: 6.0,
@@ -512,6 +533,7 @@ fn landscape_columns() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.groups = vec![Group {
         field: "region".into(),
@@ -527,6 +549,7 @@ fn landscape_columns() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         footer: Band {
             height_mm: 6.0,
@@ -537,6 +560,7 @@ fn landscape_columns() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         restart_page_numbers: false,
     }];
@@ -549,6 +573,7 @@ fn landscape_columns() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_footer = Band {
         height_mm: 5.0,
@@ -559,6 +584,7 @@ fn landscape_columns() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.report_footer = Band {
         height_mm: 6.0,
@@ -569,6 +595,7 @@ fn landscape_columns() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     check("landscape_columns", &r, &rentals(70), &Params::new());
 }
@@ -604,6 +631,7 @@ fn lines_and_boxes() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.groups = vec![Group {
         field: "branch".into(),
@@ -622,6 +650,7 @@ fn lines_and_boxes() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         footer: Band {
             height_mm: 8.0,
@@ -635,6 +664,7 @@ fn lines_and_boxes() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         restart_page_numbers: false,
     }];
@@ -651,6 +681,7 @@ fn lines_and_boxes() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     check("lines_and_boxes", &r, &rentals(6), &Params::new());
 }
@@ -684,6 +715,7 @@ fn labels_across() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         footer: Band::default(),
         restart_page_numbers: false,
@@ -701,6 +733,7 @@ fn labels_across() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     // 13 North (4 full rows and 1 label) and 12 South labels.
     let mut rows = rentals(25);
@@ -760,6 +793,7 @@ fn barcodes() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.detail = Band {
         height_mm: 50.0,
@@ -775,6 +809,7 @@ fn barcodes() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     let col = |name: &str| Column { name: name.into(), field_type: FieldType::Text };
     let text = |v: &str| if v.is_empty() { Value::Null } else { Value::Text(v.into()) };
@@ -877,6 +912,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     lines.detail = Band {
         height_mm: 5.0,
@@ -891,6 +927,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     lines.report_footer = Band {
         height_mm: 6.0,
@@ -904,6 +941,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
 
     let mut r = Report::new("Statements");
@@ -917,6 +955,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_footer = Band {
         height_mm: 5.0,
@@ -927,6 +966,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.detail = Band {
         height_mm: 14.0,
@@ -958,6 +998,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.report_footer = Band {
         height_mm: 6.0,
@@ -968,6 +1009,7 @@ fn subreports() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
 
     let col = |name: &str, t| Column { name: name.into(), field_type: t };
@@ -1040,6 +1082,7 @@ fn formulas() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         footer: Band {
             height_mm: 7.0,
@@ -1058,6 +1101,7 @@ fn formulas() {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         restart_page_numbers: false,
     });
@@ -1076,6 +1120,7 @@ fn formulas() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     // Report footer: a share computed from conditional sums.
     r.report_footer = Band {
@@ -1087,6 +1132,7 @@ fn formulas() {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.report_footer.elements = vec![
         el(
@@ -1138,6 +1184,36 @@ fn page_breaks_after_bands_and_rows_per_page() {
     };
     r.report_footer = Band { height_mm: 7.0, elements: vec![el(0.0, 60.0, text("End of report"), plain)], ..Band::default() };
     check("page_breaks_after", &r, &rentals(14), &Params::new());
+}
+
+/// A different first page (R2.9): a title page without the page header and footer, which the
+/// next pages have (the page numbers still count the title page).
+#[test]
+fn title_page_without_page_header_and_footer() {
+    let plain = TextStyle::default();
+    let bold = TextStyle { bold: true, size_pt: 16.0, ..plain };
+    let right = TextStyle { align: Align::Right, ..plain };
+    let mut r = Report::new("Title page");
+    r.report_header = Band {
+        height_mm: 20.0,
+        elements: vec![el(0.0, 150.0, Content::Text { text: "Rentals 2026".into() }, bold)],
+        page_break_after_if: Some("TRUE".into()),
+        ..Band::default()
+    };
+    r.page_header = Band {
+        height_mm: 7.0,
+        elements: vec![el(0.0, 60.0, Content::Text { text: "Rentals 2026".into() }, plain)],
+        hide_on_first_page: true,
+        ..Band::default()
+    };
+    r.page_footer = Band { height_mm: 7.0, elements: vec![el(140.0, 40.0, Content::PageNumber, right)], hide_on_first_page: true, ..Band::default() };
+    r.detail = Band {
+        height_mm: 6.0,
+        elements: vec![el(0.0, 60.0, field("item"), plain), el(120.0, 40.0, field("amount"), right)],
+        rows_per_page: Some(4),
+        ..Band::default()
+    };
+    check("title_page", &r, &rentals(6), &Params::new());
 }
 
 /// Boxes side by side (an imported grid row): for each row, a box whose elements are all hidden

@@ -71,6 +71,7 @@ fn rentals() -> Report {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_header = Band {
         height_mm: 7.0,
@@ -85,6 +86,7 @@ fn rentals() -> Report {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.groups.push(Group {
         field: "branch".into(),
@@ -100,6 +102,7 @@ fn rentals() -> Report {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         footer: Band {
             height_mm: 8.0,
@@ -114,6 +117,7 @@ fn rentals() -> Report {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         },
         restart_page_numbers: false,
     });
@@ -130,6 +134,7 @@ fn rentals() -> Report {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.report_footer = Band {
         height_mm: 9.0,
@@ -140,6 +145,7 @@ fn rentals() -> Report {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r.page_footer = Band {
         height_mm: 6.0,
@@ -150,6 +156,7 @@ fn rentals() -> Report {
         can_shrink: false,
         page_break_after_if: None,
         rows_per_page: None,
+        hide_on_first_page: false,
     };
     r
 }

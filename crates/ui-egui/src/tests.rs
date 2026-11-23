@@ -541,4 +541,11 @@ fn the_detail_band_panel_sets_page_breaks_and_rows_per_page() {
     assert!(matches!(&d.draft, Some((_, crate::Draft::Band(_, b))) if b.rows_per_page == Some(12)));
     assert!(frames(&mut d, 2) > 50, "{}", d.status());
     assert_eq!(d.session().report.detail.page_break_after_if.as_deref(), Some("[days] > 9"));
+    // The page footer's panel: not on the first page.
+    d.selected_band = Some("page_footer".into());
+    d.sync_draft();
+    assert!(matches!(&d.draft, Some((_, crate::Draft::Band(name, _))) if name == "page_footer"));
+    d.run("report.setBand", serde_json::json!({"band": "page_footer", "hide_on_first_page": true}));
+    assert!(frames(&mut d, 2) > 50, "{}", d.status());
+    assert!(d.session().report.page_footer.hide_on_first_page);
 }

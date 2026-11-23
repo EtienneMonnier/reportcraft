@@ -459,9 +459,11 @@ fn optional_text(ui: &mut Ui, text: &mut Option<String>, default: &str) -> bool 
     done
 }
 
-/// The band editor (`detail`: the detail band, which can limit its rows per page); `true` when
-/// an edit is finished.
-pub(crate) fn band(ui: &mut Ui, b: &mut Band, detail: bool) -> bool {
+/// The band editor (`name`: which band, as the detail band can limit its rows per page and page
+/// headers and footers can skip the first page); `true` when an edit is finished.
+pub(crate) fn band(ui: &mut Ui, b: &mut Band, name: &str) -> bool {
+    let detail = name == "detail";
+    let repeating = name == "page_header" || name == "page_footer";
     let mut done = false;
     ui.horizontal(|ui| {
         done |= length(ui, "height", &mut b.height_mm);
@@ -470,7 +472,11 @@ pub(crate) fn band(ui: &mut Ui, b: &mut Band, detail: bool) -> bool {
     });
     done |= optional_formula(ui, "Show only if", &mut b.visible_if);
     done |= optional_formula(ui, "New page if", &mut b.page_break_before_if);
-    done |= optional_formula(ui, "New page after if", &mut b.page_break_after_if);
+    if repeating {
+        done |= ui.checkbox(&mut b.hide_on_first_page, tl!("not on the first page")).changed();
+    } else {
+        done |= optional_formula(ui, "New page after if", &mut b.page_break_after_if);
+    }
     if detail {
         ui.horizontal(|ui| {
             let mut limited = b.rows_per_page.is_some();
