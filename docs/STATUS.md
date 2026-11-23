@@ -168,7 +168,9 @@
   errors with their position, unknown fields, argument counts, undeclared parameters and cycles;
   `report.evaluateFormula` tries a formula on the loaded rows.
 - Conditions (formulas): `visible_if` on bands (a hidden band takes no room) and on elements (their
-  room stays), `page_break_before_if` on bands. TRUE or a non-zero number holds; FALSE, 0 or a blank
+  room stays), `page_break_before_if` and `page_break_after_if` on bands (after: what follows starts
+  a new page, never a blank page at the end; a report header on a page of its own), and
+  `rows_per_page` on the detail band (rows, or labels, on a page). TRUE or a non-zero number holds; FALSE, 0 or a blank
   doesn't; an error never hides a band or element and never breaks a page. Hidden rows still count
   in their group's totals. A hidden page header takes no room, a hidden page footer keeps its room.
   `report.validate` checks the conditions as formulas.
@@ -279,7 +281,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 277 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 19 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 279 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 20 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

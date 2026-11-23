@@ -320,6 +320,15 @@ pub struct Band {
     /// has nothing on it yet). An error or a blank never breaks the page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break_before_if: Option<String>,
+    /// A formula: when TRUE (or a non-zero number) for the band's row, what follows it starts on
+    /// a new page (a report header on a page of its own, a page per order). When nothing
+    /// follows, no page is added; an error or a blank never breaks the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_break_after_if: Option<String>,
+    /// On the detail band: at most this many rows (labels, in labels across) on a page; the next
+    /// one starts a new page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows_per_page: Option<u32>,
     /// Never print this band alone at the bottom of a page or column: when what follows it
     /// doesn't fit after it, it moves on too. Honoured on group headers, where what follows is
     /// the inner groups' headers and the first detail row.
@@ -620,6 +629,9 @@ pub struct SubreportLink {
 /// Reports nest at most this deep, the main report included.
 pub const MAX_SUBREPORT_DEPTH: usize = 3;
 
+/// Most rows a detail band's `rows_per_page` may ask for.
+pub const MAX_ROWS_PER_PAGE: u32 = 100_000;
+
 fn yes() -> bool {
     true
 }
@@ -759,13 +771,20 @@ impl Report {
         }
         let fixed = self.page_header.height_mm + self.page_footer.height_mm;
         for (name, band) in self.bands() {
-            for (what, c) in [("visible_if", &band.visible_if), ("page_break_before_if", &band.page_break_before_if)] {
+            for (what, c) in [
+                ("visible_if", &band.visible_if),
+                ("page_break_before_if", &band.page_break_before_if),
+                ("page_break_after_if", &band.page_break_after_if),
+            ] {
                 if let Some(c) = c {
                     reportcraft_expr::parse(c).map_err(|e| Error::Invalid(format!("{name}: {what} `{c}`: {e}")))?;
                 }
             }
             if !finite_pos(band.height_mm) {
                 return Err(Error::Invalid(format!("{name}: height must be finite and not negative")));
+            }
+            if band.rows_per_page.is_some_and(|n| n == 0 || n > MAX_ROWS_PER_PAGE) {
+                return Err(Error::Invalid(format!("{name}: rows per page must be between 1 and {MAX_ROWS_PER_PAGE}")));
             }
             if band.elements.len() > limits::MAX_ELEMENTS_PER_BAND {
                 return Err(Error::TooLarge(format!("{name}: more than {} elements", limits::MAX_ELEMENTS_PER_BAND)));
@@ -1106,21 +1125,23 @@ impl Report {
         out
     }
 
-    /// A band's `visible_if` and `page_break_before_if`, and its elements' `visible_if`.
+    /// A band's `visible_if` and page breaks, and its elements' `visible_if`.
     fn check_conditions(&self, band_name: &str, band: &Band, columns: Option<&[Column]>, repeating: bool) -> Vec<Diagnostic> {
         let mut out = Vec::new();
         if let Some(c) = &band.visible_if {
             out.extend(self.check_formula(&format!("{band_name}.visible_if"), c, columns, repeating));
         }
-        match &band.page_break_before_if {
-            Some(_) if repeating => {
-                out.push(Diagnostic::warning(
-                    format!("{band_name}.page_break_before_if"),
-                    "page headers and footers never break the page: this is ignored",
-                ));
+        for (what, breaks) in [("page_break_before_if", &band.page_break_before_if), ("page_break_after_if", &band.page_break_after_if)] {
+            match breaks {
+                Some(_) if repeating => {
+                    out.push(Diagnostic::warning(format!("{band_name}.{what}"), "page headers and footers never break the page: this is ignored"));
+                }
+                Some(c) => out.extend(self.check_formula(&format!("{band_name}.{what}"), c, columns, false)),
+                None => {}
             }
-            Some(c) => out.extend(self.check_formula(&format!("{band_name}.page_break_before_if"), c, columns, false)),
-            None => {}
+        }
+        if band.rows_per_page.is_some() && band_name != "detail" {
+            out.push(Diagnostic::warning(format!("{band_name}.rows_per_page"), "only the detail band counts its rows per page: this is ignored"));
         }
         for (i, el) in band.elements.iter().enumerate() {
             for (what, c) in [("visible_if", &el.visible_if), ("color_formula", &el.color_formula), ("background_formula", &el.background_formula)] {
@@ -1224,6 +1245,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
@@ -1286,6 +1309,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.detail = Band {
             height_mm: 4.0,
@@ -1298,6 +1323,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let found = r.check(Some(&columns));
         let at = |loc: &str, sev| found.iter().any(|d| d.location == loc && d.severity == sev);
@@ -1338,6 +1365,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         let columns = [Column { name: "name".into(), field_type: FieldType::Text }];
         let found = r.check(Some(&columns));
@@ -1408,6 +1437,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         assert!(r.validate().is_ok());
         r.detail.elements = vec![el(Content::Line { thickness_mm: 0.3, color: "black".into() })];
@@ -1467,6 +1498,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             };
             c
         };
@@ -1486,8 +1519,16 @@ mod tests {
                 can_grow: false,
                 flow: None,
             };
-            let b =
-                Band { height_mm: 10.0, elements: vec![el], page_break_before_if: None, visible_if: None, keep_with_next: false, can_shrink: false };
+            let b = Band {
+                height_mm: 10.0,
+                elements: vec![el],
+                page_break_before_if: None,
+                visible_if: None,
+                keep_with_next: false,
+                can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
+            };
             if band == "page_header" {
                 r.page_header = b
             } else {
@@ -1562,6 +1603,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1570,6 +1613,8 @@ mod tests {
             visible_if: None,
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         assert!(r.validate().unwrap_err().to_string().contains("detail: formula `1 +`"));
         let columns = [Column { name: "price".into(), field_type: FieldType::Number }, Column { name: "qty".into(), field_type: FieldType::Integer }];
@@ -1610,6 +1655,8 @@ mod tests {
             page_break_before_if: Some("[qty] = 0".into()),
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: None,
+            rows_per_page: None,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1618,6 +1665,8 @@ mod tests {
             page_break_before_if: Some("TRUE".into()),
             keep_with_next: false,
             can_shrink: false,
+            page_break_after_if: Some("TRUE".into()),
+            rows_per_page: Some(3),
         };
         let columns = [Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
@@ -1626,6 +1675,15 @@ mod tests {
         assert!(!found.iter().any(|d| d.location.starts_with("detail.page_break") || d.location.starts_with("detail.elements[0].visible_if")));
         assert!(has("page_footer.visible_if", Severity::Warning, "no current row"));
         assert!(has("page_footer.page_break_before_if", Severity::Warning, "ignored"));
+        assert!(has("page_footer.page_break_after_if", Severity::Warning, "ignored"));
+        assert!(has("page_footer.rows_per_page", Severity::Warning, "only the detail band"));
+        r.detail.page_break_after_if = Some("[qty] = ".into());
+        assert!(r.validate().unwrap_err().to_string().contains("detail: page_break_after_if"));
+        r.detail.page_break_after_if = Some("[qty] = 0".into());
+        r.detail.rows_per_page = Some(0);
+        assert!(r.validate().unwrap_err().to_string().contains("rows per page"));
+        r.detail.rows_per_page = Some(25);
+        assert!(r.check(Some(&columns)).iter().all(|d| !d.location.starts_with("detail.page_break_after") && d.location != "detail.rows_per_page"));
         r.detail.page_break_before_if = Some("[qty] >".into());
         assert!(r.validate().unwrap_err().to_string().contains("detail: page_break_before_if `[qty] >`"));
         r.detail.page_break_before_if = None;
@@ -1716,6 +1774,8 @@ mod tests {
                 visible_if: None,
                 keep_with_next: false,
                 can_shrink: false,
+                page_break_after_if: None,
+                rows_per_page: None,
             };
             r
         };
