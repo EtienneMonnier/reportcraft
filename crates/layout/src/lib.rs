@@ -714,8 +714,9 @@ impl<'a> Writer<'a> {
     fn page_header(&mut self) {
         let report = self.report;
         let scope = Scope::new(&[], self.next_row);
-        // A hidden page header takes no room.
-        if self.band_visible(&report.page_header, scope) {
+        // A hidden page header takes no room; nor does one left out of the first page.
+        let first = self.pages.is_empty();
+        if !(first && report.page_header.hide_on_first_page) && self.band_visible(&report.page_header, scope) {
             let last = self.last_row;
             let fit = self.fit(&report.page_header, scope);
             self.draw(&report.page_header, &fit, scope, false);
@@ -733,7 +734,8 @@ impl<'a> Writer<'a> {
         // The page footer reads the last row drawn on the page (or before it, on a page that
         // holds none). A hidden one keeps its room: the body ends at the same place on every page.
         let scope = Scope::new(&[], self.last_row.or(self.next_row));
-        if self.band_visible(&report.page_footer, scope) {
+        let first = self.pages.is_empty();
+        if !(first && report.page_footer.hide_on_first_page) && self.band_visible(&report.page_footer, scope) {
             self.draw(&report.page_footer, &Fit::plain(&report.page_footer), scope, false);
         }
         self.pages.push(std::mem::take(&mut self.page));
@@ -1431,6 +1433,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -1441,6 +1444,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             restart_page_numbers: false,
         });
@@ -1453,6 +1457,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.report_footer = Band {
             height_mm: 6.0,
@@ -1463,6 +1468,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["Lyon", "10", "2.5", "12.5", "Paris", "5", "5", "17.5"]);
@@ -1482,6 +1488,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.detail = Band {
             height_mm: 15.0,
@@ -1492,6 +1499,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(doc.pages.len(), 2);
@@ -1509,6 +1517,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let mut r = Report::new("t");
         r.page.height_mm = 60.0;
@@ -1652,6 +1661,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band::default(),
             restart_page_numbers: false,
@@ -1665,6 +1675,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let doc = layout(&r, &many, &Params::new()).unwrap();
         // Body 50 mm: Lyon (6 + 30 x 5 = 156 mm) can't be kept together, so it flows from page one,
@@ -1687,6 +1698,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let mut params = Params::new();
         params.insert(REFRESHED_AT.into(), "2026-10-01T14:05:09+02:00".into());
@@ -1730,6 +1742,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             footer: Band {
                 height_mm: 6.0,
@@ -1740,6 +1753,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             },
             restart_page_numbers: false,
         });
@@ -1754,6 +1768,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.report_footer = Band {
             height_mm: 6.0,
@@ -1764,6 +1779,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         assert_eq!(texts(&doc), ["BIG (2)", "80", "67%", "40", "33%", "120", "SMALL (1)", "20", "100%", "20", "Total: 140 over 2 big"]);
@@ -1798,6 +1814,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let mut params = Params::new();
         params.insert("period".into(), "2026-10-01..2026-10-31".into());
@@ -1977,6 +1994,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1987,6 +2005,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let number = reportcraft_model::Format::Number { decimals: 1, grouping: true };
         r.detail = Band {
@@ -1998,6 +2017,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let doc = render_continuous(&r, &rows(), &Datasets::new(), &Params::new(), &Cancel::default()).unwrap();
         assert_eq!(doc.pages.len(), 1);
@@ -2056,6 +2076,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let doc = layout(&r, &rows(), &Params::new()).unwrap();
         let pages: Vec<Vec<String>> = doc.pages.iter().map(|p| p.items.iter().map(|i| i.text.clone()).collect()).collect();

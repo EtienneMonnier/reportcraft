@@ -339,6 +339,10 @@ pub struct Band {
     /// shorter. A strip that also holds a shown element keeps its room.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub can_shrink: bool,
+    /// Page headers and footers: not printed on the report's first page (a title page). A page
+    /// header left out takes no room there; a page footer keeps its room.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_on_first_page: bool,
 }
 
 impl Band {
@@ -1140,6 +1144,12 @@ impl Report {
                 None => {}
             }
         }
+        if band.hide_on_first_page && !repeating {
+            out.push(Diagnostic::warning(
+                format!("{band_name}.hide_on_first_page"),
+                "only page headers and footers skip the first page: this is ignored",
+            ));
+        }
         if band.rows_per_page.is_some() && band_name != "detail" {
             out.push(Diagnostic::warning(format!("{band_name}.rows_per_page"), "only the detail band counts its rows per page: this is ignored"));
         }
@@ -1247,6 +1257,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let back = Report::from_json(&r.to_json().unwrap()).unwrap();
         assert_eq!(back, r);
@@ -1311,6 +1322,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.detail = Band {
             height_mm: 4.0,
@@ -1325,6 +1337,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let found = r.check(Some(&columns));
         let at = |loc: &str, sev| found.iter().any(|d| d.location == loc && d.severity == sev);
@@ -1367,6 +1380,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         let columns = [Column { name: "name".into(), field_type: FieldType::Text }];
         let found = r.check(Some(&columns));
@@ -1439,6 +1453,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         assert!(r.validate().is_ok());
         r.detail.elements = vec![el(Content::Line { thickness_mm: 0.3, color: "black".into() })];
@@ -1500,6 +1515,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             };
             c
         };
@@ -1528,6 +1544,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             };
             if band == "page_header" {
                 r.page_header = b
@@ -1605,6 +1622,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1615,6 +1633,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         assert!(r.validate().unwrap_err().to_string().contains("detail: formula `1 +`"));
         let columns = [Column { name: "price".into(), field_type: FieldType::Number }, Column { name: "qty".into(), field_type: FieldType::Integer }];
@@ -1657,6 +1676,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: None,
             rows_per_page: None,
+            hide_on_first_page: false,
         };
         r.page_footer = Band {
             height_mm: 5.0,
@@ -1667,6 +1687,7 @@ mod tests {
             can_shrink: false,
             page_break_after_if: Some("TRUE".into()),
             rows_per_page: Some(3),
+            hide_on_first_page: false,
         };
         let columns = [Column { name: "qty".into(), field_type: FieldType::Integer }];
         let found = r.check(Some(&columns));
@@ -1684,6 +1705,12 @@ mod tests {
         assert!(r.validate().unwrap_err().to_string().contains("rows per page"));
         r.detail.rows_per_page = Some(25);
         assert!(r.check(Some(&columns)).iter().all(|d| !d.location.starts_with("detail.page_break_after") && d.location != "detail.rows_per_page"));
+        r.detail.hide_on_first_page = true;
+        r.page_footer.hide_on_first_page = true;
+        let found = r.check(Some(&columns));
+        assert!(found.iter().any(|d| d.location == "detail.hide_on_first_page" && d.message.contains("only page headers and footers")));
+        assert!(!found.iter().any(|d| d.location == "page_footer.hide_on_first_page"));
+        r.detail.hide_on_first_page = false;
         r.detail.page_break_before_if = Some("[qty] >".into());
         assert!(r.validate().unwrap_err().to_string().contains("detail: page_break_before_if `[qty] >`"));
         r.detail.page_break_before_if = None;
@@ -1776,6 +1803,7 @@ mod tests {
                 can_shrink: false,
                 page_break_after_if: None,
                 rows_per_page: None,
+                hide_on_first_page: false,
             };
             r
         };

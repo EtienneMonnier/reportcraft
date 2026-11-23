@@ -87,7 +87,8 @@
   the HTML output; colours are `#rgb`/`#rrggbb` only.
 - Pages: A3, A4, A5, Letter, Legal or custom sizes, portrait or landscape, 1 to 16 columns with a
   gap (group and detail bands flow down a column then the next; report and page headers and
-  footers span the page).
+  footers span the page); page headers and footers can be left out of the first page
+  (`hide_on_first_page`, "not on the first page" in the designer), for a title page.
 - Barcodes: Code 128, EAN-13 (check digit added or verified) and QR code (UTF-8, levels L/M/Q/H,
   versions 1–40), from a field or a fixed text, drawn as SVG with their quiet zone; a value the
   symbology can't hold is written as text. Every symbology was checked with an independent decoder
@@ -281,7 +282,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 280 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 20 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 281 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 21 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

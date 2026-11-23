@@ -1001,3 +1001,13 @@ title pages need.
   break before already was. Both are in `report.setBand` and the designer's band properties (rows
   per page for the detail band only).
 
+## A title page without the page header and footer (R2.9)
+
+A report header that breaks the page after it (R2.10) makes a title page, but the page header and
+footer were printed on it too. Page headers and footers now have `hide_on_first_page`: on the
+report's first page the page header takes no room (the title starts at the top margin) and the
+page footer keeps its room, as a hidden page footer does, so the body ends at the same place on
+every page. Page numbers still count the title page ("2 / 3" on the first page after it), as in
+a printed document. It applies to the report's first page, not to each group's first page when a
+group numbers its own pages. Margins of their own for page one are on the roadmap.
+

@@ -108,7 +108,8 @@ Anything marked **decision** waits for a maintainer.
   - [ ] Print progress and cancellation once the spooler has the job (craft-print reports Windows progress only)
 - [x] R2.9 Paper sizes (A5, Letter, custom), landscape, multiple columns (§4 FR-PRINT-002) (#30)
   - [x] Columns filled across then down (needed by labels, R2.12)
-  - [ ] Different first page (no page header on page one, other margins)
+  - [x] Different first page: page header and footer left out of page one (`hide_on_first_page`), for a title page (#30)
+    - [ ] Other margins on page one, and a page header and footer of its own
 - [x] R2.10 Conditional visibility and suppression of sections and elements, conditional page breaks (§4 FR-PRINT-004) — needs R2.2 (#31)
   - [ ] Hide a band whose elements all come out blank (no formula needed)
   - [ ] `keep_together` and the space estimate of a group that count only the bands that will show
