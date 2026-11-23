@@ -1,5 +1,5 @@
-//! How a field or total is written: numbers, currencies, percentages and dates, following the
-//! report's locale. Locales are a typed table (data over code); an unknown tag falls back to `en`.
+//! How a field or total is written: numbers, currencies, percentages, dates, yes or no and text,
+//! following the report's locale. Locales are a typed table (data over code); an unknown tag falls back to `en`.
 
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,38 @@ pub enum Format {
         #[serde(default)]
         pattern: Option<String>,
     },
+    /// `Yes` or `No` in the report's language (`Oui`/`Non` in French), or the texts given, for a
+    /// true or false value: a boolean, 1 or 0, `true` or `false`.
+    Boolean {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        true_text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        false_text: Option<String>,
+    },
+    /// The value as text, in upper, lower or title case, after a prefix and before a suffix
+    /// (`Ref. 1042`, `12 kg`); a blank value stays blank, without them.
+    Text {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        case: Option<TextCase>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        prefix: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        suffix: String,
+    },
 }
+
+/// The case a text format writes letters in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextCase {
+    Upper,
+    Lower,
+    /// The first letter of each word in capitals, the others in small letters.
+    Title,
+}
+
+/// Most characters in a format's own texts (a prefix, a suffix, a yes or no).
+pub const MAX_FORMAT_TEXT: usize = 200;
 
 fn yes() -> bool {
     true
@@ -52,12 +83,23 @@ impl Format {
     pub fn decimals(&self) -> Option<u8> {
         match self {
             Format::Number { decimals, .. } | Format::Currency { decimals, .. } | Format::Percent { decimals } => Some(*decimals),
-            Format::Date { .. } => None,
+            Format::Date { .. } | Format::Boolean { .. } | Format::Text { .. } => None,
         }
     }
 
     pub fn is_numeric(&self) -> bool {
-        !matches!(self, Format::Date { .. })
+        matches!(self, Format::Number { .. } | Format::Currency { .. } | Format::Percent { .. })
+    }
+
+    /// The texts the format writes itself, each at most `MAX_FORMAT_TEXT` characters.
+    pub fn texts_are_valid(&self) -> bool {
+        let short = |t: &str| t.chars().count() <= MAX_FORMAT_TEXT;
+        match self {
+            Format::Boolean { true_text, false_text } => [true_text, false_text].into_iter().flatten().all(|t| short(t)),
+            Format::Text { prefix, suffix, .. } => short(prefix) && short(suffix),
+            Format::Currency { symbol, .. } => short(symbol),
+            _ => true,
+        }
     }
 }
 
@@ -72,23 +114,116 @@ pub struct LocaleStyle {
     pub date_pattern: &'static str,
     /// Day and month names (`%A`, `%B`, `%a`, `%b`) and AM/PM in this language.
     pub names: chrono::Locale,
+    /// How a boolean format writes true and false.
+    pub yes: &'static str,
+    pub no: &'static str,
 }
 
 const NNBSP: char = '\u{202F}';
 
 /// Known locales. Matching takes the full tag first (`de-CH`), then its language (`de`).
 pub const LOCALES: &[LocaleStyle] = &[
-    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d", names: chrono::Locale::en_US },
-    LocaleStyle { tag: "en-US", decimal: '.', group: ',', unit_space: "", date_pattern: "%m/%d/%Y", names: chrono::Locale::en_US },
-    LocaleStyle { tag: "en-GB", decimal: '.', group: ',', unit_space: "", date_pattern: "%d/%m/%Y", names: chrono::Locale::en_GB },
-    LocaleStyle { tag: "fr", decimal: ',', group: NNBSP, unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::fr_FR },
-    LocaleStyle { tag: "fr-CH", decimal: '.', group: '\u{2019}', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y", names: chrono::Locale::fr_CH },
-    LocaleStyle { tag: "de", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y", names: chrono::Locale::de_DE },
-    LocaleStyle { tag: "de-CH", decimal: '.', group: '\u{2019}', unit_space: "\u{a0}", date_pattern: "%d.%m.%Y", names: chrono::Locale::de_CH },
-    LocaleStyle { tag: "es", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::es_ES },
-    LocaleStyle { tag: "it", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::it_IT },
-    LocaleStyle { tag: "nl", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d-%m-%Y", names: chrono::Locale::nl_NL },
-    LocaleStyle { tag: "pt", decimal: ',', group: '.', unit_space: "\u{a0}", date_pattern: "%d/%m/%Y", names: chrono::Locale::pt_PT },
+    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d", names: chrono::Locale::en_US, yes: "Yes", no: "No" },
+    LocaleStyle {
+        tag: "en-US",
+        decimal: '.',
+        group: ',',
+        unit_space: "",
+        date_pattern: "%m/%d/%Y",
+        names: chrono::Locale::en_US,
+        yes: "Yes",
+        no: "No",
+    },
+    LocaleStyle {
+        tag: "en-GB",
+        decimal: '.',
+        group: ',',
+        unit_space: "",
+        date_pattern: "%d/%m/%Y",
+        names: chrono::Locale::en_GB,
+        yes: "Yes",
+        no: "No",
+    },
+    LocaleStyle {
+        tag: "fr",
+        decimal: ',',
+        group: NNBSP,
+        unit_space: "\u{a0}",
+        date_pattern: "%d/%m/%Y",
+        names: chrono::Locale::fr_FR,
+        yes: "Oui",
+        no: "Non",
+    },
+    LocaleStyle {
+        tag: "fr-CH",
+        decimal: '.',
+        group: '\u{2019}',
+        unit_space: "\u{a0}",
+        date_pattern: "%d.%m.%Y",
+        names: chrono::Locale::fr_CH,
+        yes: "Oui",
+        no: "Non",
+    },
+    LocaleStyle {
+        tag: "de",
+        decimal: ',',
+        group: '.',
+        unit_space: "\u{a0}",
+        date_pattern: "%d.%m.%Y",
+        names: chrono::Locale::de_DE,
+        yes: "Ja",
+        no: "Nein",
+    },
+    LocaleStyle {
+        tag: "de-CH",
+        decimal: '.',
+        group: '\u{2019}',
+        unit_space: "\u{a0}",
+        date_pattern: "%d.%m.%Y",
+        names: chrono::Locale::de_CH,
+        yes: "Ja",
+        no: "Nein",
+    },
+    LocaleStyle {
+        tag: "es",
+        decimal: ',',
+        group: '.',
+        unit_space: "\u{a0}",
+        date_pattern: "%d/%m/%Y",
+        names: chrono::Locale::es_ES,
+        yes: "Sí",
+        no: "No",
+    },
+    LocaleStyle {
+        tag: "it",
+        decimal: ',',
+        group: '.',
+        unit_space: "\u{a0}",
+        date_pattern: "%d/%m/%Y",
+        names: chrono::Locale::it_IT,
+        yes: "Sì",
+        no: "No",
+    },
+    LocaleStyle {
+        tag: "nl",
+        decimal: ',',
+        group: '.',
+        unit_space: "\u{a0}",
+        date_pattern: "%d-%m-%Y",
+        names: chrono::Locale::nl_NL,
+        yes: "Ja",
+        no: "Nee",
+    },
+    LocaleStyle {
+        tag: "pt",
+        decimal: ',',
+        group: '.',
+        unit_space: "\u{a0}",
+        date_pattern: "%d/%m/%Y",
+        names: chrono::Locale::pt_PT,
+        yes: "Sim",
+        no: "Não",
+    },
 ];
 
 /// The style for a locale tag, if known (case-insensitive, `_` or `-`).
@@ -108,7 +243,7 @@ pub fn locale_or_default(tag: &str) -> LocaleStyle {
 }
 
 const DEFAULT_LOCALE: LocaleStyle =
-    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d", names: chrono::Locale::en_US };
+    LocaleStyle { tag: "en", decimal: '.', group: ',', unit_space: "", date_pattern: "%Y-%m-%d", names: chrono::Locale::en_US, yes: "Yes", no: "No" };
 
 #[cfg(test)]
 mod tests {

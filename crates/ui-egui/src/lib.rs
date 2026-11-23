@@ -106,7 +106,7 @@ pub struct Designer {
 
 /// What the properties panel edits.
 enum Draft {
-    Element(String, usize, reportcraft_model::Element),
+    Element(String, usize, Box<reportcraft_model::Element>),
     Band(String, reportcraft_model::Band),
     Report(props::ReportDraft),
 }
@@ -882,7 +882,7 @@ impl Designer {
         }
         let r = &self.session.report;
         let draft = match (&self.selected, &self.selected_band) {
-            (Some((b, i)), _) => self.element(b, *i).map(|el| Draft::Element(b.clone(), *i, el)),
+            (Some((b, i)), _) => self.element(b, *i).map(|el| Draft::Element(b.clone(), *i, Box::new(el))),
             (None, Some(b)) => r.bands().into_iter().find(|(n, _)| n == b).map(|(_, band)| Draft::Band(b.clone(), band.clone())),
             (None, None) => Some(Draft::Report(props::ReportDraft {
                 title: r.title.clone(),
@@ -911,7 +911,7 @@ impl Designer {
                     ui.heading(tl!("Element"));
                     ui.label(format!("{} · {index}", canvas::band_title(report, band)));
                 });
-                props::element(ui, el, &fields).then(|| ("report.setElement", json!({"band": band, "index": index, "element": el})))
+                props::element(ui, el, &fields, &report.locale).then(|| ("report.setElement", json!({"band": band, "index": index, "element": el})))
             }
             Draft::Band(band, b) => {
                 ui.heading(format!("{} · {}", tl!("Band"), canvas::band_title(report, band)));

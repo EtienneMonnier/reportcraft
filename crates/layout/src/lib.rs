@@ -1298,11 +1298,13 @@ impl<'a> Writer<'a> {
     }
 
     /// A value's text with `format`, keeping numbers, booleans and dates (text under a date
-    /// format) typed.
+    /// format) typed, unless the format writes them as words.
     fn typed(&self, value: Value, format: Option<&reportcraft_model::Format>) -> (String, Option<Cell>) {
         let text = format::write(&value, format, &self.locale);
+        // Yes/no and text formats write words: spreadsheets get the words, as the report shows.
+        let words = matches!(format, Some(reportcraft_model::Format::Boolean { .. } | reportcraft_model::Format::Text { .. }));
         let keep = match &value {
-            Value::Int(_) | Value::Number(_) | Value::Bool(_) => true,
+            Value::Int(_) | Value::Number(_) | Value::Bool(_) => !words,
             Value::Text(_) => matches!(format, Some(reportcraft_model::Format::Date { .. })),
             Value::Null => false,
         };
