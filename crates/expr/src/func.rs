@@ -1,7 +1,7 @@
 //! The function catalogue: names, argument counts and which arguments are ranges.
 
 /// A function a formula may call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Func {
     // Logical
     If,
@@ -35,6 +35,9 @@ pub enum Func {
     SumIf,
     CountIf,
     AverageIf,
+    /// The field totalled, or its values counted, over the rows summarised up to the current one.
+    RunningSum,
+    RunningCount,
     // Text
     Concat,
     Len,
@@ -103,6 +106,8 @@ const CATALOGUE: &[(&str, Func, usize, usize)] = &[
     ("SUMIF", Func::SumIf, 2, 3),
     ("COUNTIF", Func::CountIf, 2, 2),
     ("AVERAGEIF", Func::AverageIf, 2, 3),
+    ("RUNNINGSUM", Func::RunningSum, 1, 1),
+    ("RUNNINGCOUNT", Func::RunningCount, 1, 1),
     ("CONCAT", Func::Concat, 1, crate::MAX_ARGS),
     ("CONCATENATE", Func::Concat, 1, crate::MAX_ARGS),
     ("LEN", Func::Len, 1, 1),
@@ -163,7 +168,7 @@ impl Func {
     /// summarised rather than the current row's value.
     pub fn takes_range(self, index: usize) -> bool {
         match self {
-            Func::Sum | Func::Average | Func::Count | Func::CountA | Func::Min | Func::Max => true,
+            Func::Sum | Func::Average | Func::Count | Func::CountA | Func::Min | Func::Max | Func::RunningSum | Func::RunningCount => true,
             Func::SumIf | Func::AverageIf => index == 0 || index == 2,
             Func::CountIf => index == 0,
             _ => false,

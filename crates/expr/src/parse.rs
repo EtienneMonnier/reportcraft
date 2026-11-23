@@ -91,10 +91,10 @@ impl Expr {
         found
     }
 
-    /// Whether the formula reads the current row.
+    /// Whether the formula reads the current row (a field, or a running total up to it).
     pub fn uses_row(&self) -> bool {
         let mut found = false;
-        self.visit(&mut |e| found |= matches!(e, Expr::Field(_)));
+        self.visit(&mut |e| found |= matches!(e, Expr::Field(_) | Expr::Call { func: Func::RunningSum | Func::RunningCount, .. }));
         found
     }
 

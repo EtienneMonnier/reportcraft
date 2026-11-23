@@ -140,6 +140,26 @@ fn aggregates_summarise_ranges() {
 }
 
 #[test]
+fn running_totals_add_up_to_the_current_row() {
+    use crate::{Func, running_values};
+    let n = Val::Number;
+    let values = [n(10.0), Val::Text("2.5".into()), Val::Blank, Val::Text("x".into()), n(-4.0), Val::Error(ExprError::Div0), n(1.0)];
+    assert_eq!(
+        running_values(Func::RunningSum, &values),
+        [n(10.0), n(12.5), n(12.5), n(12.5), n(8.5), Val::Error(ExprError::Div0), Val::Error(ExprError::Div0)],
+        "numbers and numeric text add, blanks and text are skipped, an error stays"
+    );
+    assert_eq!(running_values(Func::RunningCount, &values), [n(1.0), n(2.0), n(2.0), n(3.0), n(4.0), n(5.0), n(6.0)], "every value but blanks");
+    assert!(running_values(Func::Sum, &values).iter().all(Val::is_error));
+    // Without rows to run over (a row formula, these test rows), an error; the argument is a range.
+    assert_eq!(eval("RUNNINGSUM([amount])"), Val::Error(ExprError::Value));
+    assert_eq!(eval("RUNNINGSUM(1)"), Val::Error(ExprError::Value));
+    let e = parse("SUM(RUNNINGSUM([amount]))").unwrap_or_else(|e| panic!("{e}"));
+    assert!(e.uses_row() && e.uses_ranges(), "a running total depends on the current row");
+    assert!(parse("RUNNINGCOUNT([a], [b])").is_err());
+}
+
+#[test]
 fn conditional_aggregates_read_criteria() {
     assert_eq!(show("COUNTIF([branch], \"lyon\")"), "2");
     assert_eq!(show("COUNTIF([branch], \"lyon*\")"), "3");

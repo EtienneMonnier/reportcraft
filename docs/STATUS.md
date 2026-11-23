@@ -154,10 +154,12 @@
   fields of every row, usable in elements, groups, sort, totals, links and other formulas (in
   dependency order; a circle is an error); `formula` elements compute over the current row and the
   rows their band summarises (`[amount] / SUM([amount])` is a share of the group in the detail
-  band). Operators `+ - * / ^ % &` and comparisons with Excel's precedence; 61 functions: logical
+  band). Operators `+ - * / ^ % &` and comparisons with Excel's precedence; 63 functions: logical
   (`IF`, `IFS`, `SWITCH`, `AND`, `OR`, `NOT`, `IFERROR`, `IS…`), maths (`ROUND`, `ROUNDUP`,
   `ROUNDDOWN`, `INT`, `MOD`, `POWER`, `SQRT`, `ABS`, `SIGN`), aggregates (`SUM`, `AVERAGE`, `COUNT`,
-  `COUNTA`, `MIN`, `MAX`, `SUMIF`, `COUNTIF`, `AVERAGEIF` with `">10"`, `"<>"`, `"Ly*"` criteria),
+  `COUNTA`, `MIN`, `MAX`, `SUMIF`, `COUNTIF`, `AVERAGEIF` with `">10"`, `"<>"`, `"Ly*"` criteria;
+  running totals `RUNNINGSUM` and `RUNNINGCOUNT` up to the current row of the group, computed once
+  per group),
   text (`CONCAT`, `LEFT`, `MID`, `SUBSTITUTE`, `FIND`, `SEARCH`, `PROPER`, `TRIM`…), dates (`DATE`,
   `EDATE`, `EOMONTH`, `DATEDIF`, `DAYS`, `WEEKDAY`, `ISOWEEKNUM`, `TODAY`/`NOW` from the render's
   clock…) and `PARAM("name")` (typed; `PARAM("period.from")` for a range's ends). Blanks, errors
@@ -282,7 +284,7 @@
 - Page headers and footers read a row: the header the first row placed on its page, the footer
   the last one (a field in a page header shows the document the page belongs to); they still
   total no rows.
-- CLI and MCP server reaching every command. 281 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 21 golden rendering snapshots; `cargo xtask ci` green.
+- CLI and MCP server reaching every command. 283 tests (plus 17 live tests run on demand: 9 PostgreSQL, 8 SQL Server), including 21 golden rendering snapshots; `cargo xtask ci` green.
 
 ## Not yet
 - No ODBC source yet, so no Advantage (see `ROADMAP.md`); SQL Server only with SQL Server logins.

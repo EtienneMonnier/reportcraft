@@ -27,6 +27,12 @@ pub trait Env {
     fn locale(&self) -> Locale {
         Locale::default()
     }
+    /// `RUNNINGSUM` or `RUNNINGCOUNT` of `name`: its value at the current row over the rows being
+    /// summarised up to it (see [`running_values`]). `Err(Value)` where nothing is summarised.
+    fn running(&self, name: &str, func: Func) -> Result<Val, ExprError> {
+        let _ = (name, func);
+        Err(ExprError::Value)
+    }
     /// Remembers the result of an aggregate that doesn't depend on the current row, keyed by the
     /// call's identity, for the rows being summarised. The default doesn't remember.
     fn memo(&self, key: usize, compute: &mut dyn FnMut() -> Val) -> Val {
@@ -146,6 +152,10 @@ fn call(func: Func, args: &[Expr], env: &dyn Env) -> Val {
         }
         Func::Sum | Func::Average | Func::Count | Func::CountA | Func::Min | Func::Max => aggregate(func, args, env),
         Func::SumIf | Func::CountIf | Func::AverageIf => conditional(func, args, env),
+        Func::RunningSum | Func::RunningCount => match args.first() {
+            Some(Expr::Range(name)) => env.running(name, func),
+            _ => Err(ExprError::Value),
+        },
         Func::Concat => concat(args, env),
         Func::Len
         | Func::Left
@@ -323,6 +333,35 @@ fn cell_number(v: &Val) -> Option<f64> {
         Val::Text(t) => parse_number(t),
         _ => None,
     }
+}
+
+/// A running total's value at each row of `values` (a field over the rows summarised, in their
+/// order): `RUNNINGSUM` adds the numbers as `SUM` does (text and blanks skipped, an error stays
+/// from its row on), `RUNNINGCOUNT` counts the values that aren't blank, as `COUNTA` does. Any
+/// other function gives errors.
+pub fn running_values(func: Func, values: &[Val]) -> Vec<Val> {
+    let mut out = Vec::with_capacity(values.len());
+    let (mut sum, mut count, mut error) = (0.0, 0usize, None);
+    for v in values {
+        match func {
+            Func::RunningSum => {
+                if error.is_none() {
+                    if let Val::Error(e) = v {
+                        error = Some(*e);
+                    } else {
+                        sum += cell_number(v).unwrap_or(0.0);
+                    }
+                }
+                out.push(error.map_or_else(|| Val::number(sum), Val::Error));
+            }
+            Func::RunningCount => {
+                count += usize::from(!matches!(v, Val::Blank));
+                out.push(Val::Number(count as f64));
+            }
+            _ => out.push(Val::Error(ExprError::Value)),
+        }
+    }
+    out
 }
 
 fn aggregate(func: Func, args: &[Expr], env: &dyn Env) -> R<Val> {
